@@ -15,6 +15,7 @@ export interface ParsedCandidateProfile {
   location: string | null;
   skills: string[];
   summary: string | null;
+  qualification?: string | null;
   education?: string[];
   workHistory?: Array<{
     company: string;
@@ -90,6 +91,7 @@ You are an expert recruitment parser. Extract candidate details from the followi
   "currency": "string (e.g. INR, USD, default INR)",
   "noticePeriodDays": number (Notice period in days e.g. 15, 30, 60, 90. Default 30 if not mentioned),
   "location": "string or null (City / Location)",
+  "qualification": "string or null (Candidate's highest educational degree, branch/specialization, and college/institute if mentioned. E.g. 'BTech - Electronics Engineering, MIT Academy Of Engineering Pune' or 'B.E. Computer Science' or 'MBA' or 'BCA' or 'MCA')",
   "skills": ["string"] (Array of specific technical, domain, or tool skills),
   "summary": "string or null (2-3 sentence executive professional summary)",
   "workHistory": [
@@ -138,6 +140,7 @@ You are an expert recruitment parser. Extract candidate details from the followi
           currency: cleanStr(parsedData.currency) || "INR",
           noticePeriodDays: parsedData.noticePeriodDays ? parseInt(parsedData.noticePeriodDays, 10) : 30,
           location: cleanStr(parsedData.location),
+          qualification: cleanStr(parsedData.qualification),
           skills: Array.isArray(parsedData.skills)
             ? parsedData.skills.map((s: any) => cleanStr(s)).filter(Boolean)
             : [],
@@ -307,7 +310,26 @@ export function smartDeterministicResumeParser(text: string, fileName?: string):
     currentCompany = companyMatch[1].trim();
   }
 
-  // 8. Comprehensive Skill Set Dictionary Matching
+  // 8. Education & Qualification Extraction
+  let qualification: string | null = null;
+  const eduPatterns = [
+    /(?:(?:B\.?Tech|B\.?E\.?|M\.?Tech|M\.?E\.?|BCA|MCA|B\.?Sc|M\.?Sc|B\.?Com|M\.?Com|BBA|MBA|Ph\.?D|Bachelor|Master|Diploma)\s*(?:[-–—:]|\s+in|\s+of)?\s*[^\n\r,;:]{3,60})/i,
+    /(?:Education|Qualification|Academics)[:\s-]*([^\n\r]{5,80})/i,
+    /(?:MIT|IIT|NIT|BITS|University|College|Institute)[^\n\r,;:]{3,50}/i,
+  ];
+  for (const ep of eduPatterns) {
+    const m = text.match(ep);
+    if (m) {
+      qualification = (m[1] || m[0])
+        .replace(/^(?:Education|Qualification|Academics)[:\s-]*/i, "")
+        .trim()
+        .replace(/\s+/g, " ");
+      if (qualification.length > 80) qualification = qualification.substring(0, 80).trim();
+      break;
+    }
+  }
+
+  // 9. Comprehensive Skill Set Dictionary Matching
   const skillDictionary = [
     "JavaScript", "TypeScript", "React", "Next.js", "Node.js", "Express", "NestJS", "Vue.js", "Angular",
     "Python", "Django", "FastAPI", "Flask", "Java", "Spring Boot", "Go", "Golang", "C++", "C#", ".NET", "Rust",
@@ -336,6 +358,7 @@ export function smartDeterministicResumeParser(text: string, fileName?: string):
     currency: "INR",
     noticePeriodDays,
     location: "India",
+    qualification: qualification || "BTech / Professional Degree",
     skills: matchedSkills.length > 0 ? matchedSkills : ["Software Engineering", "Application Development"],
     summary: `${fullName} is an experienced professional with specialized expertise in ${matchedSkills.slice(0, 4).join(", ") || "technology and engineering solutions"}.`,
   };

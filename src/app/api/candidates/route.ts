@@ -88,6 +88,7 @@ export async function POST(req: Request) {
       summary,
       rawResumeText,
       resumeUrl,
+      qualification,
       source = "DIRECT_UPLOAD",
       mandateId,
     } = body;
@@ -132,6 +133,7 @@ export async function POST(req: Request) {
     const cleanCompany = sanitizeString(currentCompany);
     const cleanTitle = sanitizeString(currentTitle);
     const cleanLocation = sanitizeString(location);
+    const cleanQualification = sanitizeString(qualification);
     const cleanSummary = sanitizeString(summary);
     const cleanRawResumeText = sanitizeString(rawResumeText);
     const cleanResumeUrl = sanitizeString(resumeUrl);
@@ -168,6 +170,7 @@ export async function POST(req: Request) {
             currency: cleanCurrency,
             noticePeriodDays: parseInt(noticePeriodDays, 10) || candidate.noticePeriodDays,
             location: cleanLocation || candidate.location,
+            qualification: cleanQualification || candidate.qualification,
             skills: skillsArray.length > 0 ? skillsArray : candidate.skills,
             summary: cleanSummary || candidate.summary,
             rawResumeText: cleanRawResumeText || candidate.rawResumeText,
@@ -190,6 +193,7 @@ export async function POST(req: Request) {
             currency: cleanCurrency,
             noticePeriodDays: parseInt(noticePeriodDays, 10) || 30,
             location: cleanLocation,
+            qualification: cleanQualification,
             skills: skillsArray,
             summary: cleanSummary,
             rawResumeText: cleanRawResumeText,
