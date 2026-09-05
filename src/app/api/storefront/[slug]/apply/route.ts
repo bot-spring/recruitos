@@ -35,10 +35,17 @@ export async function POST(req: Request, { params }: { params: { slug: string } 
       }
     }
 
-    const fullName = userFullName?.trim() || parsedData.fullName || "Candidate Application";
-    const email = (userEmail?.toLowerCase().trim() || parsedData.email || "").trim();
-    const phone = userPhone?.trim() || parsedData.phone || "+91-9876543210";
-    const phoneNormalized = normalizePhoneNumber(phone);
+    const sanitizeString = (str?: any): string | null => {
+      if (typeof str !== "string") return null;
+      const cleaned = str.replace(/\0/g, "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "").trim();
+      return cleaned.length > 0 ? cleaned : null;
+    };
+
+    const fullName = sanitizeString(userFullName) || sanitizeString(parsedData.fullName) || "Candidate Application";
+    const email = (sanitizeString(userEmail)?.toLowerCase() || sanitizeString(parsedData.email)?.toLowerCase() || "").trim();
+    const phone = sanitizeString(userPhone) || sanitizeString(parsedData.phone) || "+91-9876543210";
+    const phoneNormalized = sanitizeString(normalizePhoneNumber(phone)) || phone.replace(/[^0-9]/g, "");
+    const cleanRawResumeText = sanitizeString(rawResumeText);
 
     if (!email) {
       return NextResponse.json(
@@ -46,6 +53,10 @@ export async function POST(req: Request, { params }: { params: { slug: string } 
         { status: 400 }
       );
     }
+
+    const cleanSkills = Array.isArray(parsedData.skills)
+      ? (parsedData.skills.map((s: any) => sanitizeString(s)).filter(Boolean) as string[])
+      : [];
 
     const result = await prisma.$transaction(async (tx) => {
       // 1. Find or create candidate
@@ -61,11 +72,11 @@ export async function POST(req: Request, { params }: { params: { slug: string } 
           where: { id: candidate.id },
           data: {
             fullName,
-            rawResumeText: rawResumeText || candidate.rawResumeText,
-            skills: parsedData.skills?.length > 0 ? parsedData.skills : candidate.skills,
-            summary: parsedData.summary || candidate.summary,
-            currentCompany: parsedData.currentCompany || candidate.currentCompany,
-            currentTitle: parsedData.currentTitle || candidate.currentTitle,
+            rawResumeText: cleanRawResumeText || candidate.rawResumeText,
+            skills: cleanSkills.length > 0 ? cleanSkills : candidate.skills,
+            summary: sanitizeString(parsedData.summary) || candidate.summary,
+            currentCompany: sanitizeString(parsedData.currentCompany) || candidate.currentCompany,
+            currentTitle: sanitizeString(parsedData.currentTitle) || candidate.currentTitle,
             totalExpYears: parsedData.totalExpYears || candidate.totalExpYears,
           },
         });
@@ -77,16 +88,16 @@ export async function POST(req: Request, { params }: { params: { slug: string } 
             email,
             phone,
             phoneNormalized,
-            currentCompany: parsedData.currentCompany || null,
-            currentTitle: parsedData.currentTitle || null,
+            currentCompany: sanitizeString(parsedData.currentCompany),
+            currentTitle: sanitizeString(parsedData.currentTitle),
             totalExpYears: parsedData.totalExpYears || 0,
             currentCtc: parsedData.currentCtc || null,
             expectedCtc: parsedData.expectedCtc || null,
             noticePeriodDays: parsedData.noticePeriodDays || 30,
-            location: parsedData.location || null,
-            skills: parsedData.skills || [],
-            summary: parsedData.summary || null,
-            rawResumeText,
+            location: sanitizeString(parsedData.location),
+            skills: cleanSkills,
+            summary: sanitizeString(parsedData.summary),
+            rawResumeText: cleanRawResumeText,
             source: "STOREFRONT_APPLY",
           },
         });

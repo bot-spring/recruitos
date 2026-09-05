@@ -71,11 +71,15 @@ export async function POST(req: Request) {
         console.warn(`Text extraction failed for ${file.name}:`, e.message);
       }
 
+      if (rawText) {
+        rawText = rawText.replace(/\0/g, "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
+      }
+
       // 4. Parse entities with Gemini AI (multimodal PDF vision + deterministic fallback)
       const parsed = await parseResumeWithGemini(rawText, file.name, buffer, file.type);
 
       if (!rawText && parsed.summary) {
-        rawText = parsed.summary;
+        rawText = parsed.summary.replace(/\0/g, "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "");
       }
 
       // 5. Deduplication check against agency database

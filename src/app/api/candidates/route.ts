@@ -92,28 +92,50 @@ export async function POST(req: Request) {
       mandateId,
     } = body;
 
-    const effectiveFullName = (fullName || "Candidate").trim();
-    const isFakeEmail = !email || email === "N/A" || !email.includes("@");
+    // Helper to strip null bytes (\0 / \u0000) and control characters that crash PostgreSQL with 22021 error
+    const sanitizeString = (str?: any): string | null => {
+      if (typeof str !== "string") return null;
+      const cleaned = str.replace(/\0/g, "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "").trim();
+      return cleaned.length > 0 ? cleaned : null;
+    };
+
+    const effectiveFullName = sanitizeString(fullName) || "Candidate";
+    const rawEmail = typeof email === "string" ? email.toLowerCase().trim() : "";
+    const isFakeEmail = !rawEmail || rawEmail === "n/a" || !rawEmail.includes("@");
     const cleanEmail = isFakeEmail
       ? `cand_${Date.now()}_${Math.random().toString(36).substring(2, 8)}@talent.recruitos.ai`
-      : email.toLowerCase().trim();
+      : sanitizeString(rawEmail)!;
 
-    const digitsOnly = (phone || "").replace(/[^0-9]/g, "");
-    const isFakePhone = !phone || phone === "N/A" || digitsOnly.length < 5;
+    const rawPhone = typeof phone === "string" ? phone : "";
+    const digitsOnly = rawPhone.replace(/[^0-9]/g, "");
+    const isFakePhone = !rawPhone || rawPhone === "N/A" || digitsOnly.length < 5;
     const cleanPhone = isFakePhone
       ? `+91-${Date.now().toString().slice(-10)}`
-      : phone.trim();
+      : sanitizeString(rawPhone) || `+91-${Date.now().toString().slice(-10)}`;
 
     const phoneNormalized = isFakePhone
       ? `anon_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
-      : normalizePhoneNumber(cleanPhone) || cleanPhone.replace(/[^0-9]/g, "");
+      : sanitizeString(normalizePhoneNumber(cleanPhone)) || cleanPhone.replace(/[^0-9]/g, "");
 
     let skillsArray: string[] = [];
     if (Array.isArray(skills)) {
-      skillsArray = skills.map((s) => s.trim()).filter(Boolean);
+      skillsArray = skills
+        .map((s) => (typeof s === "string" ? sanitizeString(s) : null))
+        .filter((s): s is string => Boolean(s));
     } else if (typeof skills === "string") {
-      skillsArray = skills.split(",").map((s) => s.trim()).filter(Boolean);
+      skillsArray = skills
+        .split(",")
+        .map((s) => sanitizeString(s))
+        .filter((s): s is string => Boolean(s));
     }
+
+    const cleanCompany = sanitizeString(currentCompany);
+    const cleanTitle = sanitizeString(currentTitle);
+    const cleanLocation = sanitizeString(location);
+    const cleanSummary = sanitizeString(summary);
+    const cleanRawResumeText = sanitizeString(rawResumeText);
+    const cleanResumeUrl = sanitizeString(resumeUrl);
+    const cleanCurrency = sanitizeString(currency)?.toUpperCase() || "INR";
 
     const result = await prisma.$transaction(async (tx) => {
       // 1. Check if candidate already exists (skip deduplication check if generated fake email/phone)
@@ -138,18 +160,18 @@ export async function POST(req: Request) {
             email: isFakeEmail ? candidate.email : cleanEmail,
             phone: isFakePhone ? candidate.phone : cleanPhone,
             phoneNormalized: isFakePhone ? candidate.phoneNormalized : phoneNormalized,
-            currentCompany: currentCompany?.trim() || candidate.currentCompany,
-            currentTitle: currentTitle?.trim() || candidate.currentTitle,
+            currentCompany: cleanCompany || candidate.currentCompany,
+            currentTitle: cleanTitle || candidate.currentTitle,
             totalExpYears: parseFloat(totalExpYears) || candidate.totalExpYears,
             currentCtc: currentCtc ? parseFloat(currentCtc) : candidate.currentCtc,
             expectedCtc: expectedCtc ? parseFloat(expectedCtc) : candidate.expectedCtc,
-            currency: currency.toUpperCase().trim(),
+            currency: cleanCurrency,
             noticePeriodDays: parseInt(noticePeriodDays, 10) || candidate.noticePeriodDays,
-            location: location?.trim() || candidate.location,
+            location: cleanLocation || candidate.location,
             skills: skillsArray.length > 0 ? skillsArray : candidate.skills,
-            summary: summary?.trim() || candidate.summary,
-            rawResumeText: rawResumeText || candidate.rawResumeText,
-            resumeUrl: resumeUrl || candidate.resumeUrl,
+            summary: cleanSummary || candidate.summary,
+            rawResumeText: cleanRawResumeText || candidate.rawResumeText,
+            resumeUrl: cleanResumeUrl || candidate.resumeUrl,
           },
         });
       } else {
@@ -160,18 +182,18 @@ export async function POST(req: Request) {
             email: cleanEmail,
             phone: cleanPhone,
             phoneNormalized: phoneNormalized || cleanPhone,
-            currentCompany: currentCompany?.trim() || null,
-            currentTitle: currentTitle?.trim() || null,
+            currentCompany: cleanCompany,
+            currentTitle: cleanTitle,
             totalExpYears: parseFloat(totalExpYears) || 0,
             currentCtc: currentCtc ? parseFloat(currentCtc) : null,
             expectedCtc: expectedCtc ? parseFloat(expectedCtc) : null,
-            currency: currency.toUpperCase().trim(),
+            currency: cleanCurrency,
             noticePeriodDays: parseInt(noticePeriodDays, 10) || 30,
-            location: location?.trim() || null,
+            location: cleanLocation,
             skills: skillsArray,
-            summary: summary?.trim() || null,
-            rawResumeText: rawResumeText || null,
-            resumeUrl: resumeUrl || null,
+            summary: cleanSummary,
+            rawResumeText: cleanRawResumeText,
+            resumeUrl: cleanResumeUrl,
             source,
           },
         });

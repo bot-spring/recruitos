@@ -62,9 +62,21 @@ export async function POST(req: Request, { params }: { params: { token: string }
       );
     }
 
-    const candidateEmail = (parsed.email || `candidate_${Date.now()}@splitnetwork.com`).toLowerCase().trim();
-    const candidatePhone = parsed.phone || "+91-9876543210";
-    const phoneNormalized = parsed.phoneNormalized || normalizePhoneNumber(candidatePhone);
+    const sanitizeString = (str?: any): string | null => {
+      if (typeof str !== "string") return null;
+      const cleaned = str.replace(/\0/g, "").replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, "").trim();
+      return cleaned.length > 0 ? cleaned : null;
+    };
+
+    const cleanFullName = sanitizeString(parsed.fullName) || "Candidate Submission";
+    const cleanRawResumeText = sanitizeString(rawResumeText);
+    const candidateEmail = (sanitizeString(parsed.email)?.toLowerCase() || `candidate_${Date.now()}@splitnetwork.com`).trim();
+    const candidatePhone = sanitizeString(parsed.phone) || "+91-9876543210";
+    const phoneNormalized = sanitizeString(parsed.phoneNormalized) || sanitizeString(normalizePhoneNumber(candidatePhone)) || candidatePhone.replace(/[^0-9]/g, "");
+
+    const cleanSkills = Array.isArray(parsed.skills)
+      ? (parsed.skills.map((s: any) => sanitizeString(s)).filter(Boolean) as string[])
+      : [];
 
     // Calculate Estimated Split Payout for Partner (PO-01, PO-02)
     const agencyFeePct = partnerShare.mandate.feePercentage; // e.g. 8.33%
@@ -114,12 +126,12 @@ export async function POST(req: Request, { params }: { params: { token: string }
         candidate = await tx.candidate.update({
           where: { id: candidate.id },
           data: {
-            fullName: parsed.fullName,
-            rawResumeText: rawResumeText || candidate.rawResumeText,
-            skills: parsed.skills.length > 0 ? parsed.skills : candidate.skills,
-            summary: parsed.summary || candidate.summary,
-            currentCompany: parsed.currentCompany || candidate.currentCompany,
-            currentTitle: parsed.currentTitle || candidate.currentTitle,
+            fullName: cleanFullName,
+            rawResumeText: cleanRawResumeText || candidate.rawResumeText,
+            skills: cleanSkills.length > 0 ? cleanSkills : candidate.skills,
+            summary: sanitizeString(parsed.summary) || candidate.summary,
+            currentCompany: sanitizeString(parsed.currentCompany) || candidate.currentCompany,
+            currentTitle: sanitizeString(parsed.currentTitle) || candidate.currentTitle,
             totalExpYears: parsed.totalExpYears || candidate.totalExpYears,
             currentCtc: parsed.currentCtc || candidate.currentCtc,
             expectedCtc: parsed.expectedCtc || candidate.expectedCtc,
@@ -130,20 +142,20 @@ export async function POST(req: Request, { params }: { params: { token: string }
         candidate = await tx.candidate.create({
           data: {
             agencyId: partnerShare.agencyId,
-            fullName: parsed.fullName,
+            fullName: cleanFullName,
             email: candidateEmail,
             phone: candidatePhone,
             phoneNormalized: phoneNormalized || candidatePhone,
-            currentCompany: parsed.currentCompany || null,
-            currentTitle: parsed.currentTitle || null,
+            currentCompany: sanitizeString(parsed.currentCompany),
+            currentTitle: sanitizeString(parsed.currentTitle),
             totalExpYears: parsed.totalExpYears || 0,
             currentCtc: parsed.currentCtc || null,
             expectedCtc: parsed.expectedCtc || null,
             noticePeriodDays: parsed.noticePeriodDays || 30,
-            location: parsed.location || null,
-            skills: parsed.skills || [],
-            summary: parsed.summary || null,
-            rawResumeText,
+            location: sanitizeString(parsed.location),
+            skills: cleanSkills,
+            summary: sanitizeString(parsed.summary),
+            rawResumeText: cleanRawResumeText,
             source: "PARTNER_SUBMISSION",
           },
         });

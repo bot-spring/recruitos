@@ -121,24 +121,27 @@ You are an expert recruitment parser. Extract candidate details from the followi
         const responseText = result.response.text();
         const parsedData = JSON.parse(responseText);
 
-        const phone = parsedData.phone || "";
+        const cleanStr = (v: any) => (typeof v === "string" ? v.replace(/\0/g, "").trim() : null);
+        const phone = cleanStr(parsedData.phone) || "";
         const phoneNormalized = normalizePhoneNumber(phone);
 
         return {
-          fullName: sanitizeCandidateName(parsedData.fullName, fileName, rawResumeText),
-          email: (parsedData.email || "").toLowerCase().trim(),
+          fullName: cleanStr(sanitizeCandidateName(parsedData.fullName, fileName, rawResumeText)) || "Candidate",
+          email: (cleanStr(parsedData.email) || "").toLowerCase().trim(),
           phone,
           phoneNormalized,
-          currentCompany: parsedData.currentCompany || null,
-          currentTitle: parsedData.currentTitle || null,
+          currentCompany: cleanStr(parsedData.currentCompany),
+          currentTitle: cleanStr(parsedData.currentTitle),
           totalExpYears: typeof parsedData.totalExpYears === "number" ? parsedData.totalExpYears : 0,
           currentCtc: parsedData.currentCtc ? parseFloat(parsedData.currentCtc) : null,
           expectedCtc: parsedData.expectedCtc ? parseFloat(parsedData.expectedCtc) : null,
-          currency: parsedData.currency || "INR",
+          currency: cleanStr(parsedData.currency) || "INR",
           noticePeriodDays: parsedData.noticePeriodDays ? parseInt(parsedData.noticePeriodDays, 10) : 30,
-          location: parsedData.location || null,
-          skills: Array.isArray(parsedData.skills) ? parsedData.skills : [],
-          summary: parsedData.summary || null,
+          location: cleanStr(parsedData.location),
+          skills: Array.isArray(parsedData.skills)
+            ? parsedData.skills.map((s: any) => cleanStr(s)).filter(Boolean)
+            : [],
+          summary: cleanStr(parsedData.summary),
           workHistory: parsedData.workHistory || [],
         };
       } catch (err: any) {
