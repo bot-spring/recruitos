@@ -76,3 +76,4 @@ export async function uploadResumeFile(
     storageType: "local",
   };
 }
+
