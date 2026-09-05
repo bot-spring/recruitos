@@ -154,6 +154,14 @@ export async function parseResumeWithGemini(
         const phone = cleanStr(parsedData.phone) || "";
         const phoneNormalized = normalizePhoneNumber(phone);
 
+        let totalExpYears = 0;
+        if (typeof parsedData.totalExpYears === "number") {
+          totalExpYears = parsedData.totalExpYears;
+        } else if (typeof parsedData.totalExpYears === "string") {
+          const numMatch = parsedData.totalExpYears.match(/([\d.]+)/);
+          if (numMatch) totalExpYears = parseFloat(numMatch[1]) || 0;
+        }
+
         return {
           fullName: cleanStr(sanitizeCandidateName(parsedData.fullName, fileName, effectiveText)) || "Candidate",
           email: (cleanStr(parsedData.email) || "").toLowerCase().trim(),
@@ -161,7 +169,7 @@ export async function parseResumeWithGemini(
           phoneNormalized,
           currentCompany: cleanStr(parsedData.currentCompany),
           currentTitle: cleanStr(parsedData.currentTitle),
-          totalExpYears: typeof parsedData.totalExpYears === "number" ? parsedData.totalExpYears : 0,
+          totalExpYears,
           currentCtc: parsedData.currentCtc ? parseFloat(parsedData.currentCtc) : null,
           expectedCtc: parsedData.expectedCtc ? parseFloat(parsedData.expectedCtc) : null,
           currency: cleanStr(parsedData.currency) || "INR",

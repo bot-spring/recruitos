@@ -1,3 +1,64 @@
+// Polyfill web canvas/DOM objects required by pdf.js / pdf-parse in Node.js serverless runtimes (e.g. Vercel)
+if (typeof (globalThis as any).DOMMatrix === "undefined") {
+  class DOMMatrixPolyfill {
+    a = 1; b = 0; c = 0; d = 1; e = 0; f = 0;
+    m11 = 1; m12 = 0; m13 = 0; m14 = 0;
+    m21 = 0; m22 = 1; m23 = 0; m24 = 0;
+    m31 = 0; m32 = 0; m33 = 1; m34 = 0;
+    m41 = 0; m42 = 0; m43 = 0; m44 = 1;
+    is2D = true;
+    isIdentity = true;
+    constructor(init?: any) {
+      if (Array.isArray(init) && init.length >= 6) {
+        this.a = init[0] ?? 1; this.b = init[1] ?? 0;
+        this.c = init[2] ?? 0; this.d = init[3] ?? 1;
+        this.e = init[4] ?? 0; this.f = init[5] ?? 0;
+      }
+    }
+    multiply(m: any) { return this; }
+    multiplySelf(m: any) { return this; }
+    preMultiplySelf(m: any) { return this; }
+    invertSelf() { return this; }
+    translate(x = 0, y = 0) { this.e += x; this.f += y; return this; }
+    scale(x = 1, y = 1) { this.a *= x; this.d *= y; return this; }
+    transformPoint(p: any) { return p; }
+  }
+  (globalThis as any).DOMMatrix = DOMMatrixPolyfill;
+  (global as any).DOMMatrix = DOMMatrixPolyfill;
+}
+
+if (typeof (globalThis as any).Path2D === "undefined") {
+  class Path2DPolyfill {
+    addPath() {}
+    closePath() {}
+    moveTo() {}
+    lineTo() {}
+    bezierCurveTo() {}
+    quadraticCurveTo() {}
+    arc() {}
+    arcTo() {}
+    ellipse() {}
+    rect() {}
+  }
+  (globalThis as any).Path2D = Path2DPolyfill;
+  (global as any).Path2D = Path2DPolyfill;
+}
+
+if (typeof (globalThis as any).ImageData === "undefined") {
+  class ImageDataPolyfill {
+    width: number;
+    height: number;
+    data: Uint8ClampedArray;
+    constructor(width: number, height: number) {
+      this.width = width || 0;
+      this.height = height || 0;
+      this.data = new Uint8ClampedArray(this.width * this.height * 4);
+    }
+  }
+  (globalThis as any).ImageData = ImageDataPolyfill;
+  (global as any).ImageData = ImageDataPolyfill;
+}
+
 import mammoth from "mammoth";
 import path from "path";
 
@@ -33,11 +94,13 @@ export async function extractTextFromResume(
             try { await parser.destroy(); } catch (_) {}
           }
           if (result && result.text && result.text.trim().length > 0) {
+            console.log(`[Resume-Parser] Successfully extracted ${result.text.length} characters from ${fileName}`);
             return sanitizeUtf8(result.text);
           }
         } else if (typeof pdfModule === "function") {
           const data = await pdfModule(fileBuffer);
           if (data && data.text && data.text.trim().length > 0) {
+            console.log(`[Resume-Parser] Successfully extracted ${data.text.length} characters from ${fileName}`);
             return sanitizeUtf8(data.text);
           }
         }
