@@ -463,6 +463,8 @@ export default function MandateWorkspacePage() {
 
     try {
       let savedCount = 0;
+      let lastErrorMessage = "";
+
       for (const item of batchResults) {
         if (!item.success || !item.parsed) continue;
         const p = item.parsed;
@@ -471,8 +473,8 @@ export default function MandateWorkspacePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             fullName: p.fullName || "Candidate",
-            email: p.email || `${Date.now()}_candidate@example.com`,
-            phone: p.phone || "N/A",
+            email: p.email || "",
+            phone: p.phone || "",
             currentCompany: p.currentCompany || "",
             currentTitle: p.currentTitle || "",
             totalExpYears: p.totalExpYears || 0,
@@ -492,14 +494,25 @@ export default function MandateWorkspacePage() {
 
         if (res.ok) {
           savedCount++;
+        } else {
+          try {
+            const errData = await res.json();
+            lastErrorMessage = errData.error || `HTTP ${res.status}`;
+          } catch (_) {
+            lastErrorMessage = `Server returned ${res.status}: ${res.statusText}`;
+          }
         }
       }
 
-      setSuccessMessage(`Successfully ingested and attached ${savedCount} candidate(s) to this job!`);
-      setIsIngestModalOpen(false);
-      setUploadFiles([]);
-      setBatchResults([]);
-      fetchWorkspace();
+      if (savedCount > 0) {
+        setSuccessMessage(`Successfully ingested and attached ${savedCount} candidate(s) to this job!`);
+        setIsIngestModalOpen(false);
+        setUploadFiles([]);
+        setBatchResults([]);
+        await fetchWorkspace();
+      } else {
+        setParseError(`Failed to save candidates: ${lastErrorMessage || "Unable to save to database."}`);
+      }
     } catch (err: any) {
       setParseError(err.message || "Failed to save ingested candidates.");
     } finally {

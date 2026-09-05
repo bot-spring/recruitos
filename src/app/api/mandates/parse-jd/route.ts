@@ -15,6 +15,8 @@ export async function POST(req: Request) {
   try {
     const contentType = req.headers.get("content-type") || "";
     let rawText = "";
+    let fileBuffer: Buffer | undefined;
+    let mimeType: string | undefined;
 
     if (contentType.includes("multipart/form-data")) {
       const formData = await req.formData();
@@ -32,21 +34,25 @@ export async function POST(req: Request) {
       }
 
       const arrayBuffer = await file.arrayBuffer();
-      const buffer = Buffer.from(arrayBuffer);
-      rawText = await extractTextFromResume(buffer, file.name, file.type);
+      fileBuffer = Buffer.from(arrayBuffer);
+      mimeType = file.type;
+
+      try {
+        rawText = await extractTextFromResume(fileBuffer, file.name, file.type);
+      } catch (_) {}
     } else {
       const body = await req.json();
       rawText = (body.text || "").trim();
     }
 
-    if (!rawText || rawText.trim().length < 15) {
+    if (!rawText && !fileBuffer) {
       return NextResponse.json(
-        { error: "Job description text is empty or too short to extract requirements." },
+        { error: "Job description text or document is required." },
         { status: 400 }
       );
     }
 
-    const parsed = await parseJobDescriptionWithGemini(rawText);
+    const parsed = await parseJobDescriptionWithGemini(rawText, fileBuffer, mimeType);
 
     return NextResponse.json({
       success: true,

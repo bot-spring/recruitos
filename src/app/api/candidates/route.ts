@@ -92,16 +92,21 @@ export async function POST(req: Request) {
       mandateId,
     } = body;
 
-    if (!fullName || !email || !phone) {
-      return NextResponse.json(
-        { error: "Candidate Full Name, Email, and Phone number are required." },
-        { status: 400 }
-      );
-    }
+    const effectiveFullName = (fullName || "Candidate").trim();
+    const isFakeEmail = !email || email === "N/A" || !email.includes("@");
+    const cleanEmail = isFakeEmail
+      ? `cand_${Date.now()}_${Math.random().toString(36).substring(2, 8)}@talent.recruitos.ai`
+      : email.toLowerCase().trim();
 
-    const cleanEmail = email.toLowerCase().trim();
-    const cleanPhone = phone.trim();
-    const phoneNormalized = normalizePhoneNumber(cleanPhone) || cleanPhone.replace(/[^0-9]/g, "");
+    const digitsOnly = (phone || "").replace(/[^0-9]/g, "");
+    const isFakePhone = !phone || phone === "N/A" || digitsOnly.length < 5;
+    const cleanPhone = isFakePhone
+      ? `+91-${Date.now().toString().slice(-10)}`
+      : phone.trim();
+
+    const phoneNormalized = isFakePhone
+      ? `anon_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`
+      : normalizePhoneNumber(cleanPhone) || cleanPhone.replace(/[^0-9]/g, "");
 
     let skillsArray: string[] = [];
     if (Array.isArray(skills)) {
@@ -111,25 +116,28 @@ export async function POST(req: Request) {
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Check if candidate already exists by (agencyId, email) or (agencyId, phoneNormalized)
-      let candidate = await tx.candidate.findFirst({
-        where: {
-          agencyId: session.user.agencyId!,
-          OR: [
-            { email: cleanEmail },
-            ...(phoneNormalized ? [{ phoneNormalized }] : []),
-          ],
-        },
-      });
+      // 1. Check if candidate already exists (skip deduplication check if generated fake email/phone)
+      let candidate = null;
+      if (!isFakeEmail || !isFakePhone) {
+        candidate = await tx.candidate.findFirst({
+          where: {
+            agencyId: session.user.agencyId!,
+            OR: [
+              ...(!isFakeEmail ? [{ email: cleanEmail }] : []),
+              ...(!isFakePhone ? [{ phoneNormalized }] : []),
+            ],
+          },
+        });
+      }
 
       if (candidate) {
         candidate = await tx.candidate.update({
           where: { id: candidate.id },
           data: {
-            fullName: fullName.trim(),
-            email: cleanEmail,
-            phone: cleanPhone,
-            phoneNormalized: phoneNormalized || candidate.phoneNormalized,
+            fullName: effectiveFullName,
+            email: isFakeEmail ? candidate.email : cleanEmail,
+            phone: isFakePhone ? candidate.phone : cleanPhone,
+            phoneNormalized: isFakePhone ? candidate.phoneNormalized : phoneNormalized,
             currentCompany: currentCompany?.trim() || candidate.currentCompany,
             currentTitle: currentTitle?.trim() || candidate.currentTitle,
             totalExpYears: parseFloat(totalExpYears) || candidate.totalExpYears,
@@ -148,7 +156,7 @@ export async function POST(req: Request) {
         candidate = await tx.candidate.create({
           data: {
             agencyId: session.user.agencyId!,
-            fullName: fullName.trim(),
+            fullName: effectiveFullName,
             email: cleanEmail,
             phone: cleanPhone,
             phoneNormalized: phoneNormalized || cleanPhone,

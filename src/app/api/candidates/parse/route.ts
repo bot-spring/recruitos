@@ -64,19 +64,19 @@ export async function POST(req: Request) {
       const resumeUrl = uploadResult.resumeUrl;
 
       // 3. Extract text from PDF / DOCX
-      const rawText = await extractTextFromResume(buffer, file.name, file.type);
-      if (!rawText || rawText.trim().length < 10) {
-        results.push({
-          fileName: file.name,
-          success: false,
-          error: "Document appears empty or contains unreadable text.",
-          resumeUrl,
-        });
-        continue;
+      let rawText = "";
+      try {
+        rawText = await extractTextFromResume(buffer, file.name, file.type);
+      } catch (e: any) {
+        console.warn(`Text extraction failed for ${file.name}:`, e.message);
       }
 
-      // 4. Parse entities with Gemini AI (with deterministic fallback)
-      const parsed = await parseResumeWithGemini(rawText, file.name);
+      // 4. Parse entities with Gemini AI (multimodal PDF vision + deterministic fallback)
+      const parsed = await parseResumeWithGemini(rawText, file.name, buffer, file.type);
+
+      if (!rawText && parsed.summary) {
+        rawText = parsed.summary;
+      }
 
       // 5. Deduplication check against agency database
       let existingCandidate = null;

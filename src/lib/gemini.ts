@@ -51,13 +51,19 @@ const GEMINI_MODELS = [
  */
 export async function parseResumeWithGemini(
   rawResumeText: string,
-  fileName?: string
+  fileName?: string,
+  pdfBuffer?: Buffer,
+  mimeType?: string
 ): Promise<ParsedCandidateProfile> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
 
   // If Gemini API Key is available, attempt AI Extraction with model fallback
   if (apiKey && apiKey !== "" && apiKey !== "your_gemini_api_key_here") {
     const genAI = new GoogleGenerativeAI(apiKey);
+    const isPdf = Boolean(
+      pdfBuffer &&
+      (mimeType === "application/pdf" || fileName?.toLowerCase().endsWith(".pdf"))
+    );
 
     for (const modelName of GEMINI_MODELS) {
       try {
@@ -70,10 +76,10 @@ export async function parseResumeWithGemini(
         });
 
         const prompt = `
-You are an expert recruitment parser. Extract candidate details from the following resume text into strict JSON matching this exact schema:
+You are an expert recruitment parser. Extract candidate details from the following resume into strict JSON matching this exact schema:
 
 {
-  "fullName": "string (Candidate's first and last name - ignore words like RESUME, CV, CURRICULUM VITAE)",
+  "fullName": "string (Candidate's first and last name - ignore words like RESUME, CV, CURRICULUM VITAE, NAUKRI)",
   "email": "string (Primary email address)",
   "phone": "string (Primary phone / mobile number with country code)",
   "currentCompany": "string or null (Current or most recent company/employer)",
@@ -94,14 +100,24 @@ You are an expert recruitment parser. Extract candidate details from the followi
     }
   ]
 }
-
-Resume Text:
-"""
-${rawResumeText.substring(0, 12000)}
-"""
 `;
 
-        const result = await model.generateContent(prompt);
+        let contents: any;
+        if (isPdf && pdfBuffer) {
+          contents = [
+            {
+              inlineData: {
+                data: pdfBuffer.toString("base64"),
+                mimeType: "application/pdf",
+              },
+            },
+            { text: prompt },
+          ];
+        } else {
+          contents = `${prompt}\n\nResume Text:\n"""\n${rawResumeText.substring(0, 12000)}\n"""`;
+        }
+
+        const result = await model.generateContent(contents);
         const responseText = result.response.text();
         const parsedData = JSON.parse(responseText);
 
@@ -343,12 +359,15 @@ export interface ParsedJobDescription {
  * with fallback to deterministic extraction engine.
  */
 export async function parseJobDescriptionWithGemini(
-  rawJdText: string
+  rawJdText: string,
+  pdfBuffer?: Buffer,
+  mimeType?: string
 ): Promise<ParsedJobDescription> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
 
   if (apiKey && apiKey !== "" && apiKey !== "your_gemini_api_key_here") {
     const genAI = new GoogleGenerativeAI(apiKey);
+    const isPdf = Boolean(pdfBuffer && mimeType === "application/pdf");
 
     for (const modelName of GEMINI_MODELS) {
       try {
@@ -377,14 +396,24 @@ You are an expert executive search recruiter. Extract structured hiring mandate 
   "skills": ["string"] (Array of essential technical, domain, or soft skills mentioned),
   "description": "string (Cleaned, well-structured full job description text)"
 }
-
-Job Description Text:
-"""
-${rawJdText.substring(0, 12000)}
-"""
 `;
 
-        const result = await model.generateContent(prompt);
+        let contents: any;
+        if (isPdf && pdfBuffer) {
+          contents = [
+            {
+              inlineData: {
+                data: pdfBuffer.toString("base64"),
+                mimeType: "application/pdf",
+              },
+            },
+            { text: prompt },
+          ];
+        } else {
+          contents = `${prompt}\n\nJob Description Text:\n"""\n${rawJdText.substring(0, 12000)}\n"""`;
+        }
+
+        const result = await model.generateContent(contents);
         const responseText = result.response.text();
         const parsed = JSON.parse(responseText);
 
