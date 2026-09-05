@@ -54,3 +54,7 @@ export async function GET() {
     return NextResponse.json({ error: error.message || "Failed to fetch inbound mandates" }, { status: 500 });
   }
 }
+
+// POST /api/mandates/inbound - Resilient fallback that routes to mandate creation
+import { POST as createMandate } from "../route";
+export { createMandate as POST };

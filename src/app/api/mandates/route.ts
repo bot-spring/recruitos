@@ -134,12 +134,15 @@ export async function POST(req: Request) {
       specialInstructions,
     } = body;
 
-    if (!companyName || !contactName || !contactEmail || !title || !assignedRecruiterId) {
+    if (!companyName || !contactEmail || !title) {
       return NextResponse.json(
-        { error: "Missing required fields: Company Name, Contact Name, Email, Job Title, and Assigned Recruiter." },
+        { error: "Missing required fields: Company Name, Contact Email, and Job Title." },
         { status: 400 }
       );
     }
+
+    const effectiveRecruiterId = assignedRecruiterId || session.user.id;
+    const effectiveContactName = contactName?.trim() || contactEmail.split("@")[0] || "Hiring Lead";
 
     // Process skills array
     let skillsArray: string[] = [];
@@ -190,7 +193,7 @@ export async function POST(req: Request) {
           data: {
             agencyId: session.user.agencyId!,
             clientId: client.id,
-            name: contactName.trim(),
+            name: effectiveContactName,
             email: contactEmail.toLowerCase().trim(),
             phone: contactPhone?.trim() || null,
           },
@@ -203,7 +206,7 @@ export async function POST(req: Request) {
           agencyId: session.user.agencyId!,
           clientId: client.id,
           contactId: contact.id,
-          assignedRecruiterId,
+          assignedRecruiterId: effectiveRecruiterId,
           title: title.trim(),
           department: department?.trim() || null,
           openings: parseInt(openings, 10) || 1,
@@ -241,7 +244,7 @@ export async function POST(req: Request) {
           metadata: {
             companyName: client.name,
             jobTitle: mandate.title,
-            assignedRecruiterId,
+            assignedRecruiterId: effectiveRecruiterId,
           },
         },
       });

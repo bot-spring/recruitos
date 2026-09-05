@@ -321,3 +321,219 @@ export function smartDeterministicResumeParser(text: string, fileName?: string):
     summary: `${fullName} is an experienced professional with specialized expertise in ${matchedSkills.slice(0, 4).join(", ") || "technology and engineering solutions"}.`,
   };
 }
+
+export interface ParsedJobDescription {
+  title: string;
+  companyName: string;
+  department?: string;
+  minExp: number;
+  maxExp: number;
+  minCtc: number | null;
+  maxCtc: number | null;
+  currency: string;
+  location: string;
+  workMode: "REMOTE" | "HYBRID" | "ONSITE";
+  skills: string[];
+  description: string;
+  openings?: number;
+}
+
+/**
+ * Parses raw Job Description text into structured mandate fields using Google Gemini AI,
+ * with fallback to deterministic extraction engine.
+ */
+export async function parseJobDescriptionWithGemini(
+  rawJdText: string
+): Promise<ParsedJobDescription> {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+
+  if (apiKey && apiKey !== "" && apiKey !== "your_gemini_api_key_here") {
+    const genAI = new GoogleGenerativeAI(apiKey);
+
+    for (const modelName of GEMINI_MODELS) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+          },
+        });
+
+        const prompt = `
+You are an expert executive search recruiter. Extract structured hiring mandate details from the following Job Description text into strict JSON matching this exact schema:
+
+{
+  "title": "string (Exact Job / Role Title e.g. Full Stack Developer - Node.JS & Angular)",
+  "companyName": "string (Hiring company name if mentioned, otherwise empty string)",
+  "department": "string (Engineering, Product, Sales, etc. or empty string)",
+  "minExp": number (Minimum required years of experience e.g. 3, or 0 if unspecified),
+  "maxExp": number (Maximum years of experience e.g. 7, or minExp + 3 if only minExp is mentioned, or 0 if unspecified),
+  "minCtc": number or null (Minimum annual salary/budget in absolute numbers e.g. 4000000 for 40 LPA, or null if unspecified),
+  "maxCtc": number or null (Maximum annual salary/budget in absolute numbers e.g. 6000000 for 60 LPA, or null if unspecified),
+  "currency": "string (e.g. INR, USD, default INR)",
+  "location": "string (City / Location e.g. Bengaluru, Mumbai, or empty string)",
+  "workMode": "REMOTE" | "HYBRID" | "ONSITE" (default HYBRID),
+  "skills": ["string"] (Array of essential technical, domain, or soft skills mentioned),
+  "description": "string (Cleaned, well-structured full job description text)"
+}
+
+Job Description Text:
+"""
+${rawJdText.substring(0, 12000)}
+"""
+`;
+
+        const result = await model.generateContent(prompt);
+        const responseText = result.response.text();
+        const parsed = JSON.parse(responseText);
+
+        const workModeUpper = (parsed.workMode || "").toUpperCase();
+        const validWorkMode = ["REMOTE", "HYBRID", "ONSITE"].includes(workModeUpper)
+          ? (workModeUpper as "REMOTE" | "HYBRID" | "ONSITE")
+          : "HYBRID";
+
+        return {
+          title: (parsed.title || "").trim(),
+          companyName: (parsed.companyName || "").trim(),
+          department: (parsed.department || "").trim(),
+          minExp: typeof parsed.minExp === "number" ? Math.max(0, parsed.minExp) : 0,
+          maxExp: typeof parsed.maxExp === "number" ? Math.max(0, parsed.maxExp) : 0,
+          minCtc: parsed.minCtc ? parseFloat(parsed.minCtc) : null,
+          maxCtc: parsed.maxCtc ? parseFloat(parsed.maxCtc) : null,
+          currency: parsed.currency || "INR",
+          location: (parsed.location || "").trim(),
+          workMode: validWorkMode,
+          skills: Array.isArray(parsed.skills) ? parsed.skills.filter(Boolean) : [],
+          description: (parsed.description || rawJdText).trim(),
+        };
+      } catch (err: any) {
+        console.warn(`Gemini model '${modelName}' failed on JD parse: ${err.message || err}. Trying next model...`);
+      }
+    }
+  }
+
+  // Deterministic fallback
+  return smartDeterministicJobDescriptionParser(rawJdText);
+}
+
+/**
+ * Intelligent deterministic non-AI parser for Job Descriptions
+ */
+export function smartDeterministicJobDescriptionParser(text: string): ParsedJobDescription {
+  const lines = text.split("\n").map((l) => l.trim()).filter(Boolean);
+
+  // 1. Role Title Detection
+  let title = "";
+  const titlePatterns = [
+    /(?:Role|Position|Job Title|Designation|Hiring for)[:\s-]*([A-Za-z0-9\s.,&/()-]{4,60})/i,
+    /(?:Senior|Lead|Principal|Staff|Junior|Associate)?\s*(?:Software|Full[- ]?Stack|Frontend|Backend|DevOps|Data|Cloud|Mobile|QA|Product|Project|Operations|Sales|Marketing|Engineering)\s*(?:Engineer|Developer|Architect|Manager|Consultant|Specialist|Analyst|Director|Lead)/i,
+  ];
+
+  for (const pattern of titlePatterns) {
+    const match = text.match(pattern);
+    if (match) {
+      title = (match[1] || match[0]).trim();
+      break;
+    }
+  }
+
+  if (!title && lines.length > 0) {
+    // If line 1 is reasonably short, assume it's the title
+    if (lines[0].length < 70 && !lines[0].includes("http")) {
+      title = lines[0];
+    }
+  }
+  if (!title) title = "Software Engineer";
+
+  // 2. Company Name
+  let companyName = "";
+  const compMatch = text.match(/(?:Company|Client|Organization|About)\s*[:\-]?\s*([A-Za-z0-9\s.,&-]{3,40})/i);
+  if (compMatch) {
+    companyName = compMatch[1].trim();
+  }
+
+  // 3. Experience Range (Years)
+  let minExp = 0;
+  let maxExp = 0;
+  const expRangeMatch = text.match(/(\d+)\s*(?:to|-)\s*(\d+)\s*(?:years?|yrs?)/i);
+  if (expRangeMatch) {
+    minExp = parseInt(expRangeMatch[1], 10);
+    maxExp = parseInt(expRangeMatch[2], 10);
+  } else {
+    const singleExpMatch = text.match(/(\d+)\+?\s*(?:years?|yrs?)/i);
+    if (singleExpMatch) {
+      minExp = parseInt(singleExpMatch[1], 10);
+      maxExp = minExp + 3;
+    }
+  }
+
+  // 4. CTC / Budget
+  let minCtc: number | null = null;
+  let maxCtc: number | null = null;
+  const ctcLakhsMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:to|-)\s*(\d+(?:\.\d+)?)\s*(?:lpa|lakhs?|lac)/i);
+  if (ctcLakhsMatch) {
+    minCtc = parseFloat(ctcLakhsMatch[1]) * 100000;
+    maxCtc = parseFloat(ctcLakhsMatch[2]) * 100000;
+  } else {
+    const directNumberMatch = text.match(/(\d{6,8})\s*(?:to|-)\s*(\d{6,8})/);
+    if (directNumberMatch) {
+      minCtc = parseFloat(directNumberMatch[1]);
+      maxCtc = parseFloat(directNumberMatch[2]);
+    }
+  }
+
+  // 5. Work Mode
+  let workMode: "REMOTE" | "HYBRID" | "ONSITE" = "HYBRID";
+  if (/\b(?:remote|work from home|wfh)\b/i.test(text)) {
+    workMode = "REMOTE";
+  } else if (/\b(?:onsite|on-site|in-office|in office)\b/i.test(text)) {
+    workMode = "ONSITE";
+  }
+
+  // 6. Location
+  let location = "";
+  const commonCities = [
+    "Bengaluru", "Bangalore", "Mumbai", "Pune", "Hyderabad", "Gurgaon", "Gurugram",
+    "Delhi", "Noida", "Chennai", "Kolkata", "Ahmedabad", "San Francisco", "New York",
+    "Seattle", "Austin", "London", "Singapore", "Dubai"
+  ];
+  for (const city of commonCities) {
+    if (new RegExp(`\\b${city}\\b`, "i").test(text)) {
+      location = city;
+      break;
+    }
+  }
+
+  // 7. Skills extraction
+  const skillDictionary = [
+    "JavaScript", "TypeScript", "React", "Next.js", "Node.js", "Express", "NestJS", "Vue.js", "Angular",
+    "Python", "Django", "FastAPI", "Flask", "Java", "Spring Boot", "Go", "Golang", "C++", "C#", ".NET", "Rust",
+    "PostgreSQL", "MongoDB", "MySQL", "Oracle", "Redis", "Kafka", "Elasticsearch", "Cassandra", "DynamoDB",
+    "AWS", "GCP", "Google Cloud", "Azure", "Docker", "Kubernetes", "Terraform", "CI/CD", "GitHub Actions",
+    "Microservices", "REST API", "GraphQL", "gRPC", "Tailwind CSS", "Redux", "HTML5", "CSS3",
+    "Machine Learning", "Deep Learning", "TensorFlow", "PyTorch", "NLP", "Computer Vision", "LLMs", "GenAI",
+    "System Design", "Agile", "Scrum", "Git", "Linux", "DevOps", "Cybersecurity", "Embedded Systems",
+    "Automation", "Performance Tuning", "Debugging", "Distributed Systems"
+  ];
+
+  const matchedSkills = skillDictionary.filter((s) => {
+    const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return new RegExp(`\\b${escaped}\\b`, "i").test(text);
+  });
+
+  return {
+    title,
+    companyName,
+    minExp,
+    maxExp,
+    minCtc,
+    maxCtc,
+    currency: "INR",
+    location,
+    workMode,
+    skills: matchedSkills,
+    description: text.trim(),
+  };
+}
+

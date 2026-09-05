@@ -20,6 +20,8 @@ import {
   Phone,
   Globe,
   MapPin,
+  Upload,
+  Loader2,
 } from "lucide-react";
 
 export default function ClientMandateIntakeWizard() {
@@ -31,6 +33,12 @@ export default function ClientMandateIntakeWizard() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submittedData, setSubmittedData] = useState<{ mandateId: string; companyName: string; title: string } | null>(null);
+
+  // AI JD Auto-Fill State
+  const [jdRawInput, setJdRawInput] = useState("");
+  const [isParsingJd, setIsParsingJd] = useState(false);
+  const [jdParseSuccess, setJdParseSuccess] = useState<string | null>(null);
+  const [jdParseError, setJdParseError] = useState<string | null>(null);
 
   // Form State
   const [formData, setFormData] = useState({
@@ -105,6 +113,71 @@ export default function ClientMandateIntakeWizard() {
     if (step > 1) setStep(step - 1);
   };
 
+  // AI Job Description Auto-Parsing Handler
+  const handleParseJd = async (textToParse?: string, fileToParse?: File) => {
+    const text = textToParse !== undefined ? textToParse : jdRawInput;
+    if (!fileToParse && (!text || text.trim().length < 15)) {
+      setJdParseError("Please provide job description text (at least 15 characters) or upload a JD document.");
+      return;
+    }
+
+    setIsParsingJd(true);
+    setJdParseError(null);
+    setJdParseSuccess(null);
+
+    try {
+      let res: Response;
+      if (fileToParse) {
+        const fd = new FormData();
+        fd.append("file", fileToParse);
+        res = await fetch("/api/mandates/parse-jd", {
+          method: "POST",
+          body: fd,
+        });
+      } else {
+        res = await fetch("/api/mandates/parse-jd", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+      }
+
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`Server returned HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to parse Job Description.");
+      }
+
+      const parsed = data.data;
+      setFormData((prev) => ({
+        ...prev,
+        companyName: parsed.companyName || prev.companyName,
+        title: parsed.title || prev.title,
+        department: parsed.department || prev.department,
+        minExp: parsed.minExp !== undefined ? parsed.minExp : prev.minExp,
+        maxExp: parsed.maxExp !== undefined ? parsed.maxExp : prev.maxExp,
+        workMode: parsed.workMode || prev.workMode,
+        location: parsed.location || prev.location,
+        skills: Array.isArray(parsed.skills) && parsed.skills.length > 0 ? parsed.skills.join(", ") : prev.skills,
+        description: parsed.description || prev.description || text,
+        minCtc: parsed.minCtc ? String(parsed.minCtc) : prev.minCtc,
+        maxCtc: parsed.maxCtc ? String(parsed.maxCtc) : prev.maxCtc,
+        currency: parsed.currency || prev.currency,
+      }));
+
+      setJdParseSuccess("✨ Requirements extracted! Job title, skills, experience, CTC, and description have been auto-populated.");
+    } catch (err: any) {
+      setJdParseError(err.message || "Failed to parse Job Description.");
+    } finally {
+      setIsParsingJd(false);
+    }
+  };
+
   const handleSubmit = async () => {
     setSubmitting(true);
     setError(null);
@@ -116,9 +189,15 @@ export default function ClientMandateIntakeWizard() {
         body: JSON.stringify(formData),
       });
 
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`Server returned HTTP ${res.status}: ${res.statusText}`);
+      }
+
       if (!res.ok) {
-        throw new Error(data.error || "Failed to submit hiring requirement.");
+        throw new Error(data?.error || "Failed to submit hiring requirement.");
       }
 
       setSubmittedData({
@@ -245,6 +324,83 @@ export default function ClientMandateIntakeWizard() {
           )}
 
           <form onSubmit={handleNext} className="space-y-6 text-xs">
+            {/* AI Auto-Fill from Job Description banner (Available on Step 1 & 2) */}
+            {(step === 1 || step === 2) && (
+              <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200 rounded-2xl p-4 sm:p-5 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Sparkles className="h-4 w-4 text-amber-600" />
+                    <span className="font-extrabold text-slate-900 text-xs sm:text-sm">
+                      ✨ Have a Job Description? Auto-Fill Requirement with AI
+                    </span>
+                  </div>
+                  <span className="text-[10px] text-amber-800 font-bold bg-amber-100 px-2.5 py-0.5 rounded-full border border-amber-300">
+                    Gemini AI
+                  </span>
+                </div>
+                <p className="text-slate-600 text-xs leading-relaxed">
+                  Skip manual typing! Paste your Job Description or upload a document (.pdf, .docx, .txt). Our AI will instantly extract your role specifications, skills, experience scope, and budget.
+                </p>
+
+                {jdParseError && (
+                  <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start space-x-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                    <span>{jdParseError}</span>
+                  </div>
+                )}
+                {jdParseSuccess && (
+                  <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs flex items-start space-x-1.5 font-medium">
+                    <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-emerald-600" />
+                    <span>{jdParseSuccess}</span>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <textarea
+                    rows={3}
+                    value={jdRawInput}
+                    onChange={(e) => setJdRawInput(e.target.value)}
+                    placeholder="Paste your Job Description text here..."
+                    className="w-full px-3 py-2 border border-amber-200 rounded-xl text-xs bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <label className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-amber-100/50 border border-amber-300 text-slate-700 rounded-lg text-xs font-bold cursor-pointer transition-colors">
+                      <Upload className="h-3.5 w-3.5 text-amber-600" />
+                      <span>Upload JD Document (PDF / Word)</span>
+                      <input
+                        type="file"
+                        accept=".pdf,.docx,.doc,.txt"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleParseJd(undefined, file);
+                        }}
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      disabled={isParsingJd || !jdRawInput.trim()}
+                      onClick={() => handleParseJd(jdRawInput)}
+                      className="inline-flex items-center space-x-1.5 px-4 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
+                    >
+                      {isParsingJd ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <span>Analyzing JD with AI...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-3.5 w-3.5" />
+                          <span>✨ Auto-Fill Requirement</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* STEP 1: COMPANY & CONTACT PROFILE */}
             {step === 1 && (
               <div className="space-y-5 animate-in fade-in duration-200">
@@ -490,7 +646,20 @@ export default function ClientMandateIntakeWizard() {
                   </div>
 
                   <div className="sm:col-span-2">
-                    <label className="block font-semibold text-slate-700 mb-1">Role Summary & Ideal Candidate Notes</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-semibold text-slate-700">Role Summary & Ideal Candidate Notes</label>
+                      {formData.description && formData.description.trim().length > 20 && (
+                        <button
+                          type="button"
+                          onClick={() => handleParseJd(formData.description)}
+                          disabled={isParsingJd}
+                          className="text-[11px] font-bold text-amber-700 hover:text-amber-900 flex items-center space-x-1 cursor-pointer"
+                        >
+                          <Sparkles className="h-3 w-3" />
+                          <span>✨ Auto-extract details from this description</span>
+                        </button>
+                      )}
+                    </div>
                     <textarea
                       rows={3}
                       value={formData.description}

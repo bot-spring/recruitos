@@ -46,6 +46,8 @@ import {
   Phone,
   UserPlus,
   TrendingUp,
+  Upload,
+  Loader2,
 } from "lucide-react";
 
 interface InboundMandate {
@@ -292,6 +294,12 @@ export default function CockpitPage() {
     assignedRecruiterId: "",
   });
 
+  // AI JD Auto-Fill State
+  const [jdRawInput, setJdRawInput] = useState("");
+  const [isParsingJd, setIsParsingJd] = useState(false);
+  const [jdParseSuccess, setJdParseSuccess] = useState<string | null>(null);
+  const [jdParseError, setJdParseError] = useState<string | null>(null);
+
   // Broadcast & Partner Share Modal State (RC-08, PO-01)
   const [distributionMandate, setDistributionMandate] = useState<ActiveMandate | MandateFunnelRecord | null>(null);
   const [activeDistTab, setActiveDistTab] = useState<"BROADCAST" | "PARTNER">("BROADCAST");
@@ -409,6 +417,71 @@ export default function CockpitPage() {
     }
   };
 
+  // AI Job Description Auto-Parsing Handler
+  const handleParseJd = async (textToParse?: string, fileToParse?: File) => {
+    const text = textToParse !== undefined ? textToParse : jdRawInput;
+    if (!fileToParse && (!text || text.trim().length < 15)) {
+      setJdParseError("Please provide job description text (at least 15 characters) or select a document.");
+      return;
+    }
+
+    setIsParsingJd(true);
+    setJdParseError(null);
+    setJdParseSuccess(null);
+
+    try {
+      let res: Response;
+      if (fileToParse) {
+        const fd = new FormData();
+        fd.append("file", fileToParse);
+        res = await fetch("/api/mandates/parse-jd", {
+          method: "POST",
+          body: fd,
+        });
+      } else {
+        res = await fetch("/api/mandates/parse-jd", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text }),
+        });
+      }
+
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`Server returned HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      if (!res.ok) {
+        throw new Error(data?.error || "Failed to parse Job Description.");
+      }
+
+      const parsed = data.data;
+      setOfflineForm((prev) => ({
+        ...prev,
+        title: parsed.title || prev.title,
+        companyName: parsed.companyName || prev.companyName,
+        department: parsed.department || prev.department,
+        minExp: parsed.minExp !== undefined ? parsed.minExp : prev.minExp,
+        maxExp: parsed.maxExp !== undefined ? parsed.maxExp : prev.maxExp,
+        minCtc: parsed.minCtc ? String(parsed.minCtc) : prev.minCtc,
+        maxCtc: parsed.maxCtc ? String(parsed.maxCtc) : prev.maxCtc,
+        currency: parsed.currency || prev.currency,
+        location: parsed.location || prev.location,
+        workMode: parsed.workMode || prev.workMode,
+        skills: Array.isArray(parsed.skills) && parsed.skills.length > 0 ? parsed.skills.join(", ") : prev.skills,
+        description: parsed.description || prev.description || text,
+      }));
+
+      setJdParseSuccess("✨ Job Description parsed! All mandate fields have been auto-populated.");
+    } catch (err: any) {
+      setJdParseError(err.message || "Failed to parse Job Description.");
+    } finally {
+      setIsParsingJd(false);
+    }
+  };
+
   // Handle Offline Mandate Creation
   const handleOfflineSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -416,7 +489,7 @@ export default function CockpitPage() {
     setOfflineError(null);
 
     try {
-      const res = await fetch("/api/mandates/inbound", {
+      const res = await fetch("/api/mandates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -434,13 +507,22 @@ export default function CockpitPage() {
         }),
       });
 
-      const data = await res.json();
+      let data: any = null;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`Server returned HTTP ${res.status}: ${res.statusText}`);
+      }
+
       if (!res.ok) {
-        throw new Error(data.error || "Failed to create mandate");
+        throw new Error(data?.error || "Failed to create mandate");
       }
 
       setSuccessMessage(`Mandate '${offlineForm.title}' created and launched on SLA radar!`);
       setIsOfflineModalOpen(false);
+      setJdRawInput("");
+      setJdParseSuccess(null);
+      setJdParseError(null);
       fetchMandatesData();
       fetchFunnelData();
     } catch (err: any) {
@@ -1135,6 +1217,14 @@ export default function CockpitPage() {
                           <div className="text-xs text-slate-500 flex flex-wrap items-center gap-3">
                             <span>{m.location || "Hybrid"}</span>
                             <span>•</span>
+                            <span>Exp: <strong>{m.minExp && m.maxExp ? `${m.minExp}-${m.maxExp} yrs` : m.minExp ? `${m.minExp}+ yrs` : "Any"}</strong></span>
+                            {(m.minCtc || m.maxCtc) ? (
+                              <>
+                                <span>•</span>
+                                <span>CTC: <strong>{(m.minCtc ? `${(m.minCtc / 100000).toFixed(0)}L` : "") + (m.minCtc && m.maxCtc ? " - " : "") + (m.maxCtc ? `${(m.maxCtc / 100000).toFixed(0)}L` : "")}</strong></span>
+                              </>
+                            ) : null}
+                            <span>•</span>
                             <span>Fee: <strong>{m.feePercentage}%</strong></span>
                             <span>•</span>
                             <span>Guarantee: <strong>{m.guaranteeDays}d</strong></span>
@@ -1317,6 +1407,79 @@ export default function CockpitPage() {
                 </div>
               )}
 
+              {/* AI Auto-Fill Toolbar */}
+              <div className="bg-gradient-to-br from-amber-50 to-orange-50 border border-amber-200/80 rounded-2xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <Sparkles className="h-4 w-4 text-amber-600" />
+                    <span className="font-extrabold text-slate-900 text-xs">✨ AI Auto-Fill from Job Description</span>
+                  </div>
+                  <span className="text-[10px] text-amber-800 font-bold bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300/60">
+                    Gemini AI
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-600 leading-relaxed">
+                  Paste raw JD text or upload a JD file (.pdf, .docx, .txt). Gemini AI will parse requirements and pre-fill Role Title, Experience Range, Skills, CTC, and Work Mode automatically!
+                </p>
+
+                {jdParseError && (
+                  <div className="p-2.5 rounded-lg bg-rose-50 border border-rose-200 text-rose-700 text-[11px] flex items-start space-x-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 mt-0.5 flex-shrink-0" />
+                    <span>{jdParseError}</span>
+                  </div>
+                )}
+                {jdParseSuccess && (
+                  <div className="p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800 text-[11px] flex items-start space-x-1.5 font-medium">
+                    <CheckCircle2 className="h-3.5 w-3.5 mt-0.5 flex-shrink-0 text-emerald-600" />
+                    <span>{jdParseSuccess}</span>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <textarea
+                    rows={3}
+                    value={jdRawInput}
+                    onChange={(e) => setJdRawInput(e.target.value)}
+                    placeholder="Paste full Job Description text here..."
+                    className="w-full px-3 py-2 border border-amber-200 rounded-xl text-xs bg-white text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-amber-400"
+                  />
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <label className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-white hover:bg-amber-100/50 border border-amber-300 text-slate-700 rounded-lg text-[11px] font-bold cursor-pointer transition-colors">
+                      <Upload className="h-3.5 w-3.5 text-amber-600" />
+                      <span>Upload JD File (PDF / Word)</span>
+                      <input
+                        type="file"
+                        accept=".pdf,.docx,.doc,.txt"
+                        className="hidden"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleParseJd(undefined, file);
+                        }}
+                      />
+                    </label>
+
+                    <button
+                      type="button"
+                      disabled={isParsingJd || !jdRawInput.trim()}
+                      onClick={() => handleParseJd(jdRawInput)}
+                      className="inline-flex items-center space-x-1.5 px-4 py-1.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
+                    >
+                      {isParsingJd ? (
+                        <>
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          <span>Parsing with AI...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-3.5 w-3.5" />
+                          <span>✨ Parse & Auto-Populate Form</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
               <div className="grid grid-cols-2 gap-3">
                 <div className="col-span-2">
                   <label className="block font-bold text-slate-900 mb-1">Target Role Title *</label>
@@ -1379,6 +1542,32 @@ export default function CockpitPage() {
                 </div>
 
                 <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Min Experience (Years)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="50"
+                    value={offlineForm.minExp}
+                    onChange={(e) => setOfflineForm({ ...offlineForm, minExp: parseInt(e.target.value, 10) || 0 })}
+                    placeholder="2"
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-semibold text-slate-700 mb-1">Max Experience (Years)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="50"
+                    value={offlineForm.maxExp}
+                    onChange={(e) => setOfflineForm({ ...offlineForm, maxExp: parseInt(e.target.value, 10) || 0 })}
+                    placeholder="6"
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                  />
+                </div>
+
+                <div>
                   <label className="block font-semibold text-slate-700 mb-1">Min Target CTC (INR)</label>
                   <input
                     type="number"
@@ -1412,7 +1601,20 @@ export default function CockpitPage() {
                 </div>
 
                 <div className="col-span-2">
-                  <label className="block font-semibold text-slate-700 mb-1">Job Description Text</label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block font-semibold text-slate-700">Job Description Text</label>
+                    {offlineForm.description && offlineForm.description.trim().length > 20 && (
+                      <button
+                        type="button"
+                        onClick={() => handleParseJd(offlineForm.description)}
+                        disabled={isParsingJd}
+                        className="text-[11px] font-bold text-amber-700 hover:text-amber-900 flex items-center space-x-1 cursor-pointer"
+                      >
+                        <Sparkles className="h-3 w-3" />
+                        <span>✨ Re-extract fields from this text</span>
+                      </button>
+                    )}
+                  </div>
                   <textarea
                     rows={4}
                     value={offlineForm.description}

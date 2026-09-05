@@ -652,11 +652,14 @@ export default function MandateWorkspacePage() {
                 <h1 className="text-base font-black text-slate-900">{mandate.title}</h1>
               </div>
               <p className="text-xs text-slate-500 mt-0.5">
-                Client: <strong>{mandate.client.name}</strong> • Work Mode: <strong>{mandate.workMode}</strong> • Location: <strong>{mandate.location || "Remote / Flexible"}</strong>
+                Client: <strong>{mandate.client.name}</strong> • Work Mode: <strong>{mandate.workMode}</strong> • Location: <strong>{mandate.location || "Remote / Flexible"}</strong> • Experience: <strong>{mandate.minExp && mandate.maxExp ? `${mandate.minExp} - ${mandate.maxExp} Years` : mandate.minExp ? `${mandate.minExp}+ Years` : "Open"}</strong>
               </p>
             </div>
 
-            <div className="flex items-center space-x-3 text-xs">
+            <div className="flex items-center space-x-3 text-xs flex-wrap gap-y-2">
+              <div className="bg-emerald-50 text-emerald-900 px-3 py-1.5 rounded-xl border border-emerald-200 font-bold">
+                Exp: {mandate.minExp && mandate.maxExp ? `${mandate.minExp} - ${mandate.maxExp} Yrs` : mandate.minExp ? `${mandate.minExp}+ Yrs` : "Open"}
+              </div>
               <div className="bg-purple-50 text-purple-900 px-3 py-1.5 rounded-xl border border-purple-200 font-bold">
                 Fee: {mandate.feePercentage}% CTC
               </div>
