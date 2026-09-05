@@ -59,8 +59,72 @@ if (typeof (globalThis as any).ImageData === "undefined") {
   (global as any).ImageData = ImageDataPolyfill;
 }
 
+// Pre-load WorkerMessageHandler into globalThis.pdfjsWorker to prevent pdf-parse
+// from attempting to dynamically load './pdf.worker.mjs' from the filesystem in serverless environments.
+try {
+  const dynamicRequire = eval("require");
+  const fs = dynamicRequire("fs");
+  const pathMod = dynamicRequire("path");
+  const workerPath = pathMod.join(process.cwd(), "node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs");
+  if (fs.existsSync(workerPath)) {
+    const workerModule = dynamicRequire(workerPath);
+    if (workerModule && workerModule.WorkerMessageHandler) {
+      (globalThis as any).pdfjsWorker = { WorkerMessageHandler: workerModule.WorkerMessageHandler };
+      (global as any).pdfjsWorker = { WorkerMessageHandler: workerModule.WorkerMessageHandler };
+    }
+  }
+} catch (_) {}
+
 import mammoth from "mammoth";
 import path from "path";
+import zlib from "zlib";
+
+/**
+ * Standalone pure Node.js PDF stream decompressor and text extractor.
+ * Handles both compressed (/FlateDecode) and uncompressed text streams without any native dependencies.
+ */
+function extractPdfStreamsPureNode(buffer: Buffer): string {
+  try {
+    const str = buffer.toString("latin1");
+    const streamRegex = /stream[\r\n]+([\s\S]*?)[\r\n]+endstream/g;
+    let match: RegExpExecArray | null;
+    let fullText = "";
+
+    while ((match = streamRegex.exec(str)) !== null) {
+      const rawStream = Buffer.from(match[1], "latin1");
+      let decompressed: Buffer;
+      try {
+        decompressed = zlib.inflateSync(rawStream);
+      } catch (_) {
+        try {
+          decompressed = zlib.inflateRawSync(rawStream);
+        } catch (_) {
+          decompressed = rawStream;
+        }
+      }
+
+      const decStr = decompressed.toString("latin1");
+      const tjMatches = decStr.match(/\(([^()]{1,})\)\s*T[jJ]|\[([^\[\]]*)\]\s*TJ/g);
+      if (tjMatches) {
+        for (const m of tjMatches) {
+          if (m.endsWith("Tj") || m.endsWith("tj")) {
+            const inner = m.slice(1, m.lastIndexOf(")"));
+            fullText += inner + " ";
+          } else if (m.endsWith("TJ") || m.endsWith("tj")) {
+            const parts = m.match(/\(([^()]*)\)/g);
+            if (parts) {
+              fullText += parts.map((p) => p.slice(1, -1)).join("") + " ";
+            }
+          }
+        }
+        fullText += "\n";
+      }
+    }
+    return fullText.trim();
+  } catch {
+    return "";
+  }
+}
 
 /**
  * Clean text from null bytes (\u0000) and problematic control characters that cause
@@ -83,7 +147,18 @@ export async function extractTextFromResume(
 
   try {
     if (lowerName.endsWith(".pdf") || mimeType === "application/pdf") {
-      // Primary Strategy: pdf-parse (v2 and v1 compatible)
+      // Primary Strategy: pure Node.js FlateDecode stream decompressor & text extractor (bulletproof & instant in any serverless runtime)
+      try {
+        const pureNodeText = extractPdfStreamsPureNode(fileBuffer);
+        if (pureNodeText && pureNodeText.length > 50) {
+          console.log(`[Resume-Parser] Successfully extracted ${pureNodeText.length} characters via built-in PDF stream engine for ${fileName}`);
+          return sanitizeUtf8(pureNodeText);
+        }
+      } catch (streamErr: any) {
+        console.warn(`Pure Node stream extraction failed for ${fileName}:`, streamErr.message);
+      }
+
+      // Secondary Strategy: pdf-parse (v2 and v1 compatible)
       try {
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const pdfModule = require("pdf-parse");
@@ -108,7 +183,7 @@ export async function extractTextFromResume(
         console.warn(`pdf-parse failed for ${fileName}:`, pdfParseErr.message);
       }
 
-      // Secondary Strategy: regex text stream extraction from PDF binary stream
+      // Tertiary Strategy: regex text stream extraction from raw binary stream
       try {
         const rawString = fileBuffer.toString("binary");
         const textMatches = rawString.match(/\(([^()]{2,})\)T[jJ]/g);
