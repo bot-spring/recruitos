@@ -1,0 +1,643 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum SubscriptionTier {
+  STARTER     // 5 seats max
+  GROWTH      // 20 seats max
+  ENTERPRISE  // 50+ seats / custom
+}
+
+enum UserRole {
+  SUPER_ADMIN     // Platform Owner (Ankur)
+  AGENCY_OWNER    // Tenant Admin / MD
+  TEAM_LEAD       // Delivery Manager
+  RECRUITER       // Desk Recruiter
+  PARTNER_SOURCER // External Split-Fee Recruiter
+}
+
+enum ClientStatus {
+  PROSPECT
+  ACTIVE
+  INACTIVE
+}
+
+enum MandateStatus {
+  UNREVIEWED_INBOUND    // Fresh submission from storefront or BD intake
+  ACTIVE_ASSIGNED       // Approved by Owner and assigned to Recruiter
+  SOURCING_IN_PROGRESS  // Actively sourcing candidates
+  INTERVIEWS_ACTIVE     // Client shortlist & interviews ongoing
+  OFFER_STAGED          // Final candidate selected, offer in progress
+  PLACEMENT_CONFIRMED   // Candidate accepted and joined
+  PROBATION_TRACKING    // Active 90-day replacement guarantee window
+  CLOSED_FULFILLED      // Completed successfully
+  REPLACEMENT_ACTIVE    // Early exit during probation, $0 replacement mandate
+}
+
+enum SubmissionStage {
+  PARSED_RAW             // Ingested resume
+  SCREENED_QUALIFIED     // Vetted by desk recruiter
+  SUBMITTED_TO_CLIENT    // Shortlisted to client via zero-login presenter
+  CLIENT_SHORTLISTED     // Approved by client for interview
+  INTERVIEW_SCHEDULED    // Slot locked
+  INTERVIEW_COMPLETED    // Debrief done
+  OFFER_ISSUED           // Official offer extended
+  OFFER_ACCEPTED         // Accepted offer, notice period starts
+  NOTICE_PERIOD_ACTIVE   // Under bi-weekly retention pulse checks
+  JOINED_DAY_1_ACTIVE    // Physical joining confirmed, invoice dispatched
+  STAGE_REJECTED         // Rejected at any stage with reason
+  OFFER_DECLINED         // Candidate declined client offer
+  NO_SHOW_FLAG           // Interview no-show
+}
+
+enum ClientDecision {
+  PENDING_REVIEW
+  SHORTLISTED_FOR_INTERVIEW
+  REJECTED_WITH_FEEDBACK
+  INFO_REQUESTED
+}
+
+enum InterviewType {
+  TECHNICAL_ROUND
+  LEADERSHIP_SYSTEMS
+  HR_CULTURE_FIT
+  CLIENT_FINAL_ROUND
+}
+
+enum InterviewStatus {
+  SCHEDULED
+  COMPLETED
+  RESCHEDULED
+  CANCELED
+  NO_SHOW
+}
+
+enum CounterOfferRisk {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum InvoiceStatus {
+  DRAFT
+  DISPATCHED
+  PAID
+  OVERDUE
+  CANCELED
+}
+
+enum ProbationStatus {
+  ACTIVE_TRACKING
+  CLEARED_SUCCESSFUL
+  EARLY_EXIT_REPLACEMENT
+}
+
+enum WorkMode {
+  REMOTE
+  HYBRID
+  ONSITE
+}
+
+enum PriorityLevel {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum SlaStatus {
+  HEALTHY
+  WARNING
+  BREACHED
+}
+
+enum BroadcastPlatform {
+  LINKEDIN
+  NAUKRI
+  BAYT
+  INDEED
+  INTERNAL_CAREERS
+}
+
+enum BroadcastStatus {
+  ACTIVE
+  PAUSED
+  EXPIRED
+}
+
+enum CallDisposition {
+  CONNECTED_INTERESTED      // Connected — Interested & Profile Matched
+  CONNECTED_CALLBACK        // Connected — Call Back Requested
+  CONNECTED_CTC_MISMATCH    // Connected — CTC / Budget Mismatch
+  CONNECTED_NOTICE_MISMATCH // Connected — Notice Period Too Long
+  CONNECTED_NOT_INTERESTED  // Connected — Not Interested / Declined
+  RINGING_NO_ANSWER         // Ringing / No Answer
+  UNREACHABLE_BUSY          // Switched Off / Busy / Out of Coverage
+}
+
+enum CandidateJobStatus {
+  NOT_SHARED                // Not Shared with Company
+  SHARED_WITH_COMPANY       // Shared with Company
+  SELECTED_FOR_NEXT_ROUND   // Selected for Next Round
+  OFFERED                   // Offered
+  HOLD                      // Hold
+  REJECTED                  // Rejected
+  JOINED                    // Joined
+}
+
+model Agency {
+  id           String           @id @default(uuid())
+  name         String
+  slug         String           @unique
+  tier         SubscriptionTier @default(STARTER)
+  maxSeats     Int              @default(5) @map("max_seats")
+  isActive     Boolean          @default(true) @map("is_active")
+  customDomain String?          @unique @map("custom_domain")
+  logoUrl      String?          @map("logo_url")
+  tagline      String?          @default("Boutique Executive Search & Talent Advisory")
+  description  String?          @default("Connecting exceptional leadership and specialized professionals with top-tier organizations.")
+  primaryColor String?          @default("#d3dbed") @map("primary_color")
+  createdAt    DateTime         @default(now()) @map("created_at")
+  updatedAt    DateTime         @updatedAt @map("updated_at")
+
+  users              User[]
+  clientAccounts     ClientAccount[]
+  clientContacts     ClientContact[]
+  jobMandates        JobMandate[]
+  jobBroadcasts      JobBroadcast[]
+  partnerShares      PartnerShare[]
+  clientPortalShares ClientPortalShare[]
+  candidates         Candidate[]
+  submissions        CandidateSubmission[]
+  interviewSchedules InterviewSchedule[]
+  placementInvoices  PlacementInvoice[]
+  auditLogs          AuditLog[]
+  callLogs           CallLog[]
+
+  @@map("agencies")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  name         String
+  phone        String?
+  role         UserRole
+  agencyId     String?   @map("agency_id")
+  isActive     Boolean   @default(true) @map("is_active")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  agency       Agency?               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  auditLogs    AuditLog[]
+  assignedJobs JobMandate[]          @relation("AssignedRecruiter")
+  submissions  CandidateSubmission[] @relation("SubmittedByUser")
+  callLogs     CallLog[]
+
+  @@index([agencyId])
+  @@map("users")
+}
+
+model ClientAccount {
+  id          String       @id @default(uuid())
+  agencyId    String       @map("agency_id")
+  name        String
+  website     String?
+  industry    String?
+  location    String?
+  status      ClientStatus @default(PROSPECT)
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  agency            Agency             @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  contacts          ClientContact[]
+  jobMandates       JobMandate[]
+  placementInvoices PlacementInvoice[]
+
+  @@unique([agencyId, name])
+  @@index([agencyId])
+  @@map("client_accounts")
+}
+
+model ClientContact {
+  id          String   @id @default(uuid())
+  agencyId    String   @map("agency_id")
+  clientId    String   @map("client_id")
+  name        String
+  email       String
+  phone       String?
+  designation String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  agency             Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client             ClientAccount       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  jobMandates        JobMandate[]
+  clientPortalShares ClientPortalShare[]
+
+  @@index([agencyId])
+  @@index([clientId])
+  @@map("client_contacts")
+}
+
+model JobMandate {
+  id                  String        @id @default(uuid())
+  agencyId            String        @map("agency_id")
+  clientId            String        @map("client_id")
+  contactId           String?       @map("contact_id")
+  assignedRecruiterId String?       @map("assigned_recruiter_id")
+  
+  title               String
+  department          String?
+  openings            Int           @default(1)
+  minExp              Int           @default(0) @map("min_exp")
+  maxExp              Int           @default(0) @map("max_exp")
+  minCtc              Float?        @map("min_ctc")
+  maxCtc              Float?        @map("max_ctc")
+  currency            String        @default("INR")
+  location            String?
+  workMode            WorkMode      @default(HYBRID) @map("work_mode")
+  skills              String[]      @default([])
+  description         String?
+  priority            PriorityLevel @default(MEDIUM)
+  maxNoticeDays       Int?          @default(60) @map("max_notice_days")
+  
+  feePercentage       Float         @default(8.33) @map("fee_percentage")
+  guaranteeDays       Int           @default(90) @map("guarantee_days")
+  status              MandateStatus @default(UNREVIEWED_INBOUND)
+  source              String        @default("STOREFRONT")
+  specialInstructions String?       @map("special_instructions")
+  
+  // SLA Velocity Radar Fields (RC-03)
+  slaTargetHours      Int           @default(72) @map("sla_target_hours")
+  slaStartedAt        DateTime?     @map("sla_started_at")
+  slaStatus           SlaStatus     @default(HEALTHY) @map("sla_status")
+  approvedAt          DateTime?     @map("approved_at")
+  approvedByUserId    String?       @map("approved_by_user_id")
+
+  // Free Replacement Mandate Link (RC-07)
+  isReplacement       Boolean       @default(false) @map("is_replacement")
+  originalMandateId   String?       @map("original_mandate_id")
+
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  agency             Agency                @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  client             ClientAccount         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  contact            ClientContact?        @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  assignedRecruiter  User?                 @relation("AssignedRecruiter", fields: [assignedRecruiterId], references: [id], onDelete: SetNull)
+  broadcasts         JobBroadcast[]
+  partnerShares      PartnerShare[]
+  clientPortalShares ClientPortalShare[]
+  submissions        CandidateSubmission[]
+  interviewSchedules InterviewSchedule[]
+  placementInvoices  PlacementInvoice[]
+  callLogs           CallLog[]
+
+  @@index([agencyId])
+  @@index([clientId])
+  @@index([status])
+  @@index([assignedRecruiterId])
+  @@map("job_mandates")
+}
+
+model JobBroadcast {
+  id             String            @id @default(uuid())
+  agencyId       String            @map("agency_id")
+  mandateId      String            @map("mandate_id")
+  platform       BroadcastPlatform
+  status         BroadcastStatus   @default(ACTIVE)
+  externalPostId String?           @map("external_post_id")
+  publishedAt    DateTime          @default(now()) @map("published_at")
+  expiresAt      DateTime?         @map("expires_at")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+
+  agency         Agency            @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  mandate        JobMandate        @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+
+  @@unique([mandateId, platform])
+  @@index([agencyId])
+  @@index([mandateId])
+  @@map("job_broadcasts")
+}
+
+model PartnerShare {
+  id                   String     @id @default(uuid())
+  agencyId             String     @map("agency_id")
+  mandateId            String     @map("mandate_id")
+  shareToken           String     @unique @map("share_token")
+  maskedClientTitle    String     @map("masked_client_title")
+  maskedLocation       String?    @map("masked_location")
+  splitFeePercentage   Float      @default(50.0) @map("split_fee_percentage")
+  payoutTerms          String     @default("Payable upon 90-day probation clearance and client invoice realization.") @map("payout_terms")
+  isActive             Boolean    @default(true) @map("is_active")
+  viewsCount           Int        @default(0) @map("views_count")
+  submissionsCount     Int        @default(0) @map("submissions_count")
+  createdAt            DateTime   @default(now()) @map("created_at")
+  updatedAt            DateTime   @updatedAt @map("updated_at")
+
+  agency               Agency     @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  mandate              JobMandate @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@index([mandateId])
+  @@index([shareToken])
+  @@map("partner_shares")
+}
+
+// Zero-Login Interactive Client Presentation Portal Share (CL-01, CL-02, CL-03)
+model ClientPortalShare {
+  id                 String     @id @default(uuid())
+  agencyId           String     @map("agency_id")
+  mandateId          String     @map("mandate_id")
+  contactId          String?    @map("contact_id")
+  portalToken        String     @unique @map("portal_token")
+  clientContactName  String?    @map("client_contact_name")
+  clientContactEmail String?    @map("client_contact_email")
+  clientOrgName      String     @map("client_org_name")
+  feedbackSlaHours   Int        @default(48) @map("feedback_sla_hours")
+  isActive           Boolean    @default(true) @map("is_active")
+  viewsCount         Int        @default(0) @map("views_count")
+  lastViewedAt       DateTime?  @map("last_viewed_at")
+  createdAt          DateTime   @default(now()) @map("created_at")
+  updatedAt          DateTime   @updatedAt @map("updated_at")
+
+  agency             Agency         @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  mandate            JobMandate     @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  contact            ClientContact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId])
+  @@index([mandateId])
+  @@index([portalToken])
+  @@map("client_portal_shares")
+}
+
+model Candidate {
+  id                   String     @id @default(uuid())
+  agencyId             String     @map("agency_id")
+  fullName             String     @map("full_name")
+  email                String
+  phone                String
+  phoneNormalized      String     @map("phone_normalized")
+  currentCompany       String?    @map("current_company")
+  currentTitle         String?    @map("current_title")
+  totalExpYears        Float      @default(0) @map("total_exp_years")
+  currentCtc           Float?     @map("current_ctc")
+  expectedCtc          Float?     @map("expected_ctc")
+  currency             String     @default("INR")
+  noticePeriodDays     Int        @default(30) @map("notice_period_days")
+  location             String?
+  skills               String[]   @default([])
+  summary              String?
+  rawResumeText        String?    @map("raw_resume_text")
+  resumeUrl            String?    @map("resume_url")
+  qualification        String?
+  source               String     @default("DIRECT_UPLOAD")
+  isSilverMedalist     Boolean    @default(false) @map("is_silver_medalist")
+  silverMedalistReason String?    @map("silver_medalist_reason")
+  createdAt            DateTime   @default(now()) @map("created_at")
+  updatedAt            DateTime   @updatedAt @map("updated_at")
+
+  agency               Agency     @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  submissions          CandidateSubmission[]
+  interviews           InterviewSchedule[]
+  placementInvoices    PlacementInvoice[]
+  callLogs             CallLog[]
+
+  @@unique([agencyId, email])
+  @@unique([agencyId, phoneNormalized])
+  @@index([agencyId])
+  @@index([isSilverMedalist])
+  @@map("candidates")
+}
+
+// Candidate Submission & Notice Period Risk Tracker (RC-01, PO-02, CL-01, CL-02, CL-03, RC-04, RC-05, RC-06, PL-01, PL-02, RC-07)
+model CandidateSubmission {
+  id                      String            @id @default(uuid())
+  agencyId                String            @map("agency_id")
+  candidateId             String            @map("candidate_id")
+  mandateId               String            @map("mandate_id")
+  submittedByUserId       String?           @map("submitted_by_user_id")
+  
+  // Recruiter Screening & Call Telemetry
+  candidateJobStatus      CandidateJobStatus @default(NOT_SHARED) @map("candidate_job_status")
+  lastCallDisposition     CallDisposition?   @map("last_call_disposition")
+  lastCallNotes           String?            @map("last_call_notes")
+  lastCallAt              DateTime?          @map("last_call_at")
+
+  // Recruiter Call Screening Parameters (Shared with Client)
+  readyToRelocate         String?            @map("ready_to_relocate")
+  relevantExpYears        Float?             @map("relevant_exp_years")
+  currentSalary           String?            @map("current_salary")
+  expectedSalary          String?            @map("expected_salary")
+  noticePeriod            String?            @map("notice_period")
+  reasonForLeaving        String?            @map("reason_for_leaving")
+  offerInHand             String?            @map("offer_in_hand")
+
+  // Partner Sourcer Split Attribution Fields (PO-02)
+  partnerSourcerId        String?           @map("partner_sourcer_id")
+  partnerSourcerName      String?           @map("partner_sourcer_name")
+  partnerSourcerEmail     String?           @map("partner_sourcer_email")
+  partnerSourcerPhone     String?           @map("partner_sourcer_phone")
+  partnerAgencyName       String?           @map("partner_agency_name")
+  splitFeePercentage      Float?            @map("split_fee_percentage")
+  splitPayoutEstimated    Float?            @map("split_payout_estimated")
+
+  // Client Portal & 48h Feedback SLA Fields (CL-01, CL-02, CL-03)
+  stage                   SubmissionStage   @default(PARSED_RAW)
+  submittedToClientAt     DateTime?         @map("submitted_to_client_at")
+  clientDecision          ClientDecision    @default(PENDING_REVIEW) @map("client_decision")
+  clientFeedbackNotes     String?           @map("client_feedback_notes")
+  clientFeedbackAt        DateTime?         @map("client_feedback_at")
+  preferredInterviewTimes String?           @map("preferred_interview_times")
+  clientQuestionText      String?           @map("client_question_text")
+
+  // Counter-Offer Immunity & Notice Period Risk Engine (RC-06)
+  offeredCtc              Float?            @map("offered_ctc")
+  offeredJoiningDate      DateTime?         @map("offered_joining_date")
+  resignationDate         DateTime?         @map("resignation_date")
+  resignationConfirmed    Boolean           @default(false) @map("resignation_confirmed")
+  resignationLetterDraft  String?           @map("resignation_letter_draft")
+  counterOfferRiskLevel   CounterOfferRisk  @default(LOW) @map("counter_offer_risk_level")
+  counterOfferRiskReason  String?           @map("counter_offer_risk_reason")
+  lastRetentionPulseAt    DateTime?         @map("last_retention_pulse_at")
+  retentionCheckinLog     Json?             @map("retention_checkin_log")
+
+  // Day-1 Physical Joining & 90-Day Probation Guarantee Vault (PL-01, PL-02, RC-07)
+  actualJoiningDate       DateTime?         @map("actual_joining_date")
+  probationDays           Int               @default(90) @map("probation_days")
+  probationEndDate        DateTime?         @map("probation_end_date")
+  probationStatus         ProbationStatus   @default(ACTIVE_TRACKING) @map("probation_status")
+  earlyExitDate           DateTime?         @map("early_exit_date")
+  earlyExitReason         String?           @map("early_exit_reason")
+  replacementMandateId    String?           @map("replacement_mandate_id")
+
+  recruiterNotes          String?           @map("recruiter_notes")
+  rejectionReason         String?           @map("rejection_reason")
+  createdAt               DateTime          @default(now()) @map("created_at")
+  updatedAt               DateTime          @updatedAt @map("updated_at")
+
+  agency                  Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  candidate               Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  mandate                 JobMandate          @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  submittedByUser         User?               @relation("SubmittedByUser", fields: [submittedByUserId], references: [id], onDelete: SetNull)
+  interviews              InterviewSchedule[]
+  placementInvoices       PlacementInvoice[]
+  callLogs                CallLog[]
+
+  @@unique([candidateId, mandateId])
+  @@index([agencyId])
+  @@index([mandateId])
+  @@index([candidateId])
+  @@index([stage])
+  @@index([clientDecision])
+  @@index([counterOfferRiskLevel])
+  @@index([probationStatus])
+  @@index([partnerSourcerEmail])
+  @@map("candidate_submissions")
+}
+
+// Commercial Placement Tax Invoicing (PL-02)
+model PlacementInvoice {
+  id                  String        @id @default(uuid())
+  agencyId            String        @map("agency_id")
+  submissionId        String        @map("submission_id")
+  mandateId           String        @map("mandate_id")
+  candidateId         String        @map("candidate_id")
+  clientId            String        @map("client_id")
+
+  invoiceNumber       String        @unique @map("invoice_number")
+  baseFeeAmount       Float         @map("base_fee_amount")
+  feePercentage       Float         @map("fee_percentage")
+  taxPercentage       Float         @default(18.0) @map("tax_percentage")
+  taxAmount           Float         @map("tax_amount")
+  totalInvoiceAmount  Float         @map("total_invoice_amount")
+  currency            String        @default("INR")
+
+  status              InvoiceStatus @default(DISPATCHED)
+  issuedAt            DateTime      @default(now()) @map("issued_at")
+  dueDate             DateTime      @map("due_date")
+  paidAt              DateTime?     @map("paid_at")
+
+  clientBillingName   String?       @map("client_billing_name")
+  clientBillingEmail  String?       @map("client_billing_email")
+  clientGstin         String?       @map("client_gstin")
+  paymentTermsNotes   String?       @default("Payment due strictly within 30 days of candidate joining.") @map("payment_terms_notes")
+
+  createdAt           DateTime      @default(now()) @map("created_at")
+  updatedAt           DateTime      @updatedAt @map("updated_at")
+
+  agency              Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  submission          CandidateSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  mandate             JobMandate          @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  candidate           Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  client              ClientAccount       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@index([mandateId])
+  @@index([clientId])
+  @@index([submissionId])
+  @@index([invoiceNumber])
+  @@index([status])
+  @@map("placement_invoices")
+}
+
+// Multi-Channel Interview Logistics & Scheduling Engine (RC-04, RC-05)
+model InterviewSchedule {
+  id                     String          @id @default(uuid())
+  agencyId               String          @map("agency_id")
+  submissionId           String          @map("submission_id")
+  mandateId              String          @map("mandate_id")
+  candidateId            String          @map("candidate_id")
+
+  scheduledAt            DateTime        @map("scheduled_at")
+  durationMinutes        Int             @default(60) @map("duration_minutes")
+  interviewType          InterviewType   @default(TECHNICAL_ROUND) @map("interview_type")
+  status                 InterviewStatus @default(SCHEDULED)
+  
+  meetingLink            String?         @map("meeting_link")
+  location               String?
+  panelistNames          String[]        @default([]) @map("panelist_names")
+  panelistEmails         String[]        @default([]) @map("panelist_emails")
+  instructions           String?
+
+  // Multi-Channel Notification Audit (RC-04)
+  emailInviteSentAt      DateTime?       @map("email_invite_sent_at")
+  whatsAppBriefingSentAt DateTime?       @map("whatsapp_briefing_sent_at")
+  whatsAppMessageId      String?         @map("whatsapp_message_id")
+
+  // Post-Interview Debrief Fields (RC-05)
+  debriefLoggedAt        DateTime?       @map("debrief_logged_at")
+  candidateSentiment     String?         @map("candidate_sentiment")
+  candidateDebriefNotes  String?         @map("candidate_debrief_notes")
+  salaryAlignmentNotes   String?         @map("salary_alignment_notes")
+  noticePeriodConfirmed  Int?            @map("notice_period_confirmed")
+
+  createdAt              DateTime        @default(now()) @map("created_at")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
+
+  agency                 Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  submission             CandidateSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  mandate                JobMandate          @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  candidate              Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@index([mandateId])
+  @@index([candidateId])
+  @@index([submissionId])
+  @@index([scheduledAt])
+  @@map("interview_schedules")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  agencyId  String?  @map("agency_id")
+  userId    String?  @map("user_id")
+  action    String
+  entity    String
+  entityId  String?  @map("entity_id")
+  metadata  Json?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  agency    Agency?  @relation(fields: [agencyId], references: [id], onDelete: SetNull)
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId])
+  @@map("audit_logs")
+}
+
+model CallLog {
+  id           String          @id @default(uuid())
+  agencyId     String          @map("agency_id")
+  submissionId String          @map("submission_id")
+  candidateId  String          @map("candidate_id")
+  mandateId    String          @map("mandate_id")
+  recruiterId  String?         @map("recruiter_id")
+
+  disposition  CallDisposition
+  notes        String?
+  calledAt     DateTime        @default(now()) @map("called_at")
+  createdAt    DateTime        @default(now()) @map("created_at")
+
+  agency       Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  submission   CandidateSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  candidate    Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  mandate      JobMandate          @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  recruiter    User?               @relation(fields: [recruiterId], references: [id], onDelete: SetNull)
+
+  @@index([agencyId])
+  @@index([submissionId])
+  @@index([candidateId])
+  @@index([mandateId])
+  @@index([calledAt])
+  @@map("call_logs")
+}
