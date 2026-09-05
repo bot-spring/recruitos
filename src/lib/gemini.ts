@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { extractTextFromResume } from "./resume-parser";
 
 export interface ParsedCandidateProfile {
   fullName: string;
@@ -33,22 +34,70 @@ export function normalizePhoneNumber(rawPhone: string): string {
   return cleaned;
 }
 
-// List of Gemini model candidates in order of preference
+// Available Groq models for high-speed, high-quota inference
+const GROQ_MODELS = [
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
+  "qwen/qwen3.6-27b",
+];
+
+// Active, stable Gemini models
 const GEMINI_MODELS = [
-  "gemini-2.5-flash",
-  "gemini-2.5-pro",
-  "gemini-2.0-flash-001",
-  "gemini-2.0-flash",
-  "gemini-1.5-flash-8b",
-  "gemini-1.5-flash-latest",
   "gemini-1.5-flash",
+  "gemini-2.5-flash",
   "gemini-1.5-pro",
-  "gemini-pro",
 ];
 
 /**
- * Parses unstructured resume text into a structured candidate profile using Google Gemini API,
- * with automatic model fallback and an intelligent deterministic (non-AI) regex/pattern engine.
+ * Universal Groq Chat Completion client with automatic model fallback
+ */
+async function callGroqChatCompletion(
+  messages: Array<{ role: string; content: string }>,
+  jsonMode = true
+): Promise<string | null> {
+  const apiKey = process.env.GROQ_API_KEY?.trim();
+  if (!apiKey || apiKey === "" || apiKey === "your_groq_api_key_here") {
+    return null;
+  }
+
+  for (const model of GROQ_MODELS) {
+    try {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          response_format: jsonMode ? { type: "json_object" } : undefined,
+          temperature: 0.1,
+        }),
+      });
+
+      if (!res.ok) {
+        const errText = await res.text();
+        console.warn(`Groq model '${model}' returned ${res.status}:`, errText);
+        continue;
+      }
+
+      const data = await res.json();
+      const content = data.choices?.[0]?.message?.content;
+      if (content && typeof content === "string") {
+        return content;
+      }
+    } catch (err: any) {
+      console.warn(`Groq model '${model}' call failed:`, err.message);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Parses unstructured resume text into a structured candidate profile using Groq AI (primary),
+ * Google Gemini API (secondary fallback), and an intelligent deterministic engine (offline fallback).
  */
 export async function parseResumeWithGemini(
   rawResumeText: string,
@@ -56,6 +105,75 @@ export async function parseResumeWithGemini(
   pdfBuffer?: Buffer,
   mimeType?: string
 ): Promise<ParsedCandidateProfile> {
+  const cleanStr = (v: any) => (typeof v === "string" ? v.replace(/\0/g, "").trim() : null);
+
+  // Ensure we have text to parse
+  let effectiveText = (rawResumeText || "").trim();
+  if (effectiveText.length < 20 && pdfBuffer) {
+    try {
+      effectiveText = await extractTextFromResume(pdfBuffer, fileName || "resume.pdf", mimeType);
+    } catch (_) {}
+  }
+
+  // 1. Primary AI Engine: Groq Ultra-Fast Inference (120B / 20B models)
+  if (process.env.GROQ_API_KEY && effectiveText.length > 10) {
+    try {
+      const groqPrompt = `You are an expert recruitment parser. Extract candidate details from the following resume into strict JSON matching this exact schema:
+
+{
+  "fullName": "string (Candidate's first and last name - ignore words like RESUME, CV, NAUKRI)",
+  "email": "string (Primary email address)",
+  "phone": "string (Primary phone / mobile number with country code)",
+  "currentCompany": "string or null (Current or most recent company/employer)",
+  "currentTitle": "string or null (Current or most recent job title)",
+  "totalExpYears": number (Total years of work experience as number e.g. 5.5, or 0 if unknown),
+  "currentCtc": number or null (Current annual CTC in absolute numbers e.g. 2400000, or null),
+  "expectedCtc": number or null (Expected annual CTC in absolute numbers e.g. 3200000, or null),
+  "currency": "string (e.g. INR, USD, default INR)",
+  "noticePeriodDays": number (Notice period in days e.g. 15, 30, 60, 90. Default 30 if not mentioned),
+  "location": "string or null (City / Location)",
+  "qualification": "string or null (Highest educational degree, branch/specialization, and college/institute if mentioned e.g. 'BTech - Electronics Engineering, MIT Academy Of Engineering Pune')",
+  "skills": ["string"] (Array of specific technical, domain, or tool skills),
+  "summary": "string or null (2-3 sentence executive professional summary)"
+}`;
+
+      const groqJson = await callGroqChatCompletion([
+        { role: "system", content: groqPrompt },
+        { role: "user", content: `Resume Content:\n"""\n${effectiveText.substring(0, 15000)}\n"""` },
+      ]);
+
+      if (groqJson) {
+        const parsedData = JSON.parse(groqJson);
+        const phone = cleanStr(parsedData.phone) || "";
+        const phoneNormalized = normalizePhoneNumber(phone);
+
+        return {
+          fullName: cleanStr(sanitizeCandidateName(parsedData.fullName, fileName, effectiveText)) || "Candidate",
+          email: (cleanStr(parsedData.email) || "").toLowerCase().trim(),
+          phone,
+          phoneNormalized,
+          currentCompany: cleanStr(parsedData.currentCompany),
+          currentTitle: cleanStr(parsedData.currentTitle),
+          totalExpYears: typeof parsedData.totalExpYears === "number" ? parsedData.totalExpYears : 0,
+          currentCtc: parsedData.currentCtc ? parseFloat(parsedData.currentCtc) : null,
+          expectedCtc: parsedData.expectedCtc ? parseFloat(parsedData.expectedCtc) : null,
+          currency: cleanStr(parsedData.currency) || "INR",
+          noticePeriodDays: parsedData.noticePeriodDays ? parseInt(parsedData.noticePeriodDays, 10) : 30,
+          location: cleanStr(parsedData.location),
+          qualification: cleanStr(parsedData.qualification),
+          skills: Array.isArray(parsedData.skills)
+            ? parsedData.skills.map((s: any) => cleanStr(s)).filter(Boolean)
+            : [],
+          summary: cleanStr(parsedData.summary),
+          workHistory: parsedData.workHistory || [],
+        };
+      }
+    } catch (groqErr: any) {
+      console.warn("Groq resume parsing failed, falling back to Gemini:", groqErr.message);
+    }
+  }
+
+  // 2. Secondary AI Engine: Gemini Multimodal & Text Parser
   const apiKey = process.env.GEMINI_API_KEY?.trim();
 
   // If Gemini API Key is available, attempt AI Extraction with model fallback
@@ -381,14 +499,75 @@ export interface ParsedJobDescription {
 }
 
 /**
- * Parses raw Job Description text into structured mandate fields using Google Gemini AI,
- * with fallback to deterministic extraction engine.
+ * Parses raw Job Description text into structured mandate fields using Groq AI (primary),
+ * Google Gemini AI (secondary fallback), and an intelligent deterministic engine (offline fallback).
  */
 export async function parseJobDescriptionWithGemini(
   rawJdText: string,
   pdfBuffer?: Buffer,
   mimeType?: string
 ): Promise<ParsedJobDescription> {
+  // Ensure we have text to parse
+  let effectiveText = (rawJdText || "").trim();
+  if (effectiveText.length < 20 && pdfBuffer) {
+    try {
+      effectiveText = await extractTextFromResume(pdfBuffer, "job-description.pdf", mimeType);
+    } catch (_) {}
+  }
+
+  // 1. Primary AI Engine: Groq Ultra-Fast Inference (120B / 20B models)
+  if (process.env.GROQ_API_KEY && effectiveText.length > 10) {
+    try {
+      const groqPrompt = `You are an expert executive search recruiter. Extract structured hiring mandate details from the following Job Description text into strict JSON matching this exact schema:
+
+{
+  "title": "string (Exact Job / Role Title e.g. Full Stack Developer - Node.JS & Angular)",
+  "companyName": "string (Hiring company name if mentioned, otherwise empty string)",
+  "department": "string (Engineering, Product, Sales, etc. or empty string)",
+  "minExp": number (Minimum required years of experience e.g. 3, or 0 if unspecified),
+  "maxExp": number (Maximum years of experience e.g. 7, or minExp + 3 if only minExp is mentioned, or 0 if unspecified),
+  "minCtc": number or null (Minimum annual salary/budget in absolute numbers e.g. 4000000 for 40 LPA, or null if unspecified),
+  "maxCtc": number or null (Maximum annual salary/budget in absolute numbers e.g. 6000000 for 60 LPA, or null if unspecified),
+  "currency": "string (e.g. INR, USD, default INR)",
+  "location": "string (City / Location e.g. Bengaluru, Mumbai, or empty string)",
+  "workMode": "REMOTE" | "HYBRID" | "ONSITE" (default HYBRID),
+  "skills": ["string"] (Array of essential technical, domain, or soft skills mentioned),
+  "description": "string (Cleaned, well-structured full job description text)"
+}`;
+
+      const groqJson = await callGroqChatCompletion([
+        { role: "system", content: groqPrompt },
+        { role: "user", content: `Job Description Content:\n"""\n${effectiveText.substring(0, 15000)}\n"""` },
+      ]);
+
+      if (groqJson) {
+        const parsed = JSON.parse(groqJson);
+        const workModeUpper = (parsed.workMode || "").toUpperCase();
+        const validWorkMode = ["REMOTE", "HYBRID", "ONSITE"].includes(workModeUpper)
+          ? (workModeUpper as "REMOTE" | "HYBRID" | "ONSITE")
+          : "HYBRID";
+
+        return {
+          title: (parsed.title || "").trim() || "Open Position",
+          companyName: (parsed.companyName || "").trim(),
+          department: (parsed.department || "").trim(),
+          minExp: typeof parsed.minExp === "number" ? Math.max(0, parsed.minExp) : 0,
+          maxExp: typeof parsed.maxExp === "number" ? Math.max(0, parsed.maxExp) : 10,
+          minCtc: parsed.minCtc ? parseFloat(parsed.minCtc) : null,
+          maxCtc: parsed.maxCtc ? parseFloat(parsed.maxCtc) : null,
+          currency: parsed.currency || "INR",
+          location: (parsed.location || "").trim() || "Remote / Hybrid",
+          workMode: validWorkMode,
+          skills: Array.isArray(parsed.skills) ? parsed.skills.filter(Boolean) : [],
+          description: (parsed.description || effectiveText).trim(),
+        };
+      }
+    } catch (groqErr: any) {
+      console.warn("Groq JD parsing failed, falling back to Gemini:", groqErr.message);
+    }
+  }
+
+  // 2. Secondary AI Engine: Gemini
   const apiKey = process.env.GEMINI_API_KEY?.trim();
 
   if (apiKey && apiKey !== "" && apiKey !== "your_gemini_api_key_here") {
