@@ -112,11 +112,17 @@ export async function parseResumeWithGemini(
   if (effectiveText.length < 20 && pdfBuffer) {
     try {
       effectiveText = await extractTextFromResume(pdfBuffer, fileName || "resume.pdf", mimeType);
-    } catch (_) {}
+    } catch (e: any) {
+      console.warn(`[Resume-Parser] extractTextFromResume failed for ${fileName}:`, e.message);
+    }
   }
 
+  const hasGroqKey = Boolean(process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.trim() !== "");
+  console.log(`[Resume-Parser] Processing '${fileName || "document"}': textLength=${effectiveText.length}, hasGroqKey=${hasGroqKey}`);
+
   // 1. Primary AI Engine: Groq Ultra-Fast Inference (120B / 20B models)
-  if (process.env.GROQ_API_KEY && effectiveText.length > 10) {
+  if (hasGroqKey && effectiveText.length > 10) {
+    console.log(`[Resume-Parser] Invoking Groq AI Engine for '${fileName}'...`);
     try {
       const groqPrompt = `You are an expert recruitment parser. Extract candidate details from the following resume into strict JSON matching this exact schema:
 
@@ -143,6 +149,7 @@ export async function parseResumeWithGemini(
       ]);
 
       if (groqJson) {
+        console.log(`[Resume-Parser] Groq successfully parsed candidate details for '${fileName}'!`);
         const parsedData = JSON.parse(groqJson);
         const phone = cleanStr(parsedData.phone) || "";
         const phoneNormalized = normalizePhoneNumber(phone);
@@ -169,8 +176,10 @@ export async function parseResumeWithGemini(
         };
       }
     } catch (groqErr: any) {
-      console.warn("Groq resume parsing failed, falling back to Gemini:", groqErr.message);
+      console.warn(`[Resume-Parser] Groq resume parsing failed for ${fileName}:`, groqErr.message);
     }
+  } else {
+    console.warn(`[Resume-Parser] Skipping Groq for '${fileName}': hasGroqKey=${hasGroqKey}, textLength=${effectiveText.length}`);
   }
 
   // 2. Secondary AI Engine: Gemini Multimodal & Text Parser
