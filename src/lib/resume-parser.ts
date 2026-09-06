@@ -160,8 +160,19 @@ export async function extractTextFromResume(
 
       // Secondary Strategy: pdf-parse (v2 and v1 compatible)
       try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
-        const pdfModule = require("pdf-parse");
+        const origWarn = console.warn;
+        console.warn = (...args: any[]) => {
+          if (typeof args[0] === "string" && args[0].includes("@napi-rs/canvas")) return;
+          origWarn.apply(console, args);
+        };
+        let pdfModule: any;
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-var-requires
+          pdfModule = require("pdf-parse");
+        } finally {
+          console.warn = origWarn;
+        }
+
         if (pdfModule.PDFParse) {
           const parser = new pdfModule.PDFParse({ data: fileBuffer });
           const result = await parser.getText();
