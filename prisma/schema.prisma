@@ -365,6 +365,8 @@ model ClientPortalShare {
   clientContactEmail String?    @map("client_contact_email")
   clientOrgName      String     @map("client_org_name")
   feedbackSlaHours   Int        @default(48) @map("feedback_sla_hours")
+  expiresAt          DateTime?  @map("expires_at")
+  candidateIds       String[]   @default([]) @map("candidate_ids")
   isActive           Boolean    @default(true) @map("is_active")
   viewsCount         Int        @default(0) @map("views_count")
   lastViewedAt       DateTime?  @map("last_viewed_at")
