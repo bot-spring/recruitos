@@ -45,6 +45,8 @@ export interface InterviewInviteEmailProps {
   interviewType: string;
   meetingLink: string;
   panelistNames: string[];
+  instructions?: string | null;
+  keySkills?: string[];
 }
 
 /**
@@ -254,6 +256,8 @@ export async function sendInterviewInvitationEmail({
   interviewType,
   meetingLink,
   panelistNames,
+  instructions,
+  keySkills = [],
 }: InterviewInviteEmailProps) {
   const isDev = process.env.NODE_ENV !== "production";
   const recipient = isDev ? (process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in") : to;
@@ -273,6 +277,7 @@ export async function sendInterviewInvitationEmail({
           Your interview round for the <strong>${jobTitle}</strong> position with <strong>${companyName}</strong> has been confirmed.
         </p>
 
+        <!-- Interview Logistics Table -->
         <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin-bottom: 24px;">
           <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
             <tr>
@@ -302,9 +307,41 @@ export async function sendInterviewInvitationEmail({
           </table>
         </div>
 
-        <p style="margin: 0 0 16px 0; font-size: 13px; color: #475569; line-height: 1.6;">
-          Please join 5 minutes prior to the scheduled start time with a stable internet connection and webcam enabled.
-        </p>
+        <!-- Automated Interview Preparation Kit (CE-02) -->
+        <div style="background-color: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 10px; padding: 18px; margin-bottom: 24px;">
+          <div style="display: flex; align-items: center; margin-bottom: 10px;">
+            <h3 style="margin: 0; font-size: 14px; color: #166534; font-weight: 800;">
+              🎯 Interview Success & Preparation Kit (CE-02)
+            </h3>
+          </div>
+
+          ${
+            instructions
+              ? `<div style="background-color: #ffffff; border: 1px solid #dcfce7; border-radius: 6px; padding: 10px 14px; margin-bottom: 12px; font-size: 12px; color: #15803d;">
+                  <strong>Special Recruiter Instructions:</strong><br />
+                  <span style="color: #1e293b;">${instructions}</span>
+                </div>`
+              : ""
+          }
+
+          ${
+            keySkills.length > 0
+              ? `<p style="margin: 0 0 10px 0; font-size: 12px; color: #166534;">
+                  <strong>Core Evaluation Focus:</strong> ${keySkills.join(", ")}
+                </p>`
+              : ""
+          }
+
+          <div style="font-size: 12px; color: #334155; line-height: 1.6;">
+            <strong style="color: #0f172a;">Candidate Best Practice Frameworks:</strong>
+            <ul style="margin: 6px 0 0 0; padding-left: 18px;">
+              <li><strong>The Orange Test (Clarify Objectives):</strong> Before answering complex technical or architectural questions, always clarify the underlying requirements and constraints first.</li>
+              <li><strong>The STAR Framework:</strong> Structure behavioral answers cleanly: <em>Situation &rarr; Task &rarr; Action &rarr; Result</em>.</li>
+              <li><strong>Environment Check:</strong> Test camera, microphone, and quiet background lighting 5 minutes prior to start.</li>
+              <li><strong>Ask Smart Questions:</strong> Have 2-3 thoughtful questions prepared about team challenges and architecture roadmap.</li>
+            </ul>
+          </div>
+        </div>
 
         <p style="margin: 24px 0 0 0; font-size: 13px; color: #64748b;">
           Best of luck,<br />
@@ -792,4 +829,185 @@ export async function sendClientShortlistReminderEmail({
     return { success: false, error: error.message };
   }
 }
+
+export interface ClientDecisionRecruiterEmailProps {
+  to: string;
+  recruiterName: string;
+  candidateName: string;
+  candidateId: string;
+  jobTitle: string;
+  companyName: string;
+  agencyName: string;
+  mandateId: string;
+  decision: "SHORTLIST" | "REJECT" | "HOLD" | "QUESTION" | string;
+  notes?: string | null;
+  preferredInterviewTimes?: string | null;
+  rejectionReason?: string | null;
+}
+
+/**
+ * Sends an instant real-time notification email to the assigned recruiter and search lead
+ * the moment a client takes an action (Shortlist, Reject, or Info Request) on the portal (CF-02).
+ */
+export async function sendClientDecisionRecruiterEmail({
+  to,
+  recruiterName,
+  candidateName,
+  candidateId,
+  jobTitle,
+  companyName,
+  agencyName,
+  mandateId,
+  decision,
+  notes,
+  preferredInterviewTimes,
+  rejectionReason,
+}: ClientDecisionRecruiterEmailProps) {
+  const isDev = process.env.NODE_ENV !== "production";
+  const recipient = isDev ? (process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in") : to;
+  const appUrl = process.env.NEXTAUTH_URL || "http://localhost:3000";
+  const cockpitUrl = `${appUrl}/cockpit/mandates/${mandateId}`;
+
+  const isShortlist = decision === "SHORTLIST";
+  const isReject = decision === "REJECT";
+
+  const badgeColor = isShortlist ? "#16a34a" : isReject ? "#dc2626" : "#d97706";
+  const badgeBg = isShortlist ? "#f0fdf4" : isReject ? "#fef2f2" : "#fffbeb";
+  const badgeBorder = isShortlist ? "#bbf7d0" : isReject ? "#fecaca" : "#fef3c7";
+  const badgeText = isShortlist
+    ? "SHORTLISTED FOR INTERVIEW"
+    : isReject
+    ? "REJECTED BY CLIENT"
+    : "INQUIRY / ON HOLD";
+
+  const subject = isShortlist
+    ? `🎯 [Client Shortlist] ${companyName} shortlisted ${candidateName} for ${jobTitle}`
+    : isReject
+    ? `🛑 [Client Feedback] ${companyName} passed on ${candidateName} (${rejectionReason || "Feedback Provided"})`
+    : `💬 [Client Inquiry] ${companyName} requested details for ${candidateName}`;
+
+  const htmlContent = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 620px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden; padding: 24px; color: #1e293b;">
+      
+      <div style="display: flex; align-items: center; justify-content: space-between; border-bottom: 2px solid #f1f5f9; padding-bottom: 16px; margin-bottom: 20px;">
+        <div>
+          <span style="font-size: 11px; font-weight: 800; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em;">Client Portal Telemetry</span>
+          <h2 style="margin: 4px 0 0 0; font-size: 18px; color: #0f172a; font-weight: 800;">${companyName} — Decision Recorded</h2>
+        </div>
+        <div style="display: inline-block; background-color: ${badgeBg}; border: 1px solid ${badgeBorder}; color: ${badgeColor}; font-weight: 800; font-size: 11px; padding: 6px 12px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
+          ${badgeText}
+        </div>
+      </div>
+
+      <p style="font-size: 14px; line-height: 1.5; color: #334155; margin: 0 0 16px 0;">
+        Hi <strong>${recruiterName || "Recruiter"}</strong>,
+      </p>
+      <p style="font-size: 14px; line-height: 1.5; color: #334155; margin: 0 0 20px 0;">
+        <strong>${companyName}</strong> just reviewed candidate profile <strong>${candidateName}</strong> for the role of <strong>${jobTitle}</strong>.
+      </p>
+
+      <!-- Feedback Details Box -->
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin-bottom: 24px;">
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <tr>
+            <td style="padding: 6px 0; color: #64748b; width: 140px; font-weight: 600;">Candidate:</td>
+            <td style="padding: 6px 0; font-weight: 800; color: #0f172a;">${candidateName}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Role Mandate:</td>
+            <td style="padding: 6px 0; font-weight: 600; color: #0f172a;">${jobTitle}</td>
+          </tr>
+          <tr>
+            <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Decision:</td>
+            <td style="padding: 6px 0;">
+              <span style="display: inline-block; background-color: ${badgeBg}; border: 1px solid ${badgeBorder}; color: ${badgeColor}; font-weight: 800; font-size: 11px; padding: 2px 8px; border-radius: 4px;">
+                ${badgeText}
+              </span>
+            </td>
+          </tr>
+
+          ${
+            isShortlist && preferredInterviewTimes
+              ? `
+              <tr>
+                <td style="padding: 6px 0; color: #16a34a; font-weight: 700; vertical-align: top;">Interview Slots:</td>
+                <td style="padding: 6px 0; font-weight: 700; color: #15803d; background-color: #dcfce7; padding: 6px 10px; border-radius: 6px;">
+                  🗓️ ${preferredInterviewTimes}
+                </td>
+              </tr>
+              `
+              : ""
+          }
+
+          ${
+            isReject && rejectionReason
+              ? `
+              <tr>
+                <td style="padding: 6px 0; color: #dc2626; font-weight: 700; vertical-align: top;">Rejection Reason:</td>
+                <td style="padding: 6px 0; font-weight: 700; color: #b91c1c;">
+                  🛑 ${rejectionReason}
+                </td>
+              </tr>
+              `
+              : ""
+          }
+
+          ${
+            notes
+              ? `
+              <tr>
+                <td style="padding: 8px 0 6px 0; color: #64748b; font-weight: 600; vertical-align: top;">Client Notes:</td>
+                <td style="padding: 8px 0 6px 0; color: #334155; font-style: italic;">
+                  "${notes}"
+                </td>
+              </tr>
+              `
+              : ""
+          }
+        </table>
+      </div>
+
+      <!-- Action Button -->
+      <div style="text-align: center; margin: 28px 0;">
+        <a href="${cockpitUrl}" style="display: inline-block; background-color: #002060; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 13px; padding: 12px 28px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,32,96,0.25);">
+          ${isShortlist ? "⚡ Open Mandate & Schedule Interview" : "🔍 Open Mandate Workspace"}
+        </a>
+      </div>
+
+      <p style="margin: 20px 0 0 0; font-size: 12px; color: #94a3b8; text-align: center;">
+        RecruitOS Telemetry Engine &bull; Automated client activity tracking
+      </p>
+
+      ${
+        isDev
+          ? `<div style="margin-top: 20px; background-color: #fffbeb; padding: 8px 12px; border: 1px solid #fef3c7; border-radius: 6px; font-size: 11px; color: #92400e;">
+              ⚙️ <strong>Dev Notice:</strong> Intended recruiter was <code>${to}</code>. Delivered to <code>${recipient}</code>.
+            </div>`
+          : ""
+      }
+    </div>
+  `;
+
+  try {
+    if (!process.env.GMAIL_SMTP_PASS) {
+      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Client decision email logged for: ${recipient}`);
+      console.log(`   Subject: ${subject}`);
+      return { success: true, simulated: true };
+    }
+
+    const info = await transporter.sendMail({
+      from: `"${agencyName} Portal Telemetry" <${process.env.GMAIL_SMTP_USER || "ankur@botspring.in"}>`,
+      to: recipient,
+      subject,
+      html: htmlContent,
+    });
+
+    console.log(`📧 Client decision notification email dispatched: ${info.messageId} to ${recipient}`);
+    return { success: true, messageId: info.messageId };
+  } catch (error: any) {
+    console.error("⚠️ Failed to dispatch client decision notification email:", error.message);
+    return { success: false, error: error.message };
+  }
+}
+
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { SubmissionStage, ClientDecision, CandidateJobStatus } from "@prisma/client";
+import { sendClientDecisionRecruiterEmail } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -14,7 +15,11 @@ export async function POST(req: Request, { params }: { params: { token: string }
       where: { portalToken: token },
       include: {
         agency: true,
-        mandate: true,
+        mandate: {
+          include: {
+            assignedRecruiter: true,
+          },
+        },
       },
     });
 
@@ -127,6 +132,32 @@ export async function POST(req: Request, { params }: { params: { token: string }
         },
       },
     });
+
+    // 6. Instant Recruiter & Agency Lead Notification (CF-02)
+    const recruiterEmail =
+      portalShare.mandate.assignedRecruiter?.email ||
+      process.env.SUPER_ADMIN_EMAIL ||
+      "ankur@botspring.in";
+    const recruiterName = portalShare.mandate.assignedRecruiter?.name || "Recruiter";
+
+    try {
+      await sendClientDecisionRecruiterEmail({
+        to: recruiterEmail,
+        recruiterName,
+        candidateName: submission.candidate.fullName,
+        candidateId: submission.candidateId,
+        jobTitle: portalShare.mandate.title,
+        companyName: portalShare.clientOrgName,
+        agencyName: portalShare.agency.name,
+        mandateId: portalShare.mandateId,
+        decision,
+        notes: notes?.trim(),
+        preferredInterviewTimes: preferredInterviewTimes?.trim(),
+        rejectionReason: rejectionReason?.trim(),
+      });
+    } catch (notifyErr) {
+      console.warn("⚠️ Non-fatal: Failed to send recruiter decision notification email:", notifyErr);
+    }
 
     return NextResponse.json({
       message: `Feedback recorded for candidate '${submission.candidate.fullName}'.`,

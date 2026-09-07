@@ -1,3 +1,5 @@
+import { prisma } from "@/lib/prisma";
+
 /**
  * Meta WhatsApp Cloud API Integration Helper (RC-04, RC-05)
  * Dispatches candidate interview briefing & logistics notifications
@@ -16,13 +18,79 @@ export interface WhatsAppInterviewPayload {
   agencyName: string;
   recruiterName: string;
   recruiterPhone?: string;
+  instructions?: string;
+}
+
+export interface WhatsAppConfig {
+  token: string;
+  phoneNumberId: string;
+  businessAccountId: string;
+  devOverridePhone: string;
+  isConfigured: boolean;
+  isProductionMode: boolean;
+}
+
+export async function getWhatsAppConfig(): Promise<WhatsAppConfig> {
+  try {
+    const setting = await prisma.platformSetting.findUnique({
+      where: { id: "global" },
+    });
+
+    const isProductionMode = Boolean(setting?.isProductionMode);
+
+    const token =
+      setting?.whatsappApiToken?.trim() ||
+      process.env.WHATSAPP_API_TOKEN ||
+      process.env.WHATSAPP_ACCESS_TOKEN ||
+      "";
+    const phoneNumberId =
+      setting?.whatsappPhoneNumberId?.trim() ||
+      process.env.WHATSAPP_PHONE_NUMBER_ID ||
+      "";
+    const businessAccountId =
+      setting?.whatsappBusinessAccountId?.trim() ||
+      process.env.WHATSAPP_BUSINESS_ACCOUNT_ID ||
+      "";
+    const devOverridePhone = isProductionMode
+      ? ""
+      : (setting?.whatsappDevOverridePhone?.trim() || process.env.DEV_OVERRIDE_PHONE || "919818352440");
+
+    return {
+      token,
+      phoneNumberId,
+      businessAccountId,
+      devOverridePhone,
+      isConfigured: Boolean(token && phoneNumberId),
+      isProductionMode,
+    };
+  } catch (err) {
+    return {
+      token: process.env.WHATSAPP_API_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN || "",
+      phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID || "",
+      businessAccountId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || "",
+      devOverridePhone: process.env.DEV_OVERRIDE_PHONE || "919818352440",
+      isConfigured: Boolean(
+        (process.env.WHATSAPP_API_TOKEN || process.env.WHATSAPP_ACCESS_TOKEN) &&
+          process.env.WHATSAPP_PHONE_NUMBER_ID
+      ),
+      isProductionMode: false,
+    };
+  }
 }
 
 export async function sendWhatsAppInterviewBriefing(payload: WhatsAppInterviewPayload) {
-  const token = process.env.WHATSAPP_API_TOKEN;
-  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  const config = await getWhatsAppConfig();
+  const token = config.token;
+  const phoneNumberId = config.phoneNumberId;
 
+  const isDev = process.env.NODE_ENV !== "production";
   const sanitizedPhone = payload.candidatePhone.replace(/[^0-9]/g, "");
+  const devPhone = config.devOverridePhone.replace(/[^0-9]/g, "");
+  const recipientPhone = isDev ? devPhone : sanitizedPhone;
+
+  const devNotice = isDev
+    ? `\n\n⚙️ *Dev Test Mode:* Intended candidate: ${payload.candidateName} (${sanitizedPhone}). Delivered to test device ${devPhone}.`
+    : "";
 
   const messageText = `
 🎯 *Interview Confirmed: ${payload.roleTitle}*
@@ -34,11 +102,16 @@ Your interview with *${payload.clientOrgName}* has been scheduled:
 ⏱️ *Duration:* ${payload.durationMinutes} Minutes
 📌 *Round:* ${payload.interviewType.replace(/_/g, " ")}
 💻 *Join Meeting:* ${payload.meetingLink}
-${payload.panelistNames.length > 0 ? `👥 *Panelists:* ${payload.panelistNames.join(", ")}\n` : ""}
-💡 *Quick Prep Tip:* Please join 5 minutes early in a quiet environment. If you need any prep guidance or context, reply directly to this message or call ${payload.recruiterName} (${payload.recruiterPhone || "Search Lead"}).
+${payload.panelistNames.length > 0 ? `👥 *Panelists:* ${payload.panelistNames.join(", ")}\n` : ""}${payload.instructions ? `📝 *Prep Guidance:* ${payload.instructions}\n` : ""}
+💡 *Key Interview Prep Tips:*
+1. Join 5 minutes early in a quiet environment with camera enabled.
+2. Structure technical answers with situation, architecture approach, and trade-offs.
+3. Prepare 2-3 thoughtful questions about the team's engineering roadmap.
+
+For any prep support, reply directly to this message or contact ${payload.recruiterName} (${payload.recruiterPhone || "Search Lead"}).
 
 Best of luck!
-*${payload.agencyName} Talent Advisory*
+*${payload.agencyName} Talent Advisory*${devNotice}
 `.trim();
 
   // If live Meta API token is configured, make the live API call
@@ -53,7 +126,7 @@ Best of luck!
         body: JSON.stringify({
           messaging_product: "whatsapp",
           recipient_type: "individual",
-          to: sanitizedPhone,
+          to: recipientPhone,
           type: "text",
           text: { preview_url: true, body: messageText },
         }),
@@ -76,7 +149,7 @@ Best of luck!
 
   // Graceful simulation / fallback logger for test & dev environments
   console.log("================================================================================");
-  console.log(`📱 [WHATSAPP DISPATCH SIMULATION] Sent to: ${sanitizedPhone}`);
+  console.log(`📱 [WHATSAPP DISPATCH SIMULATION] Sent to: ${recipientPhone} (Intended: ${sanitizedPhone})`);
   console.log("--------------------------------------------------------------------------------");
   console.log(messageText);
   console.log("================================================================================");

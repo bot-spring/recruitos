@@ -42,6 +42,7 @@ import {
   DollarSign,
   Shield,
   RefreshCw,
+  ExternalLink,
 } from "lucide-react";
 
 interface CandidateRecord {
@@ -60,9 +61,28 @@ interface CandidateRecord {
   skills: string[];
   summary: string | null;
   source: string;
+  resumeUrl?: string | null;
+  qualification?: string | null;
   isSilverMedalist: boolean;
   silverMedalistReason: string | null;
+  lastCallDisposition?: string | null;
+  lastCallNotes?: string | null;
+  lastCallAt?: string | null;
+  nextCallbackAt?: string | null;
+  readyToRelocate?: string | null;
+  relevantExpYears?: number | null;
+  reasonForLeaving?: string | null;
+  offerInHand?: string | null;
   createdAt: string;
+  callLogs?: Array<{
+    id: string;
+    disposition: string;
+    notes?: string | null;
+    callbackAt?: string | null;
+    calledAt: string;
+    recruiter?: { id: string; name: string; email: string } | null;
+    mandate?: { id: string; title: string; client: { name: string } } | null;
+  }>;
   submissions: Array<{
     id: string;
     stage: string;
@@ -97,6 +117,46 @@ interface CandidateRecord {
   }>;
 }
 
+const CALL_DISPOSITIONS = [
+  { value: "CONNECTED_INTERESTED", label: "🟢 Connected — Interested & Profile Matched", badge: "bg-emerald-100 text-emerald-900 border-emerald-300" },
+  { value: "CONNECTED_CALLBACK", label: "🟡 Connected — Call Back Requested", badge: "bg-amber-100 text-amber-900 border-amber-300" },
+  { value: "CONNECTED_CTC_MISMATCH", label: "🟠 Connected — CTC / Budget Mismatch", badge: "bg-orange-100 text-orange-900 border-orange-300" },
+  { value: "CONNECTED_NOTICE_MISMATCH", label: "🟠 Connected — Notice Period Too Long", badge: "bg-orange-100 text-orange-900 border-orange-300" },
+  { value: "CONNECTED_NOT_INTERESTED", label: "🔴 Connected — Not Interested / Declined", badge: "bg-rose-100 text-rose-900 border-rose-300" },
+  { value: "RINGING_NO_ANSWER", label: "⚪ Ringing / No Answer", badge: "bg-slate-100 text-slate-800 border-slate-300" },
+  { value: "UNREACHABLE_BUSY", label: "⚪ Switched Off / Busy / Out of Coverage", badge: "bg-slate-100 text-slate-800 border-slate-300" },
+];
+
+const getCallbackBadge = (callbackAtStr?: string | null) => {
+  if (!callbackAtStr) return null;
+  try {
+    const cbDate = new Date(callbackAtStr);
+    const now = new Date();
+    const isOverdue = cbDate.getTime() < now.getTime();
+    const isToday = cbDate.toDateString() === now.toDateString();
+    const timeStr = cbDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+
+    if (isOverdue) {
+      return {
+        text: `⚠️ Overdue (${isToday ? timeStr : `${cbDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${timeStr}`})`,
+        className: "bg-rose-100 text-rose-800 border-rose-300 font-extrabold",
+      };
+    }
+    if (isToday) {
+      return {
+        text: `⏰ Call Today @ ${timeStr}`,
+        className: "bg-amber-100 text-amber-900 border-amber-400 font-extrabold",
+      };
+    }
+    return {
+      text: `📅 ${cbDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })} @ ${timeStr}`,
+      className: "bg-blue-50 text-blue-800 border-blue-200 font-bold",
+    };
+  } catch (_) {
+    return null;
+  }
+};
+
 interface ActiveMandateOption {
   id: string;
   title: string;
@@ -113,32 +173,20 @@ export default function CandidateBankPage() {
   const [noticeFilter, setNoticeFilter] = useState(false);
   const [probationFilter, setProbationFilter] = useState(false);
 
-  // Ingestion Modal State (RC-02)
+  // Unified Batch Ingestion Modal State (RC-02)
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
-  const [rawTextSummary, setRawTextSummary] = useState<string>("");
-  const [isDuplicate, setIsDuplicate] = useState(false);
-
-  const [candidateForm, setCandidateForm] = useState({
-    fullName: "",
-    email: "",
-    phone: "",
-    currentCompany: "",
-    currentTitle: "",
-    totalExpYears: 0,
-    currentCtc: "",
-    expectedCtc: "",
-    currency: "INR",
-    noticePeriodDays: 30,
-    location: "",
-    skills: "",
-    summary: "",
-    mandateId: "",
+  const [batchResults, setBatchResults] = useState<any[]>([]);
+  const [selectedMandateId, setSelectedMandateId] = useState<string>("");
+  const [savingBatch, setSavingBatch] = useState(false);
+  const [parseProgress, setParseProgress] = useState({
+    current: 0,
+    total: 0,
+    currentFileName: "",
+    percent: 0,
   });
-
-  const [savingCandidate, setSavingCandidate] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Silver Medalist Tagging Modal State (RC-07)
@@ -221,8 +269,150 @@ export default function CandidateBankPage() {
   const [exitReason, setExitReason] = useState("Candidate resigned during probation to pursue alternative opportunity.");
   const [triggeringReplacement, setTriggeringReplacement] = useState(false);
 
-  // Sanitized Client Profile Preview Modal
+  // Candidate Detail & Call Screening Modal State
+  const [selectedCandidate, setSelectedCandidate] = useState<CandidateRecord | null>(null);
+  const [callDisposition, setCallDisposition] = useState<string>("");
+  const [callbackDate, setCallbackDate] = useState<string>("");
+  const [callbackTime, setCallbackTime] = useState<string>("12:00");
+  const [callMandateId, setCallMandateId] = useState<string>("");
+  const [callNotes, setCallNotes] = useState<string>("");
+  const [readyToRelocate, setReadyToRelocate] = useState<string>("Yes");
+  const [relevantExpYears, setRelevantExpYears] = useState<string>("");
+  const [currentSalary, setCurrentSalary] = useState<string>("");
+  const [expectedSalary, setExpectedSalary] = useState<string>("");
+  const [noticePeriod, setNoticePeriod] = useState<string>("");
+  const [reasonForLeaving, setReasonForLeaving] = useState<string>("");
+  const [offerInHand, setOfferInHand] = useState<string>("No");
+  const [callValidationError, setCallValidationError] = useState<string | null>(null);
+  const [loggingCall, setLoggingCall] = useState(false);
+
+  // Backward compatibility previewCandidate state
   const [previewCandidate, setPreviewCandidate] = useState<CandidateRecord | null>(null);
+
+  const handleOpenCandidateModal = (cand: CandidateRecord) => {
+    setSelectedCandidate(cand);
+    setCallDisposition(cand.lastCallDisposition || "");
+    setCallNotes("");
+    setCallValidationError(null);
+    setReadyToRelocate(cand.readyToRelocate || "Yes");
+    setRelevantExpYears(
+      cand.relevantExpYears !== undefined && cand.relevantExpYears !== null
+        ? String(cand.relevantExpYears)
+        : cand.totalExpYears
+        ? String(cand.totalExpYears)
+        : ""
+    );
+    setCurrentSalary(cand.currentCtc ? `${(cand.currentCtc / 100000).toFixed(1)} LPA` : "");
+    setExpectedSalary(cand.expectedCtc ? `${(cand.expectedCtc / 100000).toFixed(1)} LPA` : "");
+    setNoticePeriod(cand.noticePeriodDays ? `${cand.noticePeriodDays} Days` : "30 Days");
+    setReasonForLeaving(cand.reasonForLeaving || "");
+    setOfferInHand(cand.offerInHand || "No");
+    setCallMandateId(cand.submissions.length > 0 ? cand.submissions[0].mandate.id : "");
+
+    if (cand.nextCallbackAt) {
+      try {
+        const d = new Date(cand.nextCallbackAt);
+        setCallbackDate(d.toISOString().split("T")[0]);
+        setCallbackTime(d.toTimeString().slice(0, 5));
+      } catch (_) {
+        setCallbackDate(new Date().toISOString().split("T")[0]);
+        setCallbackTime("12:00");
+      }
+    } else {
+      setCallbackDate(new Date().toISOString().split("T")[0]);
+      setCallbackTime("12:00");
+    }
+  };
+
+  const handleLogCall = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCandidate) return;
+
+    if (!callDisposition || callDisposition.trim() === "") {
+      setCallValidationError("Please select a Call Outcome Disposition before saving.");
+      return;
+    }
+
+    let callbackAtPayload: string | null = null;
+    if (callDisposition === "CONNECTED_CALLBACK") {
+      if (!callbackDate || !callbackTime) {
+        setCallValidationError("Please specify both a Date and Time for the scheduled call back.");
+        return;
+      }
+      callbackAtPayload = new Date(`${callbackDate}T${callbackTime}:00`).toISOString();
+    }
+
+    setLoggingCall(true);
+    setCallValidationError(null);
+
+    try {
+      const res = await fetch(`/api/candidates/${selectedCandidate.id}/call-log`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          disposition: callDisposition,
+          notes: callNotes,
+          callbackAt: callbackAtPayload,
+          mandateId: callMandateId || undefined,
+          readyToRelocate,
+          relevantExpYears,
+          currentSalary,
+          expectedSalary,
+          noticePeriod,
+          reasonForLeaving,
+          offerInHand,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to log call outcome");
+      }
+
+      setSuccessMessage(`Call outcome logged: ${callDisposition.replace(/_/g, " ")}`);
+      setCallNotes("");
+      setCallDisposition(callDisposition);
+
+      const newLog = {
+        id: data.callLog.id,
+        disposition: callDisposition,
+        notes: callNotes,
+        callbackAt: callbackAtPayload,
+        calledAt: new Date().toISOString(),
+        recruiter: {
+          id: session?.user?.id || "",
+          name: session?.user?.name || "You",
+          email: session?.user?.email || "",
+        },
+        mandate: callMandateId ? mandates.find((m) => m.id === callMandateId) || null : null,
+      };
+
+      const updatedCandidateObj: CandidateRecord = {
+        ...selectedCandidate,
+        lastCallDisposition: callDisposition,
+        lastCallNotes: callNotes,
+        lastCallAt: new Date().toISOString(),
+        nextCallbackAt: callbackAtPayload,
+        readyToRelocate,
+        relevantExpYears: relevantExpYears ? parseFloat(relevantExpYears) : null,
+        reasonForLeaving,
+        offerInHand,
+        callLogs: [newLog, ...(selectedCandidate.callLogs || [])],
+      };
+
+      setSelectedCandidate(updatedCandidateObj);
+
+      // Update candidate in local state list
+      setCandidates((prev) =>
+        prev.map((c) => (c.id === selectedCandidate.id ? updatedCandidateObj : c))
+      );
+    } catch (err: any) {
+      console.error("Error logging call:", err);
+      setCallValidationError(err.message || "Failed to save call outcome");
+    } finally {
+      setLoggingCall(false);
+    }
+  };
 
   const fetchCandidates = async () => {
     try {
@@ -279,95 +469,158 @@ export default function CandidateBankPage() {
     return true;
   });
 
-  // Handle Resume File Selection & AI Parsing
-  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || !e.target.files[0]) return;
-    const file = e.target.files[0];
-    setUploadFile(file);
+  // Handle Resume File Selection & Multi-Resume AI Parsing (Batch up to 5 files, 10MB limit)
+  const handleMultiFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const fileList = Array.from(e.target.files);
+
+    if (fileList.length > 5) {
+      setParseError("Maximum 5 resumes can be uploaded in one go. Please select up to 5 files.");
+      return;
+    }
+
+    const oversized = fileList.find((f) => f.size > 10 * 1024 * 1024);
+    if (oversized) {
+      setParseError(`File '${oversized.name}' exceeds the 10MB size limit (${(oversized.size / (1024 * 1024)).toFixed(1)}MB).`);
+      return;
+    }
+
+    setUploadFiles(fileList);
     setParsing(true);
     setParseError(null);
+    setBatchResults([]);
+    setParseProgress({
+      current: 1,
+      total: fileList.length,
+      currentFileName: fileList[0].name,
+      percent: 5,
+    });
+
+    const accumulatedResults: any[] = [];
 
     try {
-      const formData = new FormData();
-      formData.append("file", file);
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        setParseProgress({
+          current: i + 1,
+          total: fileList.length,
+          currentFileName: file.name,
+          percent: Math.max(5, Math.round((i / fileList.length) * 100)),
+        });
 
-      const res = await fetch("/api/candidates/parse", {
-        method: "POST",
-        body: formData,
-      });
+        const formData = new FormData();
+        formData.append("file", file);
 
-      const text = await res.text();
-      let data: any = {};
-      try {
-        data = JSON.parse(text);
-      } catch (jsonErr) {
-        throw new Error(`Server returned invalid response: ${text.substring(0, 100)}`);
+        try {
+          const res = await fetch("/api/candidates/parse", {
+            method: "POST",
+            body: formData,
+          });
+
+          const data = await res.json();
+          if (res.ok && data.results && data.results[0]) {
+            accumulatedResults.push(data.results[0]);
+          } else if (res.ok && data.parsed) {
+            accumulatedResults.push({
+              fileName: file.name,
+              success: true,
+              parsed: data.parsed,
+              resumeUrl: data.resumeUrl,
+              rawResumeText: data.rawResumeText,
+            });
+          } else {
+            accumulatedResults.push({
+              fileName: file.name,
+              success: false,
+              error: data.error || "Failed to extract entities",
+            });
+          }
+        } catch (itemErr: any) {
+          accumulatedResults.push({
+            fileName: file.name,
+            success: false,
+            error: itemErr.message || "Network error while parsing",
+          });
+        }
+
+        setBatchResults([...accumulatedResults]);
+        setParseProgress({
+          current: i + 1,
+          total: fileList.length,
+          currentFileName: file.name,
+          percent: Math.round(((i + 1) / fileList.length) * 100),
+        });
       }
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to parse resume document.");
-      }
-
-      const p = data.parsed;
-      setCandidateForm({
-        fullName: p.fullName || "",
-        email: p.email || "",
-        phone: p.phone || "",
-        currentCompany: p.currentCompany || "",
-        currentTitle: p.currentTitle || "",
-        totalExpYears: p.totalExpYears || 0,
-        currentCtc: p.currentCtc ? String(p.currentCtc) : "",
-        expectedCtc: p.expectedCtc ? String(p.expectedCtc) : "",
-        currency: p.currency || "INR",
-        noticePeriodDays: p.noticePeriodDays || 30,
-        location: p.location || "",
-        skills: Array.isArray(p.skills) ? p.skills.join(", ") : "",
-        summary: p.summary || "",
-        mandateId: mandates[0]?.id || "",
-      });
-
-      setRawTextSummary(data.rawTextSummary || "");
-      setIsDuplicate(data.isDuplicate || false);
     } catch (err: any) {
-      setParseError(err.message || "Failed to parse resume with Gemini AI.");
+      setParseError(err.message || "Failed to parse resumes.");
     } finally {
       setParsing(false);
     }
   };
 
-  // Save Candidate Profile
-  const handleSaveCandidate = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSavingCandidate(true);
+  // Save Batch Ingested Candidates and Optionally Attach to Selected Mandate
+  const handleSaveBatchCandidates = async () => {
+    if (batchResults.length === 0) return;
+    setSavingBatch(true);
     setParseError(null);
 
     try {
-      const res = await fetch("/api/candidates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(candidateForm),
-      });
+      let savedCount = 0;
+      let lastErrorMessage = "";
 
-      const text = await res.text();
-      let data: any = {};
-      try {
-        data = JSON.parse(text);
-      } catch (jsonErr) {
-        throw new Error(`Server returned invalid response: ${text.substring(0, 100)}`);
+      for (const item of batchResults) {
+        if (!item.success || !item.parsed) continue;
+        const p = item.parsed;
+        const res = await fetch("/api/candidates", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fullName: p.fullName || "Candidate",
+            email: p.email || "",
+            phone: p.phone || "",
+            currentCompany: p.currentCompany || "",
+            currentTitle: p.currentTitle || "",
+            totalExpYears: p.totalExpYears || 0,
+            currentCtc: p.currentCtc ? String(p.currentCtc) : "",
+            expectedCtc: p.expectedCtc ? String(p.expectedCtc) : "",
+            currency: p.currency || "INR",
+            noticePeriodDays: p.noticePeriodDays || 30,
+            location: p.location || "",
+            skills: Array.isArray(p.skills) ? p.skills : (typeof p.skills === "string" ? p.skills.split(",") : []),
+            summary: p.summary || "",
+            rawResumeText: item.rawResumeText || "",
+            resumeUrl: item.resumeUrl || null,
+            qualification: p.qualification || "",
+            mandateId: selectedMandateId || undefined,
+          }),
+        });
+
+        if (res.ok) {
+          savedCount++;
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          lastErrorMessage = errData.error || "Failed to save candidate.";
+        }
       }
 
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to save candidate.");
+      if (savedCount > 0) {
+        const mandateObj = selectedMandateId ? mandates.find((m) => m.id === selectedMandateId) : null;
+        setSuccessMessage(
+          `Successfully saved & ingested ${savedCount} candidate profile(s) into the ${
+            mandateObj ? `Talent Bank attached to '${mandateObj.title}'` : "General Talent Bank"
+          }!`
+        );
+        setIsImportModalOpen(false);
+        setUploadFiles([]);
+        setBatchResults([]);
+        fetchCandidates();
+      } else {
+        throw new Error(lastErrorMessage || "Failed to save parsed candidates.");
       }
-
-      setSuccessMessage(`Candidate '${data.candidate?.fullName || candidateForm.fullName}' ingested and parsed successfully!`);
-      setIsImportModalOpen(false);
-      setUploadFile(null);
-      fetchCandidates();
     } catch (err: any) {
-      setParseError(err.message || "Failed to save candidate.");
+      setParseError(err.message || "Failed to save ingested candidates.");
     } finally {
-      setSavingCandidate(false);
+      setSavingBatch(false);
     }
   };
 
@@ -837,14 +1090,147 @@ export default function CandidateBankPage() {
             <button
               onClick={() => {
                 setIsImportModalOpen(true);
-                setUploadFile(null);
+                setUploadFiles([]);
+                setBatchResults([]);
                 setParseError(null);
+                setSelectedMandateId("");
               }}
               className="inline-flex items-center space-x-2 px-4 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-extrabold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
             >
               <UploadCloud className="h-4 w-4" />
               <span>+ Import & Parse Resumes (Gemini AI)</span>
             </button>
+          </div>
+        </div>
+
+        {/* Top Macro KPI Stat Cards (RC-02, RC-06, RC-07, PL-01) */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Card 1: Total Talent Ingested */}
+          <div
+            onClick={() => {
+              setSilverFilter(false);
+              setNoticeFilter(false);
+              setProbationFilter(false);
+            }}
+            className={`bg-white rounded-2xl border p-4.5 shadow-2xs hover:shadow-xs transition-all cursor-pointer ${
+              !silverFilter && !noticeFilter && !probationFilter
+                ? "border-slate-800 ring-1 ring-slate-800"
+                : "border-slate-200/90 hover:border-slate-400"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Talent Bank</span>
+              <div className="w-8 h-8 rounded-xl bg-slate-100 flex items-center justify-center text-slate-700">
+                <Users className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="mt-2 flex items-baseline space-x-2">
+              <span className="text-2xl font-black text-slate-900">{candidates.length}</span>
+              <span className="text-xs text-slate-500 font-medium">Profiles Ingested</span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Multi-resume AI batch parsed & deduplicated
+            </p>
+          </div>
+
+          {/* Card 2: Silver Medalist Vault */}
+          <div
+            onClick={() => {
+              setSilverFilter(!silverFilter);
+              setNoticeFilter(false);
+              setProbationFilter(false);
+            }}
+            className={`bg-white rounded-2xl border p-4.5 shadow-2xs hover:shadow-xs transition-all cursor-pointer ${
+              silverFilter
+                ? "border-amber-500 ring-1 ring-amber-500 bg-amber-50/20"
+                : "border-slate-200/90 hover:border-amber-300"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wider">Silver Medalists</span>
+              <div className="w-8 h-8 rounded-xl bg-amber-100 flex items-center justify-center text-amber-700">
+                <Award className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="mt-2 flex items-baseline space-x-2">
+              <span className="text-2xl font-black text-amber-900">
+                {candidates.filter((c) => c.isSilverMedalist).length}
+              </span>
+              <span className="text-xs text-amber-700 font-semibold">Pre-Vetted</span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Final-round runners-up ready for 1-click redeploy
+            </p>
+          </div>
+
+          {/* Card 3: Notice Period Radar */}
+          <div
+            onClick={() => {
+              setNoticeFilter(!noticeFilter);
+              setSilverFilter(false);
+              setProbationFilter(false);
+            }}
+            className={`bg-white rounded-2xl border p-4.5 shadow-2xs hover:shadow-xs transition-all cursor-pointer ${
+              noticeFilter
+                ? "border-purple-500 ring-1 ring-purple-500 bg-purple-50/20"
+                : "border-slate-200/90 hover:border-purple-300"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-purple-800 uppercase tracking-wider">Notice Risk Radar</span>
+              <div className="w-8 h-8 rounded-xl bg-purple-100 flex items-center justify-center text-purple-700">
+                <ShieldAlert className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="mt-2 flex items-baseline space-x-2">
+              <span className="text-2xl font-black text-purple-900">
+                {
+                  candidates.filter((c) => {
+                    const s = c.submissions[0]?.stage;
+                    return s === "OFFER_ISSUED" || s === "OFFER_ACCEPTED" || s === "NOTICE_PERIOD_ACTIVE";
+                  }).length
+                }
+              </span>
+              <span className="text-xs text-purple-700 font-semibold">In Resignation</span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Counter-offer risk monitor & retention pulses
+            </p>
+          </div>
+
+          {/* Card 4: 90-Day Guarantee Vault */}
+          <div
+            onClick={() => {
+              setProbationFilter(!probationFilter);
+              setSilverFilter(false);
+              setNoticeFilter(false);
+            }}
+            className={`bg-white rounded-2xl border p-4.5 shadow-2xs hover:shadow-xs transition-all cursor-pointer ${
+              probationFilter
+                ? "border-emerald-500 ring-1 ring-emerald-500 bg-emerald-50/20"
+                : "border-slate-200/90 hover:border-emerald-300"
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider">90-Day Guarantee Vault</span>
+              <div className="w-8 h-8 rounded-xl bg-emerald-100 flex items-center justify-center text-emerald-700">
+                <Shield className="h-4 w-4" />
+              </div>
+            </div>
+            <div className="mt-2 flex items-baseline space-x-2">
+              <span className="text-2xl font-black text-emerald-900">
+                {
+                  candidates.filter((c) => {
+                    const s = c.submissions[0];
+                    return s?.stage === "JOINED_DAY_1_ACTIVE" && s?.probationStatus !== "EARLY_EXIT_REPLACEMENT";
+                  }).length
+                }
+              </span>
+              <span className="text-xs text-emerald-700 font-semibold">Active Placements</span>
+            </div>
+            <p className="text-[11px] text-slate-400 mt-1">
+              Fee protection countdown & early exit monitor
+            </p>
           </div>
         </div>
 
@@ -949,26 +1335,29 @@ export default function CandidateBankPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+              <table className="w-full divide-y divide-slate-200 text-left text-xs">
                 <thead className="bg-brand-surfaceLight text-slate-700 uppercase font-semibold tracking-wider">
                   <tr>
-                    <th scope="col" className="px-6 py-3.5">
+                    <th scope="col" className="px-4 py-3 font-bold text-slate-700 min-w-[260px]">
                       Candidate & Role
                     </th>
-                    <th scope="col" className="px-6 py-3.5">
-                      Experience & Notice
+                    <th scope="col" className="px-3 py-3 font-bold text-slate-700 w-[100px] whitespace-nowrap">
+                      Date Sourced
                     </th>
-                    <th scope="col" className="px-6 py-3.5">
-                      Compensation (CTC)
+                    <th scope="col" className="px-3 py-3 font-bold text-slate-700 w-[105px] whitespace-nowrap">
+                      Source
                     </th>
-                    <th scope="col" className="px-6 py-3.5">
-                      Top Skills
+                    <th scope="col" className="px-3 py-3 font-bold text-slate-700 w-[125px] whitespace-nowrap">
+                      Mobile Number
                     </th>
-                    <th scope="col" className="px-6 py-3.5">
-                      Pipeline & Commercial Guarantee (PL-01, RC-07)
+                    <th scope="col" className="px-3 py-3 font-bold text-slate-700 w-[230px]">
+                      Last Call Outcome
                     </th>
-                    <th scope="col" className="px-6 py-3.5 text-right">
-                      Stage Actions
+                    <th scope="col" className="px-3 py-3 font-bold text-slate-700 w-[130px] whitespace-nowrap">
+                      Pipeline / Job
+                    </th>
+                    <th scope="col" className="px-3 py-3 font-bold text-slate-700 w-[1%] whitespace-nowrap text-right">
+                      Actions
                     </th>
                   </tr>
                 </thead>
@@ -982,260 +1371,194 @@ export default function CandidateBankPage() {
                     const isNoticeStage = primarySub?.stage === "NOTICE_PERIOD_ACTIVE";
                     const isJoined = primarySub?.stage === "JOINED_DAY_1_ACTIVE";
 
-                    const riskLevel = primarySub?.counterOfferRiskLevel || "LOW";
-                    const riskColors = {
-                      LOW: "bg-emerald-100 text-emerald-800 border-emerald-300",
-                      MEDIUM: "bg-amber-100 text-amber-800 border-amber-300",
-                      HIGH: "bg-orange-100 text-orange-800 border-orange-300",
-                      CRITICAL: "bg-rose-100 text-rose-800 border-rose-300 animate-pulse",
-                    };
+                    const dispObj = CALL_DISPOSITIONS.find((d) => d.value === c.lastCallDisposition);
 
                     return (
-                      <tr key={c.id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="px-6 py-4 whitespace-nowrap">
+                      <tr
+                        key={c.id}
+                        className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
+                        onClick={() => handleOpenCandidateModal(c)}
+                      >
+                        {/* 1. Candidate Name & Role (Expanded to take full primary space) */}
+                        <td className="px-4 py-3">
                           <div className="flex items-center space-x-3">
-                            <div className="w-8 h-8 rounded-lg bg-brand-surface border border-brand-surfaceDark flex items-center justify-center font-extrabold text-slate-800 text-xs">
+                            <div className="w-8 h-8 rounded-lg bg-brand-surface border border-brand-surfaceDark flex items-center justify-center font-extrabold text-slate-800 text-xs flex-shrink-0">
                               {c.fullName.substring(0, 2).toUpperCase()}
                             </div>
-                            <div>
-                              <div className="font-bold text-slate-900 flex items-center space-x-1.5">
-                                <span>{c.fullName}</span>
+                            <div className="min-w-0 flex-1">
+                              <div className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors flex items-center space-x-1.5">
+                                <span className="text-xs sm:text-sm">{c.fullName}</span>
                                 {c.isSilverMedalist && (
-                                  <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-extrabold px-1.5 py-0.2 rounded-full flex items-center space-x-0.5">
+                                  <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-extrabold px-1.5 py-0.2 rounded-full flex items-center space-x-0.5 flex-shrink-0">
                                     <Award className="h-2.5 w-2.5 text-amber-700" />
-                                    <span>SILVER MEDALIST</span>
+                                    <span>SILVER</span>
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[11px] text-slate-500 font-medium">
-                                {c.currentTitle || "Software Professional"} {c.currentCompany ? `at ${c.currentCompany}` : ""}
+                              <div className="text-[11px] text-slate-500 font-medium truncate">
+                                {c.currentTitle || "Professional"} {c.currentCompany ? `at ${c.currentCompany}` : ""}
                               </div>
-                            </div>
-                          </div>
-                        </td>
-
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="text-slate-800 font-semibold">{c.totalExpYears} Years Exp</div>
-                          <div className="text-[10px] text-slate-500">{c.noticePeriodDays} Days Notice</div>
-                        </td>
-
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          <div className="font-bold text-slate-900">
-                            {c.currentCtc ? `${(c.currentCtc / 100000).toFixed(1)}L` : "N/A"} →{" "}
-                            <span className="text-emerald-700">{c.expectedCtc ? `${(c.expectedCtc / 100000).toFixed(1)}L ${c.currency}` : "N/A"}</span>
-                          </div>
-                          {primarySub?.offeredCtc && (
-                            <div className="text-[10px] text-purple-700 font-extrabold">
-                              Offered: {(primarySub.offeredCtc / 100000).toFixed(1)}L
-                            </div>
-                          )}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <div className="flex flex-wrap gap-1 max-w-xs">
-                            {c.skills.slice(0, 3).map((skill, idx) => (
-                              <span
-                                key={idx}
-                                className="text-[10px] bg-slate-100 text-slate-700 font-medium px-2 py-0.5 rounded"
-                              >
-                                {skill}
-                              </span>
-                            ))}
-                            {c.skills.length > 3 && (
-                              <span className="text-[10px] text-slate-400">+{c.skills.length - 3}</span>
-                            )}
-                          </div>
-                        </td>
-
-                        {/* Pipeline Stage & Commercial 90-Day Guarantee Tracker (PL-01, RC-07) */}
-                        <td className="px-6 py-4">
-                          {primarySub ? (
-                            <div className="space-y-1 max-w-xs">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-extrabold border ${
-                                  isJoined
-                                    ? "bg-emerald-100 text-emerald-800 border-emerald-300"
-                                    : isNoticeStage
-                                    ? "bg-amber-100 text-amber-800 border-amber-300"
-                                    : isOfferStage
-                                    ? "bg-purple-100 text-purple-800 border-purple-300"
-                                    : isScheduled
-                                    ? "bg-blue-100 text-blue-800 border-blue-300"
-                                    : "bg-slate-100 text-slate-700 border-slate-200"
-                                }`}>
-                                  {primarySub.stage.replace(/_/g, " ")}
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[10px] text-slate-400 font-medium">
+                                <span className="font-semibold text-slate-600">{c.totalExpYears}y Exp</span>
+                                <span>•</span>
+                                <span>{c.noticePeriodDays}d Notice</span>
+                                <span>•</span>
+                                <span>
+                                  {c.currentCtc ? `${(c.currentCtc / 100000).toFixed(1)}L` : "N/A"} →{" "}
+                                  <strong className="text-emerald-700 font-bold">
+                                    {c.expectedCtc ? `${(c.expectedCtc / 100000).toFixed(1)}L ${c.currency}` : "Comp N/A"}
+                                  </strong>
                                 </span>
+                                {c.resumeUrl && (
+                                  <a
+                                    href={c.resumeUrl}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="inline-flex items-center space-x-0.5 font-bold text-blue-600 hover:text-blue-800 bg-blue-50 border border-blue-200 px-1.5 py-0.2 rounded hover:bg-blue-100 transition-colors ml-1"
+                                    title="View Original CV"
+                                  >
+                                    <FileText className="h-2.5 w-2.5" />
+                                    <span>CV</span>
+                                  </a>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </td>
 
-                                {/* 90-Day Probation Guarantee Status */}
-                                {isJoined && primarySub.probationEndDate && (
-                                  <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[9px] font-extrabold bg-blue-100 text-blue-800 border border-blue-300">
-                                    <Shield className="h-2.5 w-2.5 text-blue-700" />
-                                    <span>
-                                      {primarySub.probationStatus === "EARLY_EXIT_REPLACEMENT"
-                                        ? "Replacement Triggered"
-                                        : `90d Guarantee Active`}
+                        {/* 2. Date Sourced */}
+                        <td className="px-3 py-3 text-slate-600 font-medium whitespace-nowrap w-[100px] text-[11px]">
+                          {new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        </td>
+
+                        {/* 3. Source Name */}
+                        <td className="px-3 py-3 whitespace-nowrap w-[105px]">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
+                            {c.source.replace(/_/g, " ")}
+                          </span>
+                        </td>
+
+                        {/* 4. Mobile Number (From resume) */}
+                        <td className="px-3 py-3 font-mono text-slate-800 font-semibold whitespace-nowrap w-[125px] text-[11px]">
+                          {c.phone || "N/A"}
+                        </td>
+
+                        {/* 5. Last Call Outcome */}
+                        <td className="px-3 py-3 w-[230px]">
+                          {dispObj ? (
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${dispObj.badge}`}>
+                                  {dispObj.label}
+                                </span>
+                                {c.lastCallDisposition === "CONNECTED_CALLBACK" && c.nextCallbackAt && (() => {
+                                  const cbBadge = getCallbackBadge(c.nextCallbackAt);
+                                  return cbBadge ? (
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] border shadow-2xs ${cbBadge.className}`}>
+                                      {cbBadge.text}
                                     </span>
-                                  </span>
-                                )}
-
-                                {/* Partner Split Pill */}
-                                {primarySub.partnerSourcerName && (
-                                  <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
-                                    <Lock className="h-2.5 w-2.5 text-emerald-700" />
-                                    <span>{primarySub.splitFeePercentage || 50}% Split</span>
-                                  </span>
-                                )}
+                                  ) : null;
+                                })()}
                               </div>
-
-                              <div className="text-[10px] text-slate-500 font-medium truncate">
-                                {primarySub.mandate.title} ({primarySub.mandate.client.name})
-                              </div>
-
-                              {/* Start Date & Guarantee End */}
-                              {isJoined && primarySub.actualJoiningDate && (
-                                <div className="text-[10px] text-emerald-800 font-bold flex items-center space-x-1">
-                                  <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                                  <span>Joined: {new Date(primarySub.actualJoiningDate).toLocaleDateString()}</span>
-                                </div>
+                              {c.lastCallNotes && (
+                                <p className="text-[10px] text-slate-500 italic mt-0.5 max-w-xs truncate">
+                                  "{c.lastCallNotes}"
+                                </p>
                               )}
                             </div>
                           ) : (
-                            <span className="text-slate-400 text-[11px] italic">In Talent Pool</span>
+                            <span className="text-slate-400 text-[11px] italic">No calls logged yet</span>
                           )}
                         </td>
 
-                        {/* Stage Actions */}
-                        <td className="px-6 py-4 whitespace-nowrap text-right space-x-1.5">
-                          {primarySub && (
-                            <>
-                              {/* Sourcing & Shortlisted stages: can schedule interview */}
-                              {(primarySub.stage === "CLIENT_SHORTLISTED" ||
-                                primarySub.stage === "SCREENED_QUALIFIED" ||
-                                primarySub.stage === "SUBMITTED_TO_CLIENT") && (
-                                <button
-                                  onClick={() => handleOpenScheduleModal(c)}
-                                  className="inline-flex items-center space-x-1 px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
-                                >
-                                  <Calendar className="h-3 w-3" />
-                                  <span>Schedule Interview</span>
-                                </button>
-                              )}
-
-                              {/* Interview Scheduled: Log Debrief */}
-                              {primarySub.stage === "INTERVIEW_SCHEDULED" && (
-                                <button
-                                  onClick={() => handleOpenDebriefModal(c)}
-                                  className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
-                                >
-                                  <MessageSquare className="h-3 w-3" />
-                                  <span>Log Debrief</span>
-                                </button>
-                              )}
-
-                              {/* Interview Completed: Next Round or Move to Offer */}
-                              {primarySub.stage === "INTERVIEW_COMPLETED" && (
-                                <div className="inline-flex items-center space-x-1">
-                                  <button
-                                    onClick={() => handleOpenScheduleModal(c)}
-                                    className="inline-flex items-center space-x-1 px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-bold rounded-lg text-xs transition-all cursor-pointer"
-                                    title="Schedule Next Round"
-                                  >
-                                    <Calendar className="h-3 w-3" />
-                                    <span>Next Round</span>
-                                  </button>
-                                  <button
-                                    onClick={() => handleOpenOfferModal(c)}
-                                    className="inline-flex items-center space-x-1 px-2.5 py-1 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
-                                  >
-                                    <Zap className="h-3 w-3" />
-                                    <span>Lock Offer & Playbook</span>
-                                  </button>
-                                </div>
-                              )}
-
-                              {/* Offer Stage: Manage Offer & Confirm Joining */}
-                              {isOfferStage && (
-                                <div className="inline-flex items-center space-x-1">
-                                  <button
-                                    onClick={() => handleOpenOfferModal(c)}
-                                    className="inline-flex items-center space-x-1 px-2 py-1 bg-purple-100 hover:bg-purple-200 text-purple-900 font-bold rounded-lg text-xs transition-all cursor-pointer"
-                                  >
-                                    <FileCheck className="h-3 w-3" />
-                                    <span>Offer</span>
-                                  </button>
-                                  <button
-                                    onClick={() => handleOpenJoiningModal(c)}
-                                    className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
-                                  >
-                                    <Receipt className="h-3 w-3" />
-                                    <span>Confirm Joining</span>
-                                  </button>
-                                </div>
-                              )}
-
-                              {/* Notice Period Active: Confirm Day 1 Joining or Pulse Check */}
-                              {isNoticeStage && (
-                                <div className="inline-flex items-center space-x-1">
-                                  <button
-                                    onClick={() => handleOpenPulseModal(c)}
-                                    className="inline-flex items-center space-x-1 px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-bold rounded-lg text-xs transition-all cursor-pointer"
-                                  >
-                                    <ShieldAlert className="h-3 w-3 text-amber-700" />
-                                    <span>Pulse Check</span>
-                                  </button>
-                                  <button
-                                    onClick={() => handleOpenJoiningModal(c)}
-                                    className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
-                                  >
-                                    <Receipt className="h-3 w-3" />
-                                    <span>Confirm Joining</span>
-                                  </button>
-                                </div>
-                              )}
-
-                              {/* Joined Day 1 Active: 90-Day Guarantee & Early Exit Trigger */}
-                              {isJoined && (
-                                <div className="inline-flex items-center space-x-1">
-                                  <span className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-50 border border-emerald-300 text-emerald-800 font-extrabold rounded-lg text-xs">
-                                    <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                                    <span>Invoiced (PL-02)</span>
-                                  </span>
-
-                                  {primarySub.probationStatus !== "EARLY_EXIT_REPLACEMENT" && (
-                                    <button
-                                      onClick={() => handleOpenExitModal(c)}
-                                      className="inline-flex items-center space-x-1 px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
-                                      title="Trigger $0 Free Replacement Mandate if candidate leaves during 90-day probation"
-                                    >
-                                      <RefreshCw className="h-3 w-3 text-rose-600" />
-                                      <span>$0 Replacement</span>
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-                            </>
+                        {/* 6. Pipeline / Job Context (Compact) */}
+                        <td className="px-3 py-3 whitespace-nowrap w-[130px]">
+                          {primarySub ? (
+                            <div className="space-y-0.5 max-w-[130px]">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-extrabold border ${
+                                isJoined
+                                  ? "bg-emerald-100 text-emerald-800 border-emerald-300"
+                                  : isNoticeStage
+                                  ? "bg-amber-100 text-amber-800 border-amber-300"
+                                  : isOfferStage
+                                  ? "bg-purple-100 text-purple-800 border-purple-300"
+                                  : isScheduled
+                                  ? "bg-blue-100 text-blue-800 border-blue-300"
+                                  : "bg-slate-100 text-slate-700 border-slate-200"
+                              }`}>
+                                {primarySub.stage.replace(/_/g, " ")}
+                              </span>
+                              <div className="text-[10px] text-slate-500 font-medium truncate" title={`${primarySub.mandate.title} (${primarySub.mandate.client.name})`}>
+                                {primarySub.mandate.title}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                              Talent Pool
+                            </span>
                           )}
+                        </td>
 
-                          {c.isSilverMedalist && (
+                        {/* 7. Actions (Shrink-wrapped, zero wasted space) */}
+                        <td className="px-3 py-3 text-right whitespace-nowrap w-[1%]" onClick={(e) => e.stopPropagation()}>
+                          <div className="inline-flex items-center justify-end space-x-1.5">
                             <button
-                              onClick={() => {
-                                setRedeployCandidate(c);
-                                setRedeployNotes(`Redeploying Silver Medalist '${c.fullName}' with pre-vetted experience.`);
-                              }}
-                              className="inline-flex items-center space-x-1 px-2.5 py-1 bg-amber-400 hover:bg-amber-500 text-slate-900 font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
+                              onClick={() => handleOpenCandidateModal(c)}
+                              className="inline-flex items-center space-x-1 px-2.5 py-1 bg-brand-surfaceLight hover:bg-brand-surface border border-brand-surfaceDark text-slate-800 font-bold rounded-lg text-xs transition-colors cursor-pointer shadow-2xs"
+                              title="Log Call Outcome & Screening Details"
                             >
-                              <Zap className="h-3 w-3" />
-                              <span>1-Click Redeploy</span>
+                              <PhoneCall className="h-3 w-3 text-slate-700" />
+                              <span>Log Call & Details</span>
                             </button>
-                          )}
 
-                          <button
-                            onClick={() => setPreviewCandidate(c)}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1 bg-brand-surfaceLight hover:bg-brand-surface border border-brand-surfaceDark text-slate-800 font-bold rounded-lg text-xs transition-colors cursor-pointer"
-                          >
-                            <Eye className="h-3 w-3" />
-                            <span>Preview</span>
-                          </button>
+                            {c.isSilverMedalist && (
+                              <button
+                                onClick={() => {
+                                  setRedeployCandidate(c);
+                                  setRedeployNotes(`Redeploying Silver Medalist '${c.fullName}' with pre-vetted experience.`);
+                                }}
+                                className="inline-flex items-center space-x-1 px-2 py-1 bg-amber-400 hover:bg-amber-500 text-slate-900 font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
+                                title="1-Click Redeploy Silver Medalist"
+                              >
+                                <Zap className="h-3 w-3" />
+                                <span>Redeploy</span>
+                              </button>
+                            )}
+
+                            {primarySub && (primarySub.stage === "CLIENT_SHORTLISTED" || primarySub.stage === "SCREENED_QUALIFIED") && (
+                              <button
+                                onClick={() => handleOpenScheduleModal(c)}
+                                className="inline-flex items-center space-x-1 px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
+                                title="Schedule Interview"
+                              >
+                                <Calendar className="h-3 w-3" />
+                                <span>Schedule</span>
+                              </button>
+                            )}
+
+                            {primarySub && isNoticeStage && (
+                              <button
+                                onClick={() => handleOpenPulseModal(c)}
+                                className="inline-flex items-center space-x-1 px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-bold rounded-lg text-xs transition-all cursor-pointer"
+                                title="Retention Pulse Check"
+                              >
+                                <ShieldAlert className="h-3 w-3 text-amber-700" />
+                                <span>Pulse</span>
+                              </button>
+                            )}
+
+                            {primarySub && (isOfferStage || isNoticeStage) && (
+                              <button
+                                onClick={() => handleOpenJoiningModal(c)}
+                                className="inline-flex items-center space-x-1 px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
+                                title="Confirm Day 1 Joining & Auto-Invoice"
+                              >
+                                <Receipt className="h-3 w-3" />
+                                <span>Join</span>
+                              </button>
+                            )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2082,283 +2405,22 @@ export default function CandidateBankPage() {
         </div>
       )}
 
-      {/* MODAL 3: SPLIT-SCREEN RESUME INGESTION & GEMINI AI PARSER MODAL (RC-02) */}
+      {/* MODAL 3: UNIFIED BATCH RESUME INGESTION & GEMINI AI PARSER MODAL (RC-02) */}
       {isImportModalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-4xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-3xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
             <div className="bg-brand-surfaceLight px-6 py-4 border-b border-brand-surface flex items-center justify-between">
               <div className="flex items-center space-x-2">
                 <Sparkles className="h-4 w-4 text-slate-800" />
-                <h3 className="font-extrabold text-slate-900 text-sm">AI Resume Parser & Clean Profile Ingestion (RC-02)</h3>
+                <h3 className="font-extrabold text-slate-900 text-sm">Batch AI Resume Parser & Clean Ingestion (RC-02)</h3>
               </div>
               <button
-                onClick={() => setIsImportModalOpen(false)}
-                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
-              >
-                &times;
-              </button>
-            </div>
-
-            <div className="p-6">
-              {parseError && (
-                <div className="mb-4 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-start space-x-2">
-                  <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                  <span>{parseError}</span>
-                </div>
-              )}
-
-              {!uploadFile && (
-                <div className="border-2 border-dashed border-slate-300 hover:border-brand-surfaceDark rounded-3xl p-10 text-center bg-slate-50/50">
-                  <input
-                    type="file"
-                    accept=".pdf,.docx,.txt"
-                    onChange={handleFileSelect}
-                    id="modal-resume-upload"
-                    className="hidden"
-                  />
-                  <label htmlFor="modal-resume-upload" className="cursor-pointer block">
-                    <UploadCloud className="h-10 w-10 text-slate-400 mx-auto mb-3" />
-                    <span className="font-extrabold text-slate-900 text-sm hover:underline">
-                      Drag & Drop Candidate Resume (PDF / DOCX)
-                    </span>
-                    <p className="text-xs text-slate-500 mt-1">
-                      Gemini AI will automatically extract full work history, skills, contact info, and notice period.
-                    </p>
-                  </label>
-                </div>
-              )}
-
-              {parsing && (
-                <div className="p-12 text-center">
-                  <div className="w-8 h-8 border-3 border-slate-800 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-                  <p className="text-xs font-bold text-slate-800">
-                    Extracting & Structuring Entities with Google Gemini API...
-                  </p>
-                  <p className="text-[10px] text-slate-400 mt-1">
-                    Sanitizing contact info and checking for duplicate profiles.
-                  </p>
-                </div>
-              )}
-
-              {uploadFile && !parsing && (
-                <form onSubmit={handleSaveCandidate} className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-4 bg-slate-50 p-4 rounded-2xl border border-slate-200">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-slate-900 text-xs flex items-center space-x-1.5">
-                        <FileText className="h-4 w-4 text-emerald-600" />
-                        <span>{uploadFile.name}</span>
-                      </span>
-                      <label htmlFor="replace-upload" className="text-[10px] font-bold text-slate-600 hover:underline cursor-pointer">
-                        Replace File
-                      </label>
-                      <input
-                        type="file"
-                        accept=".pdf,.docx,.txt"
-                        onChange={handleFileSelect}
-                        id="replace-upload"
-                        className="hidden"
-                      />
-                    </div>
-
-                    {isDuplicate ? (
-                      <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-amber-800 text-[11px] font-medium flex items-start space-x-1.5">
-                        <AlertCircle className="h-4 w-4 text-amber-600 flex-shrink-0 mt-0.5" />
-                        <span>
-                          <strong>Duplicate Detected:</strong> This candidate's email or phone matches an existing record. Saving will update the candidate profile and avoid duplicate sourcing.
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-[11px] font-medium flex items-center space-x-1.5">
-                        <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                        <span>Duplicate Check Passed — New Unique Candidate</span>
-                      </div>
-                    )}
-
-                    <div>
-                      <span className="block font-bold text-slate-700 text-[11px] uppercase tracking-wider mb-1">
-                        Raw Text Preview
-                      </span>
-                      <div className="bg-white p-3 rounded-xl border border-slate-200 h-48 overflow-y-auto font-mono text-[10px] text-slate-600 leading-relaxed whitespace-pre-wrap">
-                        {rawTextSummary || "Raw text extracted from document."}
-                      </div>
-                    </div>
-
-                    <div>
-                      <label className="block font-bold text-slate-800 text-xs mb-1">
-                        Assign to Active Hiring Mandate (Optional)
-                      </label>
-                      <select
-                        value={candidateForm.mandateId}
-                        onChange={(e) => setCandidateForm({ ...candidateForm, mandateId: e.target.value })}
-                        className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
-                      >
-                        <option value="">General Talent Pool (No active mandate)</option>
-                        {mandates.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.title} ({m.client.name})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3 max-h-[70vh] overflow-y-auto pr-1">
-                    <div className="grid grid-cols-2 gap-2.5">
-                      <div className="col-span-2">
-                        <label className="block font-semibold text-slate-700 mb-0.5">Candidate Full Name *</label>
-                        <input
-                          type="text"
-                          required
-                          value={candidateForm.fullName}
-                          onChange={(e) => setCandidateForm({ ...candidateForm, fullName: e.target.value })}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-bold"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-semibold text-slate-700 mb-0.5">Email Address *</label>
-                        <input
-                          type="email"
-                          required
-                          value={candidateForm.email}
-                          onChange={(e) => setCandidateForm({ ...candidateForm, email: e.target.value })}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-semibold text-slate-700 mb-0.5">Phone / WhatsApp *</label>
-                        <input
-                          type="text"
-                          required
-                          value={candidateForm.phone}
-                          onChange={(e) => setCandidateForm({ ...candidateForm, phone: e.target.value })}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-semibold text-slate-700 mb-0.5">Current Job Title</label>
-                        <input
-                          type="text"
-                          value={candidateForm.currentTitle}
-                          onChange={(e) => setCandidateForm({ ...candidateForm, currentTitle: e.target.value })}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-semibold text-slate-700 mb-0.5">Current Employer</label>
-                        <input
-                          type="text"
-                          value={candidateForm.currentCompany}
-                          onChange={(e) => setCandidateForm({ ...candidateForm, currentCompany: e.target.value })}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-semibold text-slate-700 mb-0.5">Total Experience (Yrs)</label>
-                        <input
-                          type="number"
-                          step="0.5"
-                          value={candidateForm.totalExpYears}
-                          onChange={(e) => setCandidateForm({ ...candidateForm, totalExpYears: parseFloat(e.target.value) || 0 })}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-semibold text-slate-700 mb-0.5">Notice Period (Days)</label>
-                        <input
-                          type="number"
-                          value={candidateForm.noticePeriodDays}
-                          onChange={(e) => setCandidateForm({ ...candidateForm, noticePeriodDays: parseInt(e.target.value, 10) || 30 })}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-semibold text-slate-700 mb-0.5">Current CTC (Annual)</label>
-                        <input
-                          type="number"
-                          value={candidateForm.currentCtc}
-                          onChange={(e) => setCandidateForm({ ...candidateForm, currentCtc: e.target.value })}
-                          placeholder="e.g. 2400000"
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block font-semibold text-slate-700 mb-0.5">Expected CTC</label>
-                        <input
-                          type="number"
-                          value={candidateForm.expectedCtc}
-                          onChange={(e) => setCandidateForm({ ...candidateForm, expectedCtc: e.target.value })}
-                          placeholder="e.g. 3200000"
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      <div className="col-span-2">
-                        <label className="block font-semibold text-slate-700 mb-0.5">Skills (Comma separated)</label>
-                        <input
-                          type="text"
-                          value={candidateForm.skills}
-                          onChange={(e) => setCandidateForm({ ...candidateForm, skills: e.target.value })}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      <div className="col-span-2">
-                        <label className="block font-semibold text-slate-700 mb-0.5">Executive Summary</label>
-                        <textarea
-                          rows={2}
-                          value={candidateForm.summary}
-                          onChange={(e) => setCandidateForm({ ...candidateForm, summary: e.target.value })}
-                          className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-                    </div>
-
-                    <div className="flex justify-end space-x-3 pt-4 border-t border-slate-100">
-                      <button
-                        type="button"
-                        onClick={() => setUploadFile(null)}
-                        className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        type="submit"
-                        disabled={savingCandidate}
-                        className="px-5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-extrabold rounded-xl shadow-sm transition-all cursor-pointer disabled:opacity-50"
-                      >
-                        {savingCandidate ? "Ingesting..." : "Save & Ingest Candidate"}
-                      </button>
-                    </div>
-                  </div>
-                </form>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* MODAL 4: SANITIZED CLIENT PREVIEW MODAL */}
-      {previewCandidate && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
-            <div className="bg-brand-surfaceLight px-6 py-4 border-b border-brand-surface flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <ShieldCheck className="h-5 w-5 text-slate-800" />
-                <div>
-                  <h3 className="font-extrabold text-slate-900 text-sm">Sanitized Client Presentation View</h3>
-                  <p className="text-[10px] text-slate-500">Contact PII stripped for external client shortlist sharing</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setPreviewCandidate(null)}
+                onClick={() => {
+                  setIsImportModalOpen(false);
+                  setBatchResults([]);
+                  setUploadFiles([]);
+                  setParseError(null);
+                }}
                 className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
               >
                 &times;
@@ -2366,67 +2428,715 @@ export default function CandidateBankPage() {
             </div>
 
             <div className="p-6 space-y-4">
-              <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200">
-                <h4 className="font-black text-slate-900 text-base">{previewCandidate.fullName}</h4>
-                <p className="text-xs text-slate-600 font-medium">
-                  {previewCandidate.currentTitle || "Senior Professional"} • {previewCandidate.totalExpYears} Years Total Experience
+              {parseError && (
+                <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start space-x-2.5">
+                  <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0 text-rose-600" />
+                  <div className="flex-1">
+                    <strong className="block font-bold">Upload / Parsing Issue</strong>
+                    <span className="text-xs">{parseError}</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Target Mandate Selector */}
+              <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200">
+                <label className="block font-bold text-slate-800 text-xs mb-1">
+                  Target Mandate Assignment (Optional)
+                </label>
+                <select
+                  value={selectedMandateId}
+                  onChange={(e) => setSelectedMandateId(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-medium focus:ring-1 focus:ring-slate-800"
+                >
+                  <option value="">
+                    General Talent Bank (No Job Assigned - Available for Search & Redeployment)
+                  </option>
+                  {mandates.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.title} ({m.client.name})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[11px] text-slate-500 mt-1">
+                  {selectedMandateId
+                    ? "Candidates will be saved to your Talent Bank and automatically submitted to this active mandate."
+                    : "Candidates will be saved to your master Talent Bank without being tied to a specific job opening."}
                 </p>
-                <div className="flex items-center space-x-3 text-[11px] text-slate-500 mt-2 font-medium">
-                  <span>Notice Period: <strong>{previewCandidate.noticePeriodDays} Days</strong></span>
-                  <span>•</span>
-                  <span>
-                    Expected CTC:{" "}
-                    <strong>
-                      {previewCandidate.expectedCtc ? `${(previewCandidate.expectedCtc / 100000).toFixed(1)}L ${previewCandidate.currency}` : "Negotiable"}
-                    </strong>
+              </div>
+
+              {batchResults.length === 0 && !parsing && (
+                <div className="border-2 border-dashed border-slate-300 hover:border-slate-500 rounded-3xl p-10 text-center bg-slate-50/50 transition-colors">
+                  <input
+                    type="file"
+                    multiple
+                    accept=".pdf,.docx,.txt"
+                    onChange={handleMultiFileSelect}
+                    id="candidate-bank-resume-upload-batch"
+                    className="hidden"
+                  />
+                  <label htmlFor="candidate-bank-resume-upload-batch" className="cursor-pointer block">
+                    <UploadCloud className="h-12 w-12 text-slate-400 mx-auto mb-3" />
+                    <span className="font-extrabold text-slate-900 text-sm hover:underline block">
+                      Click to Select Resumes (PDF, DOCX)
+                    </span>
+                    <p className="text-xs text-slate-500 mt-1.5 max-w-md mx-auto">
+                      Select <strong>up to 5 resumes</strong> at once. Each file must be under <strong>10MB</strong>.
+                    </p>
+                    <div className="mt-3 inline-flex items-center space-x-2 text-[11px] font-semibold text-slate-600 bg-white px-3 py-1 rounded-full border border-slate-200 shadow-2xs">
+                      <span>✓ Server-side permanent CV storage</span>
+                      <span>•</span>
+                      <span>✓ Gemini AI entity extraction</span>
+                      <span>•</span>
+                      <span>✓ Duplicate check</span>
+                    </div>
+                  </label>
+                </div>
+              )}
+
+              {parsing && (
+                <div className="p-8 bg-slate-50/80 rounded-3xl border border-slate-200 text-center space-y-4">
+                  <div className="w-10 h-10 border-3 border-slate-800 border-t-transparent rounded-full animate-spin mx-auto"></div>
+                  
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-center space-x-2 text-sm font-extrabold text-slate-900">
+                      <span>Parsing Resume {parseProgress.current} of {parseProgress.total}</span>
+                      <span className="text-xs font-bold text-slate-500 font-mono">({parseProgress.percent}%)</span>
+                    </div>
+                    <p className="text-xs text-slate-600 font-medium truncate max-w-md mx-auto">
+                      Current: <span className="font-mono text-slate-900 font-bold">{parseProgress.currentFileName}</span>
+                    </p>
+                    <p className="text-[11px] text-slate-400">
+                      Extracting entities & saving permanent document copy to cloud storage
+                    </p>
+                  </div>
+
+                  {/* Visual Animated Progress Bar */}
+                  <div className="max-w-md mx-auto space-y-1.5">
+                    <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-brand-yellow hover:bg-brand-yellowHover rounded-full transition-all duration-300 shadow-2xs"
+                        style={{ width: `${Math.max(8, parseProgress.percent)}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-[10px] text-slate-400 font-semibold">
+                      <span>File {parseProgress.current} of {parseProgress.total}</span>
+                      <span>{parseProgress.percent}% Complete</span>
+                    </div>
+                  </div>
+
+                  {/* Completed files badge pills in this active batch */}
+                  {batchResults.length > 0 && (
+                    <div className="pt-2 text-left border-t border-slate-200/60 max-w-md mx-auto">
+                      <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
+                        Parsed in this batch ({batchResults.length} of {parseProgress.total}):
+                      </span>
+                      <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                        {batchResults.map((r, idx) => (
+                          <span
+                            key={idx}
+                            className={`text-[10px] px-2 py-0.5 rounded-full flex items-center space-x-1 font-medium border ${
+                              r.success
+                                ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                                : "bg-rose-50 text-rose-800 border-rose-200"
+                            }`}
+                          >
+                            {r.success ? (
+                              <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                            ) : (
+                              <AlertCircle className="h-3 w-3 text-rose-600" />
+                            )}
+                            <span className="truncate max-w-[140px]">
+                              {r.parsed?.fullName || r.fileName}
+                            </span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {batchResults.length > 0 && !parsing && (
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider">
+                        Parsed Candidate Dossiers ({batchResults.filter((r) => r.success).length} Ready)
+                      </h4>
+                      <p className="text-[11px] text-slate-500">
+                        {selectedMandateId
+                          ? `Review extracted information before attaching to '${mandates.find((m) => m.id === selectedMandateId)?.title}'`
+                          : "Review extracted candidate dossiers before saving to General Talent Bank"}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setBatchResults([]);
+                        setUploadFiles([]);
+                        setParseError(null);
+                      }}
+                      className="text-xs text-blue-600 hover:underline font-semibold"
+                    >
+                      + Upload Different Files
+                    </button>
+                  </div>
+
+                  <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
+                    {batchResults.map((res, idx) => (
+                      <div
+                        key={idx}
+                        className={`p-4 rounded-2xl border transition-all ${
+                          res.success
+                            ? "bg-slate-50/80 border-slate-200"
+                            : "bg-rose-50/60 border-rose-200"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between">
+                          <div className="space-y-1">
+                            <div className="flex items-center space-x-2">
+                              <FileText className="h-4 w-4 text-slate-500" />
+                              <span className="font-mono text-[11px] font-bold text-slate-700">{res.fileName}</span>
+                              {res.success ? (
+                                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.2 rounded-full border border-emerald-300">
+                                  Parsed Successfully
+                                </span>
+                              ) : (
+                                <span className="bg-rose-100 text-rose-800 text-[10px] font-bold px-2 py-0.2 rounded-full border border-rose-300">
+                                  Parse Error
+                                </span>
+                              )}
+                            </div>
+
+                            {res.success && res.parsed && (
+                              <div className="pt-2">
+                                <div className="text-sm font-extrabold text-slate-900">
+                                  {res.parsed.fullName || "Unnamed Candidate"}
+                                </div>
+                                <div className="text-xs text-slate-600 font-medium">
+                                  {res.parsed.currentTitle || "Title not found"} {res.parsed.currentCompany ? `at ${res.parsed.currentCompany}` : ""}
+                                </div>
+                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2 text-[11px]">
+                                  <div>
+                                    <span className="text-slate-400 block text-[10px]">Phone</span>
+                                    <span className="font-mono font-bold text-slate-800">{res.parsed.phone || "N/A"}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-400 block text-[10px]">Email</span>
+                                    <span className="font-bold text-slate-800 truncate block">{res.parsed.email || "N/A"}</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-400 block text-[10px]">Experience</span>
+                                    <span className="font-bold text-slate-800">{res.parsed.totalExpYears ?? 0} Years</span>
+                                  </div>
+                                  <div>
+                                    <span className="text-slate-400 block text-[10px]">Qualification</span>
+                                    <span className="font-bold text-slate-800">{res.parsed.qualification || "N/A"}</span>
+                                  </div>
+                                </div>
+                                {res.parsed.skills && res.parsed.skills.length > 0 && (
+                                  <div className="flex flex-wrap gap-1 mt-2.5">
+                                    {res.parsed.skills.slice(0, 6).map((sk: string, sIdx: number) => (
+                                      <span
+                                        key={sIdx}
+                                        className="bg-white border border-slate-200 text-slate-700 text-[9px] px-1.5 py-0.5 rounded font-medium"
+                                      >
+                                        {sk}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+
+                            {!res.success && (
+                              <p className="text-xs text-rose-700 mt-1 font-medium">{res.error || "Unknown extraction error"}</p>
+                            )}
+                          </div>
+
+                          {res.resumeUrl && (
+                            <a
+                              href={res.resumeUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[11px] font-bold text-blue-600 hover:underline flex items-center space-x-1"
+                            >
+                              <span>Saved CV Copy</span>
+                              <FileText className="h-3 w-3" />
+                            </a>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex justify-end space-x-3 pt-3 border-t border-slate-200">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsImportModalOpen(false);
+                        setBatchResults([]);
+                        setUploadFiles([]);
+                        setParseError(null);
+                      }}
+                      className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveBatchCandidates}
+                      disabled={savingBatch || batchResults.filter((r) => r.success).length === 0}
+                      className="px-5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                    >
+                      {savingBatch ? (
+                        <span>Saving Candidates...</span>
+                      ) : (
+                        <span>
+                          Save & Ingest {batchResults.filter((r) => r.success).length} Candidate(s)
+                        </span>
+                      )}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* CENTERED CANDIDATE DETAIL & CALL SCREENING MODAL (RC-01, RC-02, RC-04)     */}
+      {/* ========================================================================= */}
+      {selectedCandidate && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
+          <div className="w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/90 flex items-center justify-between flex-shrink-0">
+              <div className="space-y-1">
+                <div className="flex items-center space-x-2">
+                  <span className="text-[10px] font-black uppercase tracking-wider bg-slate-200 text-slate-700 px-2 py-0.5 rounded">
+                    Candidate Screening & Call Record
+                  </span>
+                  <span className="text-[10px] text-slate-500 font-mono">Source: {selectedCandidate.source.replace(/_/g, " ")}</span>
+                  {selectedCandidate.qualification && (
+                    <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded">
+                      {selectedCandidate.qualification}
+                    </span>
+                  )}
+                  {selectedCandidate.isSilverMedalist && (
+                    <span className="text-[10px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded flex items-center space-x-1">
+                      <Award className="h-3 w-3 text-amber-700" />
+                      <span>Silver Medalist</span>
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center space-x-3">
+                  <h2 className="text-lg font-extrabold text-slate-900">{selectedCandidate.fullName}</h2>
+                  <span className="text-xs text-slate-500 font-medium">
+                    {selectedCandidate.currentTitle || "Professional"} {selectedCandidate.currentCompany ? `at ${selectedCandidate.currentCompany}` : ""}
                   </span>
                 </div>
               </div>
+              <div className="flex items-center space-x-2">
+                {selectedCandidate.submissions.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cand = selectedCandidate;
+                      setSelectedCandidate(null);
+                      handleOpenScheduleModal(cand);
+                    }}
+                    className="inline-flex items-center space-x-1 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer"
+                  >
+                    <Calendar className="h-3.5 w-3.5" />
+                    <span>⚡ Schedule Interview</span>
+                  </button>
+                )}
+                {selectedCandidate.resumeUrl && (
+                  <a
+                    href={selectedCandidate.resumeUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center space-x-1 px-3 py-1.5 bg-brand-surfaceLight hover:bg-brand-surface text-slate-800 text-xs font-bold rounded-xl border border-brand-surfaceDark transition-colors"
+                  >
+                    <FileText className="h-3.5 w-3.5 text-blue-600" />
+                    <span>View Original CV</span>
+                  </a>
+                )}
+                <button
+                  onClick={() => setSelectedCandidate(null)}
+                  className="h-8 w-8 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center text-xl leading-none cursor-pointer transition-colors"
+                >
+                  &times;
+                </button>
+              </div>
+            </div>
 
-              {/* Client Portal Feedback / Inquiry Log */}
-              {previewCandidate.submissions.length > 0 && previewCandidate.submissions[0].clientQuestionText && (
+            {/* Modal Scrollable Body */}
+            <div className="flex-1 overflow-y-auto p-6 space-y-6 text-xs">
+              {/* Quick Candidate Snapshot Card */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="text-slate-400 block text-[10px]">Mobile (Resume)</span>
+                  <strong className="text-slate-900 text-xs block font-mono">{selectedCandidate.phone || "N/A"}</strong>
+                </div>
+
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="text-slate-400 block text-[10px]">Email Address</span>
+                  <strong className="text-slate-900 text-xs block truncate">{selectedCandidate.email}</strong>
+                </div>
+
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="text-slate-400 block text-[10px]">Total Experience</span>
+                  <strong className="text-slate-900 text-xs block">{selectedCandidate.totalExpYears} Years</strong>
+                </div>
+
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="text-slate-400 block text-[10px]">Compensation (CTC)</span>
+                  <strong className="text-slate-900 text-xs block">
+                    {selectedCandidate.currentCtc ? `${(selectedCandidate.currentCtc / 100000).toFixed(1)}L` : "N/A"} →{" "}
+                    <span className="text-emerald-700">{selectedCandidate.expectedCtc ? `${(selectedCandidate.expectedCtc / 100000).toFixed(1)}L ${selectedCandidate.currency}` : "N/A"}</span>
+                  </strong>
+                </div>
+              </div>
+
+              {/* STRUCTURED CALL LOGGING & SCREENING FORM */}
+              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center space-x-1.5">
+                    <PhoneCall className="h-4 w-4 text-blue-600" />
+                    <span>Log Recruiter Call & Screened Qualification</span>
+                  </h3>
+                  <span className="text-[11px] text-slate-500 font-medium">Fields with * are required to qualify candidate</span>
+                </div>
+
+                {callValidationError && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-center space-x-2 text-xs font-bold">
+                    <AlertCircle className="h-4 w-4 flex-shrink-0 text-rose-600" />
+                    <span>{callValidationError}</span>
+                  </div>
+                )}
+
+                <form onSubmit={handleLogCall} className="space-y-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    {/* Call Disposition (Required) */}
+                    <div>
+                      <label className="block font-bold text-slate-800 mb-1">
+                        Call Outcome Disposition <span className="text-rose-600">*</span>
+                      </label>
+                      <select
+                        value={callDisposition}
+                        onChange={(e) => {
+                          setCallDisposition(e.target.value);
+                          setCallValidationError(null);
+                        }}
+                        className={`w-full px-3 py-2 border rounded-xl text-xs font-bold bg-white text-slate-900 ${
+                          !callDisposition ? "border-rose-300 ring-1 ring-rose-100" : "border-slate-300"
+                        }`}
+                      >
+                        <option value="">-- Select Call Disposition * --</option>
+                        {CALL_DISPOSITIONS.map((d) => (
+                          <option key={d.value} value={d.value}>
+                            {d.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Associated Job Mandate (Optional) */}
+                    <div>
+                      <label className="block font-bold text-slate-800 mb-1">
+                        Align to Job Mandate (Optional)
+                      </label>
+                      <select
+                        value={callMandateId}
+                        onChange={(e) => setCallMandateId(e.target.value)}
+                        className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-semibold bg-white text-slate-900"
+                      >
+                        <option value="">Talent Bank (General Screening / Unassigned)</option>
+                        {mandates.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.title} — {m.client.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Scheduled Callback Date & Time (revealed when CONNECTED_CALLBACK is selected) */}
+                  {callDisposition === "CONNECTED_CALLBACK" && (
+                    <div className="p-3.5 bg-amber-50/90 border border-amber-300 rounded-xl space-y-2 animate-in fade-in duration-200 shadow-2xs">
+                      <div className="flex items-center space-x-1.5 text-amber-950 font-extrabold text-xs">
+                        <Clock className="h-4 w-4 text-amber-700" />
+                        <span>Schedule Follow-Up Call Back</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-bold text-amber-900 mb-1">
+                            Call Back Date <span className="text-rose-600">*</span>
+                          </label>
+                          <input
+                            type="date"
+                            value={callbackDate}
+                            onChange={(e) => setCallbackDate(e.target.value)}
+                            className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-amber-500"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-amber-900 mb-1">
+                            Call Back Time <span className="text-rose-600">*</span>
+                          </label>
+                          <input
+                            type="time"
+                            value={callbackTime}
+                            onChange={(e) => setCallbackTime(e.target.value)}
+                            className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-amber-500"
+                            required
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-amber-800 font-medium">
+                        RecruitOS will display overdue alerts and prioritize this candidate on today's callback queue when this time arrives.
+                      </p>
+                    </div>
+                  )}
+
+                  {/* 7 Recruiter Screening Items */}
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
+                    <p className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider text-blue-700">
+                      Recruiter Call Screening & Presentation Parameters (Shared with Client)
+                    </p>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                      {/* 1. Ready to Relocate */}
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">1. Ready to Relocate</label>
+                        <select
+                          value={readyToRelocate}
+                          onChange={(e) => setReadyToRelocate(e.target.value)}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
+                        >
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                          <option value="Hybrid Only">Hybrid Only</option>
+                          <option value="Remote Only">Remote Only</option>
+                          <option value="Already in Target City">Already in Target City</option>
+                        </select>
+                      </div>
+
+                      {/* 2. Relevant Exp: in Years */}
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">2. Relevant Exp (Years)</label>
+                        <input
+                          type="number"
+                          step="0.5"
+                          placeholder="e.g. 5"
+                          value={relevantExpYears}
+                          onChange={(e) => setRelevantExpYears(e.target.value)}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                        />
+                      </div>
+
+                      {/* 3. Current Salary */}
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">3. Current Salary</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 12 LPA"
+                          value={currentSalary}
+                          onChange={(e) => setCurrentSalary(e.target.value)}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
+                        />
+                      </div>
+
+                      {/* 4. Expectation */}
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">4. Expected Salary</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 16 LPA"
+                          value={expectedSalary}
+                          onChange={(e) => setExpectedSalary(e.target.value)}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
+                        />
+                      </div>
+
+                      {/* 5. Notice Period */}
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">5. Notice Period</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. 30 Days / Serving Notice"
+                          value={noticePeriod}
+                          onChange={(e) => setNoticePeriod(e.target.value)}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                        />
+                      </div>
+
+                      {/* 6. Reason of Leaving */}
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">6. Reason for Leaving</label>
+                        <input
+                          type="text"
+                          placeholder="e.g. Looking for growth & leadership"
+                          value={reasonForLeaving}
+                          onChange={(e) => setReasonForLeaving(e.target.value)}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                        />
+                      </div>
+
+                      {/* 7. Offer in Hand */}
+                      <div>
+                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">7. Offer in Hand?</label>
+                        <select
+                          value={offerInHand}
+                          onChange={(e) => setOfferInHand(e.target.value)}
+                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
+                        >
+                          <option value="No">No</option>
+                          <option value="Yes (1 Offer)">Yes (1 Offer)</option>
+                          <option value="Yes (Multiple Offers)">Yes (Multiple Offers)</option>
+                          <option value="In Final Stages">In Final Stages</option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Notes */}
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Call Notes / Conversation Summary</label>
+                    <textarea
+                      rows={2}
+                      value={callNotes}
+                      onChange={(e) => setCallNotes(e.target.value)}
+                      placeholder="e.g. Candidate confirmed notice period is negotiable to 30 days, interested in backend engineering stack..."
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                    />
+                  </div>
+
+                  <div className="flex justify-end space-x-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCandidate(null)}
+                      className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer text-xs"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={loggingCall}
+                      className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer text-xs disabled:opacity-50 flex items-center space-x-1.5"
+                    >
+                      {loggingCall ? (
+                        <>
+                          <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                          <span>Saving Call...</span>
+                        </>
+                      ) : (
+                        <span>Save Call Outcome & Screening</span>
+                      )}
+                    </button>
+                  </div>
+                </form>
+              </div>
+
+              {/* CALL & ACTIVITY HISTORY */}
+              <div className="space-y-3">
+                <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center justify-between">
+                  <span>Call & Activity History</span>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    {(selectedCandidate.callLogs || []).length} interaction(s) logged
+                  </span>
+                </h3>
+
+                {(!selectedCandidate.callLogs || selectedCandidate.callLogs.length === 0) ? (
+                  <div className="p-4 bg-slate-50 rounded-xl text-center text-slate-400 text-xs">
+                    No calls logged for this candidate yet. Use the form above to record your conversation.
+                  </div>
+                ) : (
+                  <div className="divide-y divide-slate-100 bg-white border border-slate-200 rounded-xl overflow-hidden">
+                    {selectedCandidate.callLogs.map((log) => {
+                      const disp = CALL_DISPOSITIONS.find((d) => d.value === log.disposition);
+                      return (
+                        <div key={log.id} className="p-3 space-y-1 hover:bg-slate-50 transition-colors">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center space-x-2">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${disp?.badge || "bg-slate-100 text-slate-800"}`}>
+                                {disp?.label || log.disposition}
+                              </span>
+                              {log.mandate && (
+                                <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.2 rounded font-semibold">
+                                  {log.mandate.title} ({log.mandate.client.name})
+                                </span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-400">
+                              {new Date(log.calledAt).toLocaleString()} by <strong>{log.recruiter?.name || "Recruiter"}</strong>
+                            </span>
+                          </div>
+                          {log.notes && (
+                            <p className="text-xs text-slate-700 font-medium pl-1">{log.notes}</p>
+                          )}
+                          {log.callbackAt && (
+                            <div className="text-[10px] text-amber-800 font-bold flex items-center space-x-1 mt-1 pl-1">
+                              <Clock className="h-3 w-3 text-amber-600 mr-0.5" />
+                              <span>Scheduled Call Back: {new Date(log.callbackAt).toLocaleString()}</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* CLIENT REVIEW & TELEMETRY (If attached to any mandate) */}
+              {selectedCandidate.submissions.length > 0 && selectedCandidate.submissions[0].clientQuestionText && (
                 <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 space-y-1">
                   <div className="font-bold flex items-center space-x-1.5 text-blue-800">
                     <MessageSquare className="h-4 w-4 text-blue-600" />
-                    <span>Inquiry from Client Hiring Manager (CL-02):</span>
+                    <span>Inquiry from Client Hiring Manager:</span>
                   </div>
                   <p className="italic bg-white p-2.5 rounded-lg border border-blue-200 text-slate-800">
-                    "{previewCandidate.submissions[0].clientQuestionText}"
+                    "{selectedCandidate.submissions[0].clientQuestionText}"
                   </p>
                 </div>
               )}
 
-              {previewCandidate.summary && (
-                <div>
-                  <span className="block font-bold text-slate-700 text-[11px] uppercase tracking-wider mb-1">
-                    Candidate Executive Summary
-                  </span>
-                  <p className="text-xs text-slate-600 leading-relaxed bg-white p-3 rounded-xl border border-slate-200">
-                    {previewCandidate.summary}
-                  </p>
-                </div>
-              )}
-
-              <div>
-                <span className="block font-bold text-slate-700 text-[11px] uppercase tracking-wider mb-1.5">
-                  Verified Skills & Capabilities
-                </span>
-                <div className="flex flex-wrap gap-1.5">
-                  {previewCandidate.skills.map((s, idx) => (
-                    <span
-                      key={idx}
-                      className="bg-brand-surfaceLight border border-brand-surface text-slate-800 text-xs font-semibold px-2.5 py-1 rounded-lg"
-                    >
-                      {s}
+              {/* RESUME PREVIEW & SKILLS */}
+              <div className="space-y-2">
+                <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center space-x-1.5">
+                  <FileText className="h-3.5 w-3.5 text-slate-600" />
+                  <span>Resume Summary & Skills</span>
+                </h3>
+                {selectedCandidate.summary && (
+                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-slate-700 leading-relaxed text-xs">
+                    {selectedCandidate.summary}
+                  </div>
+                )}
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  {selectedCandidate.skills.map((skill, idx) => (
+                    <span key={idx} className="bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-medium px-2 py-0.5 rounded">
+                      {skill}
                     </span>
                   ))}
                 </div>
               </div>
+            </div>
 
-              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-[11px] text-emerald-900 flex items-center space-x-2">
-                <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0" />
-                <span>Phone numbers and personal emails are completely stripped for client privacy.</span>
-              </div>
+            {/* Modal Footer */}
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between flex-shrink-0">
+              <span className="text-[11px] text-slate-500 font-medium">
+                Talent Bank • {selectedCandidate.submissions.length > 0 ? `Active on ${selectedCandidate.submissions[0].mandate.title}` : "General Pool"}
+              </span>
+              <button
+                onClick={() => setSelectedCandidate(null)}
+                className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer text-xs"
+              >
+                Close Window
+              </button>
             </div>
           </div>
         </div>

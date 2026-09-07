@@ -52,6 +52,13 @@ export async function GET(req: Request) {
           },
           orderBy: { createdAt: "desc" },
         },
+        callLogs: {
+          include: {
+            recruiter: { select: { id: true, name: true, email: true } },
+            mandate: { select: { id: true, title: true, client: { select: { name: true } } } },
+          },
+          orderBy: { calledAt: "desc" },
+        },
       },
       orderBy: { updatedAt: "desc" },
     });

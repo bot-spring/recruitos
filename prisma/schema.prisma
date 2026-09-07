@@ -410,6 +410,17 @@ model Candidate {
   source               String     @default("DIRECT_UPLOAD")
   isSilverMedalist     Boolean    @default(false) @map("is_silver_medalist")
   silverMedalistReason String?    @map("silver_medalist_reason")
+  
+  // Recruiter Call Screening & General Telemetry
+  lastCallDisposition  CallDisposition?   @map("last_call_disposition")
+  lastCallNotes        String?            @map("last_call_notes")
+  lastCallAt           DateTime?          @map("last_call_at")
+  nextCallbackAt       DateTime?          @map("next_callback_at")
+  readyToRelocate      String?            @map("ready_to_relocate")
+  relevantExpYears     Float?             @map("relevant_exp_years")
+  reasonForLeaving     String?            @map("reason_for_leaving")
+  offerInHand          String?            @map("offer_in_hand")
+
   createdAt            DateTime   @default(now()) @map("created_at")
   updatedAt            DateTime   @updatedAt @map("updated_at")
 
@@ -626,9 +637,9 @@ model AuditLog {
 model CallLog {
   id           String          @id @default(uuid())
   agencyId     String          @map("agency_id")
-  submissionId String          @map("submission_id")
+  submissionId String?         @map("submission_id")
   candidateId  String          @map("candidate_id")
-  mandateId    String          @map("mandate_id")
+  mandateId    String?         @map("mandate_id")
   recruiterId  String?         @map("recruiter_id")
 
   disposition  CallDisposition
@@ -637,11 +648,11 @@ model CallLog {
   calledAt     DateTime        @default(now()) @map("called_at")
   createdAt    DateTime        @default(now()) @map("created_at")
 
-  agency       Agency              @relation(fields: [agencyId], references: [id], onDelete: Cascade)
-  submission   CandidateSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
-  candidate    Candidate           @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  mandate      JobMandate          @relation(fields: [mandateId], references: [id], onDelete: Cascade)
-  recruiter    User?               @relation(fields: [recruiterId], references: [id], onDelete: SetNull)
+  agency       Agency               @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+  submission   CandidateSubmission? @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  candidate    Candidate            @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  mandate      JobMandate?          @relation(fields: [mandateId], references: [id], onDelete: Cascade)
+  recruiter    User?                @relation(fields: [recruiterId], references: [id], onDelete: SetNull)
 
   @@index([agencyId])
   @@index([submissionId])
@@ -649,4 +660,17 @@ model CallLog {
   @@index([mandateId])
   @@index([calledAt])
   @@map("call_logs")
+}
+
+model PlatformSetting {
+  id                          String   @id @default("global")
+  whatsappApiToken            String?  @map("whatsapp_api_token")
+  whatsappPhoneNumberId       String?  @map("whatsapp_phone_number_id")
+  whatsappBusinessAccountId   String?  @map("whatsapp_business_account_id")
+  whatsappDevOverridePhone    String?  @map("whatsapp_dev_override_phone")
+  isProductionMode            Boolean  @default(false) @map("is_production_mode")
+  createdAt                   DateTime @default(now()) @map("created_at")
+  updatedAt                   DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_settings")
 }

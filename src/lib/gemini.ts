@@ -34,18 +34,16 @@ export function normalizePhoneNumber(rawPhone: string): string {
   return cleaned;
 }
 
-// Available Groq models for high-speed, high-quota inference
+// Flagship Groq LPU model (ultra-fast <1s inference). Smaller 20B/27B models excluded to prevent degraded extraction.
 const GROQ_MODELS = [
   "openai/gpt-oss-120b",
-  "openai/gpt-oss-20b",
-  "qwen/qwen3.6-27b",
 ];
 
-// Active, stable Gemini models
+// Active, high-quota Gemini models (500 RPD & 15 RPM on Google AI Studio)
 const GEMINI_MODELS = [
-  "gemini-2.5-flash",
-  "gemini-2.0-flash",
-  "gemini-2.5-pro",
+  "gemini-3.5-flash-lite", // Primary high-intelligence fallback (500 RPD, 15 RPM)
+  "gemini-3.1-flash-lite", // Secondary high-quota fallback (500 RPD, 15 RPM)
+  "gemini-2.5-flash",      // Tertiary fallback (20 RPD)
 ];
 
 /**
@@ -149,39 +147,51 @@ export async function parseResumeWithGemini(
       ]);
 
       if (groqJson) {
-        console.log(`[Resume-Parser] Groq successfully parsed candidate details for '${fileName}'!`);
         const parsedData = JSON.parse(groqJson);
         const phone = cleanStr(parsedData.phone) || "";
         const phoneNormalized = normalizePhoneNumber(phone);
+        const fullName = cleanStr(sanitizeCandidateName(parsedData.fullName, fileName, effectiveText)) || "Candidate";
+        const email = (cleanStr(parsedData.email) || "").toLowerCase().trim();
 
-        let totalExpYears = 0;
-        if (typeof parsedData.totalExpYears === "number") {
-          totalExpYears = parsedData.totalExpYears;
-        } else if (typeof parsedData.totalExpYears === "string") {
-          const numMatch = parsedData.totalExpYears.match(/([\d.]+)/);
-          if (numMatch) totalExpYears = parseFloat(numMatch[1]) || 0;
+        // Quality Guardrail: If Groq extracted an incomplete profile (missing name or missing both email & phone), fail over to Gemini
+        const hasContactInfo = Boolean(email || phone);
+        const hasValidName = Boolean(fullName && fullName.toLowerCase() !== "candidate" && fullName.toLowerCase() !== "resume");
+
+        if (hasValidName && hasContactInfo) {
+          console.log(`[Resume-Parser] Groq successfully parsed high-confidence candidate details for '${fileName}'!`);
+          let totalExpYears = 0;
+          if (typeof parsedData.totalExpYears === "number") {
+            totalExpYears = parsedData.totalExpYears;
+          } else if (typeof parsedData.totalExpYears === "string") {
+            const numMatch = parsedData.totalExpYears.match(/([\d.]+)/);
+            if (numMatch) totalExpYears = parseFloat(numMatch[1]) || 0;
+          }
+
+          return {
+            fullName,
+            email,
+            phone,
+            phoneNormalized,
+            currentCompany: cleanStr(parsedData.currentCompany),
+            currentTitle: cleanStr(parsedData.currentTitle),
+            totalExpYears,
+            currentCtc: parsedData.currentCtc ? parseFloat(parsedData.currentCtc) : null,
+            expectedCtc: parsedData.expectedCtc ? parseFloat(parsedData.expectedCtc) : null,
+            currency: cleanStr(parsedData.currency) || "INR",
+            noticePeriodDays: parsedData.noticePeriodDays ? parseInt(parsedData.noticePeriodDays, 10) : 30,
+            location: cleanStr(parsedData.location),
+            qualification: cleanStr(parsedData.qualification),
+            skills: Array.isArray(parsedData.skills)
+              ? parsedData.skills.map((s: any) => cleanStr(s)).filter(Boolean)
+              : [],
+            summary: cleanStr(parsedData.summary),
+            workHistory: parsedData.workHistory || [],
+          };
+        } else {
+          console.warn(
+            `[Resume-Parser] Groq extraction incomplete or low-confidence for '${fileName}' (name='${fullName}', email='${email}', phone='${phone}'). Automatically failing over to Gemini 3.5 Flash Lite...`
+          );
         }
-
-        return {
-          fullName: cleanStr(sanitizeCandidateName(parsedData.fullName, fileName, effectiveText)) || "Candidate",
-          email: (cleanStr(parsedData.email) || "").toLowerCase().trim(),
-          phone,
-          phoneNormalized,
-          currentCompany: cleanStr(parsedData.currentCompany),
-          currentTitle: cleanStr(parsedData.currentTitle),
-          totalExpYears,
-          currentCtc: parsedData.currentCtc ? parseFloat(parsedData.currentCtc) : null,
-          expectedCtc: parsedData.expectedCtc ? parseFloat(parsedData.expectedCtc) : null,
-          currency: cleanStr(parsedData.currency) || "INR",
-          noticePeriodDays: parsedData.noticePeriodDays ? parseInt(parsedData.noticePeriodDays, 10) : 30,
-          location: cleanStr(parsedData.location),
-          qualification: cleanStr(parsedData.qualification),
-          skills: Array.isArray(parsedData.skills)
-            ? parsedData.skills.map((s: any) => cleanStr(s)).filter(Boolean)
-            : [],
-          summary: cleanStr(parsedData.summary),
-          workHistory: parsedData.workHistory || [],
-        };
       }
     } catch (groqErr: any) {
       console.warn(`[Resume-Parser] Groq resume parsing failed for ${fileName}:`, groqErr.message);

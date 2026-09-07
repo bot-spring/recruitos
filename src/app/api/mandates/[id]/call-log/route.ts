@@ -48,9 +48,9 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       return NextResponse.json({ error: "Candidate submission record not found." }, { status: 404 });
     }
 
-    const parsedCallbackAt = callbackAt ? new Date(callbackAt) : null;
+    const callbackDate = callbackAt ? new Date(callbackAt) : null;
 
-    // Execute in transaction: Create CallLog & Update Submission
+    // Execute in transaction: Create CallLog, Update Submission & Candidate
     const result = await prisma.$transaction(async (tx) => {
       const callLog = await tx.callLog.create({
         data: {
@@ -61,7 +61,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           recruiterId: session.user.id,
           disposition: disposition as CallDisposition,
           notes: notes?.trim() || null,
-          callbackAt: parsedCallbackAt,
+          callbackAt: callbackDate,
           calledAt: new Date(),
         },
         include: {
@@ -73,17 +73,13 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         ? parseFloat(String(relevantExpYears))
         : undefined;
 
-      const nextCallbackAtValue = disposition === "CONNECTED_CALLBACK"
-        ? (parsedCallbackAt || submission.nextCallbackAt)
-        : null;
-
       const updatedSubmission = await tx.candidateSubmission.update({
         where: { id: submission.id },
         data: {
           lastCallDisposition: disposition as CallDisposition,
           lastCallNotes: notes?.trim() || null,
           lastCallAt: new Date(),
-          nextCallbackAt: nextCallbackAtValue,
+          nextCallbackAt: disposition === "CONNECTED_CALLBACK" ? callbackDate : null,
           readyToRelocate: readyToRelocate !== undefined ? readyToRelocate : submission.readyToRelocate,
           relevantExpYears: parsedRelExp !== undefined ? parsedRelExp : submission.relevantExpYears,
           currentSalary: currentSalary !== undefined ? currentSalary : submission.currentSalary,
@@ -91,6 +87,22 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           noticePeriod: noticePeriod !== undefined ? noticePeriod : submission.noticePeriod,
           reasonForLeaving: reasonForLeaving !== undefined ? reasonForLeaving : submission.reasonForLeaving,
           offerInHand: offerInHand !== undefined ? offerInHand : submission.offerInHand,
+          updatedAt: new Date(),
+        },
+      });
+
+      // Also sync candidate profile
+      await tx.candidate.update({
+        where: { id: submission.candidateId },
+        data: {
+          lastCallDisposition: disposition as CallDisposition,
+          lastCallNotes: notes?.trim() || null,
+          lastCallAt: new Date(),
+          nextCallbackAt: disposition === "CONNECTED_CALLBACK" ? callbackDate : null,
+          readyToRelocate: readyToRelocate !== undefined ? readyToRelocate : undefined,
+          relevantExpYears: parsedRelExp !== undefined ? parsedRelExp : undefined,
+          reasonForLeaving: reasonForLeaving !== undefined ? reasonForLeaving : undefined,
+          offerInHand: offerInHand !== undefined ? offerInHand : undefined,
           updatedAt: new Date(),
         },
       });

@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { sendWhatsAppInterviewBriefing } from "@/lib/whatsapp";
 import { sendInterviewInvitationEmail } from "@/lib/email";
-import { SubmissionStage, InterviewType, InterviewStatus } from "@prisma/client";
+import { SubmissionStage, InterviewType, InterviewStatus, CandidateJobStatus } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -88,11 +88,12 @@ export async function POST(req: Request) {
         },
       });
 
-      // Update submission stage to INTERVIEW_SCHEDULED
+      // Update submission stage to INTERVIEW_SCHEDULED and candidateJobStatus to SELECTED_FOR_NEXT_ROUND
       await tx.candidateSubmission.update({
         where: { id: submission.id },
         data: {
           stage: SubmissionStage.INTERVIEW_SCHEDULED,
+          candidateJobStatus: CandidateJobStatus.SELECTED_FOR_NEXT_ROUND,
           updatedAt: new Date(),
         },
       });
@@ -120,13 +121,19 @@ export async function POST(req: Request) {
       return interview;
     });
 
+    const isDev = process.env.NODE_ENV !== "production";
+    const candidatePhone =
+      submission.candidate.phone || (isDev ? process.env.DEV_OVERRIDE_PHONE || "919818352440" : "");
+    const candidateEmail =
+      submission.candidate.email || (isDev ? process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in" : "");
+
     // 3. Dispatch Automated WhatsApp Briefing (RC-04)
     let whatsAppResult = null;
-    if (sendWhatsApp && submission.candidate.phone) {
+    if (sendWhatsApp && candidatePhone) {
       try {
         whatsAppResult = await sendWhatsAppInterviewBriefing({
           candidateName: submission.candidate.fullName,
-          candidatePhone: submission.candidate.phone,
+          candidatePhone,
           roleTitle: submission.mandate.title,
           clientOrgName: submission.mandate.client.name,
           scheduledAt: formattedDateString,
@@ -136,6 +143,7 @@ export async function POST(req: Request) {
           panelistNames: Array.isArray(panelistNames) ? panelistNames : [],
           agencyName: submission.mandate.agency.name,
           recruiterName: session.user.name || "Search Lead",
+          instructions: instructions?.trim() || undefined,
         });
 
         if (whatsAppResult?.messageId) {
@@ -150,10 +158,10 @@ export async function POST(req: Request) {
     }
 
     // 4. Dispatch Email Calendar Notification (Nodemailer diverted to ankur@botspring.in)
-    if (sendEmail) {
+    if (sendEmail && candidateEmail) {
       try {
         await sendInterviewInvitationEmail({
-          to: submission.candidate.email,
+          to: candidateEmail,
           candidateName: submission.candidate.fullName,
           jobTitle: submission.mandate.title,
           companyName: submission.mandate.client.name,
@@ -163,6 +171,8 @@ export async function POST(req: Request) {
           interviewType,
           meetingLink: meetingLink.trim(),
           panelistNames: Array.isArray(panelistNames) ? panelistNames : [],
+          instructions: instructions?.trim() || null,
+          keySkills: submission.mandate.skills || [],
         });
       } catch (mailErr) {
         console.warn("Email dispatch error:", mailErr);
