@@ -37,10 +37,18 @@ export async function GET(req: Request, { params }: { params: { token: string } 
       },
     });
 
-    if (!portalShare || !portalShare.isActive || !portalShare.agency) {
+    const now = new Date();
+    const isExpired = Boolean(portalShare?.expiresAt && now > portalShare.expiresAt);
+
+    if (!portalShare || !portalShare.isActive || !portalShare.agency || isExpired) {
       return NextResponse.json(
-        { error: "Client presentation link is invalid, expired, or deactivated." },
-        { status: 404 }
+        {
+          expired: isExpired,
+          error: isExpired
+            ? "This client review link has expired (links expire after 7 days to safeguard candidate confidentiality). Please contact your recruiter for a fresh link."
+            : "Client presentation link is invalid, expired, or deactivated.",
+        },
+        { status: isExpired ? 410 : 404 }
       );
     }
 
@@ -53,23 +61,29 @@ export async function GET(req: Request, { params }: { params: { token: string } 
       },
     });
 
-    // 3. Fetch Candidates Submitted to this Mandate
-    const submissions = await prisma.candidateSubmission.findMany({
-      where: {
-        mandateId: portalShare.mandateId,
-        stage: {
-          in: [
-            SubmissionStage.SUBMITTED_TO_CLIENT,
-            SubmissionStage.CLIENT_SHORTLISTED,
-            SubmissionStage.INTERVIEW_SCHEDULED,
-            SubmissionStage.INTERVIEW_COMPLETED,
-            SubmissionStage.OFFER_ISSUED,
-            SubmissionStage.OFFER_ACCEPTED,
-            SubmissionStage.JOINED_DAY_1_ACTIVE,
-            SubmissionStage.STAGE_REJECTED,
-          ],
-        },
+    // 3. Fetch Candidates Specifically Submitted in this Batch (or Mandate)
+    const submissionWhere: any = {
+      mandateId: portalShare.mandateId,
+      stage: {
+        in: [
+          SubmissionStage.SUBMITTED_TO_CLIENT,
+          SubmissionStage.CLIENT_SHORTLISTED,
+          SubmissionStage.INTERVIEW_SCHEDULED,
+          SubmissionStage.INTERVIEW_COMPLETED,
+          SubmissionStage.OFFER_ISSUED,
+          SubmissionStage.OFFER_ACCEPTED,
+          SubmissionStage.JOINED_DAY_1_ACTIVE,
+          SubmissionStage.STAGE_REJECTED,
+        ],
       },
+    };
+
+    if (portalShare.candidateIds && portalShare.candidateIds.length > 0) {
+      submissionWhere.candidateId = { in: portalShare.candidateIds };
+    }
+
+    const submissions = await prisma.candidateSubmission.findMany({
+      where: submissionWhere,
       include: {
         candidate: true,
       },
@@ -77,7 +91,6 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     });
 
     // 4. Sanitize Candidates (Mask Contact PII) & Compute Feedback SLA Velocity
-    const now = new Date();
     const feedbackSlaHours = portalShare.feedbackSlaHours || 48;
 
     const sanitizedCandidates = submissions.map((sub) => {
@@ -139,6 +152,7 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     return NextResponse.json({
       portal: {
         token: portalShare.portalToken,
+        expiresAt: portalShare.expiresAt,
         clientOrgName: portalShare.clientOrgName,
         clientContactName: portalShare.clientContactName,
         feedbackSlaHours,

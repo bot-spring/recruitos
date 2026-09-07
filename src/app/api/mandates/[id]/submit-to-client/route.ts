@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { SubmissionStage, ClientDecision } from "@prisma/client";
+import { SubmissionStage, ClientDecision, CandidateJobStatus } from "@prisma/client";
 import { sendClientShortlistPresentationEmail } from "@/lib/email";
 import crypto from "crypto";
 import path from "path";
@@ -37,48 +37,43 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       return NextResponse.json({ error: "Mandate not found." }, { status: 404 });
     }
 
-    // 2. Ensure ClientPortalShare token exists
-    let clientPortal = await prisma.clientPortalShare.findFirst({
-      where: {
-        mandateId: mandate.id,
+    // 2. Create an isolated ClientPortalShare token for this specific batch with 7-day expiration
+    const portalToken = `cp_${crypto.randomBytes(12).toString("hex")}`;
+    const primaryContact = mandate.contact || mandate.client.contacts[0];
+    const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 calendar days expiry
+    const targetCandidateIds = Array.isArray(candidateIds) && candidateIds.length > 0 ? candidateIds : [];
+
+    const clientPortal = await prisma.clientPortalShare.create({
+      data: {
         agencyId: session.user.agencyId,
+        mandateId: mandate.id,
+        contactId: primaryContact?.id || null,
+        portalToken,
+        clientContactName: primaryContact?.name || "Hiring Lead",
+        clientContactEmail: primaryContact?.email || null,
+        clientOrgName: mandate.client.name,
+        feedbackSlaHours: 48,
+        expiresAt,
+        candidateIds: targetCandidateIds,
         isActive: true,
       },
     });
 
-    if (!clientPortal) {
-      const portalToken = `cp_${crypto.randomBytes(12).toString("hex")}`;
-      const primaryContact = mandate.contact || mandate.client.contacts[0];
-
-      clientPortal = await prisma.clientPortalShare.create({
-        data: {
-          agencyId: session.user.agencyId,
-          mandateId: mandate.id,
-          contactId: primaryContact?.id || null,
-          portalToken,
-          clientContactName: primaryContact?.name || "Hiring Lead",
-          clientContactEmail: primaryContact?.email || null,
-          clientOrgName: mandate.client.name,
-          feedbackSlaHours: 48,
-          isActive: true,
-        },
-      });
-    }
-
-    // 3. Promote candidate submissions to SUBMITTED_TO_CLIENT
+    // 3. Promote candidate submissions to SUBMITTED_TO_CLIENT and update company status to SHARED_WITH_COMPANY
     const whereClause: any = {
       agencyId: session.user.agencyId,
       mandateId: mandate.id,
     };
 
-    if (Array.isArray(candidateIds) && candidateIds.length > 0) {
-      whereClause.candidateId = { in: candidateIds };
+    if (targetCandidateIds.length > 0) {
+      whereClause.candidateId = { in: targetCandidateIds };
     }
 
     const updateResult = await prisma.candidateSubmission.updateMany({
       where: whereClause,
       data: {
         stage: SubmissionStage.SUBMITTED_TO_CLIENT,
+        candidateJobStatus: CandidateJobStatus.SHARED_WITH_COMPANY,
         submittedToClientAt: new Date(),
         clientDecision: ClientDecision.PENDING_REVIEW,
       },
@@ -145,11 +140,26 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const clientContact = mandate.contact || mandate.client.contacts[0];
     const clientEmail = clientContact?.email || clientPortal.clientContactEmail;
 
+    // Fetch assigned recruiter and agency owner for CC
+    const recruiterUser = mandate.assignedRecruiterId
+      ? await prisma.user.findUnique({ where: { id: mandate.assignedRecruiterId }, select: { email: true } })
+      : null;
+    const agencyOwner = await prisma.user.findFirst({
+      where: { agencyId: session.user.agencyId, role: "AGENCY_OWNER" },
+      select: { email: true },
+    });
+
+    const ccList: string[] = [];
+    if (recruiterUser?.email) ccList.push(recruiterUser.email);
+    if (session.user.email && !ccList.includes(session.user.email)) ccList.push(session.user.email);
+    if (agencyOwner?.email && !ccList.includes(agencyOwner.email)) ccList.push(agencyOwner.email);
+
     let emailSent = false;
     if (clientEmail && emailCandidates.length > 0) {
       try {
         await sendClientShortlistPresentationEmail({
           to: clientEmail,
+          cc: ccList,
           clientContactName: clientContact?.name || clientPortal.clientContactName || "Hiring Lead",
           companyName: mandate.client.name,
           jobTitle: mandate.title,

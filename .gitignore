@@ -33,3 +33,7 @@ public/uploads/resumes/*
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+
+# Local project memory
+PROJECT_MEMORY.md
+AGENTS.md

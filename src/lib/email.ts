@@ -463,6 +463,7 @@ export async function sendPlacementInvoiceEmail({
 
 export interface ClientShortlistPresentationEmailProps {
   to: string;
+  cc?: string[];
   clientContactName: string;
   companyName: string;
   jobTitle: string;
@@ -491,17 +492,19 @@ export interface ClientShortlistPresentationEmailProps {
   }>;
   attachments?: Array<{
     filename: string;
-    path: string;
+    path?: string;
+    content?: Buffer;
     contentType?: string;
   }>;
 }
 
 /**
- * Sends candidate shortlist presentation email to Client Hiring Lead with 19 candidate fields,
- * interactive 48h SLA feedback link, and attached resume copies.
+ * Sends candidate shortlist presentation email to Client Hiring Lead with 19-column horizontal table,
+ * interactive 7-day feedback link, and attached resume PDF copies.
  */
 export async function sendClientShortlistPresentationEmail({
   to,
+  cc = [],
   clientContactName,
   companyName,
   jobTitle,
@@ -513,118 +516,110 @@ export async function sendClientShortlistPresentationEmail({
 }: ClientShortlistPresentationEmailProps) {
   const isDev = process.env.NODE_ENV !== "production";
   const recipient = isDev ? (process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in") : to;
+  const ccRecipients = isDev ? [] : cc;
 
-  const candidateCardsHtml = candidates.map((c, idx) => `
-    <div style="background-color: #ffffff; border: 1px solid #cbd5e1; border-radius: 10px; padding: 18px; margin-bottom: 20px;">
-      <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #f1f5f9; padding-bottom: 10px; margin-bottom: 12px;">
-        <h3 style="margin: 0; font-size: 16px; color: #0f172a; font-weight: 800;">#${idx + 1}. ${c.fullName}</h3>
-        <span style="font-size: 11px; background-color: #dbeafe; color: #1e40af; font-weight: 700; padding: 2px 8px; border-radius: 6px;">${c.designation || jobTitle}</span>
-      </div>
+  const tableRowsHtml = candidates.map((c, idx) => {
+    const formattedDate = c.dateOfSourcing
+      ? new Date(c.dateOfSourcing).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "2-digit" })
+      : "Recent";
+    const expText = `${c.totalExpYears || 0}yr`;
+    const relExpText = c.relevantExpYears !== null && c.relevantExpYears !== undefined ? `${c.relevantExpYears}yr` : "N/A";
 
-      <table style="width: 100%; border-collapse: collapse; font-size: 12px; color: #334155; line-height: 1.6;">
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600; width: 30%;">Applied Position:</td>
-          <td style="padding: 4px 0; font-weight: 700; color: #0f172a;">${jobTitle}</td>
-        </tr>
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600;">Client Organization:</td>
-          <td style="padding: 4px 0;">${companyName}</td>
-        </tr>
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600;">Contact Email & Phone:</td>
-          <td style="padding: 4px 0;">${c.email} • ${c.phone}</td>
-        </tr>
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600;">Target Location:</td>
-          <td style="padding: 4px 0;">${c.location} (Relocate: <strong>${c.readyToRelocate || "Yes"}</strong>)</td>
-        </tr>
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600;">Total & Relevant Exp:</td>
-          <td style="padding: 4px 0;">Total: <strong>${c.totalExpYears}y</strong> | Relevant: <strong>${c.relevantExpYears !== null ? c.relevantExpYears + 'y' : 'N/A'}</strong></td>
-        </tr>
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600;">Highest Qualification:</td>
-          <td style="padding: 4px 0;">${c.qualification || "Graduate / Professional Degree"}</td>
-        </tr>
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600;">Current / Last Company:</td>
-          <td style="padding: 4px 0; font-weight: 600;">${c.currentCompany || "Confidential"}</td>
-        </tr>
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600;">Compensation:</td>
-          <td style="padding: 4px 0;">Current: <strong>${c.currentSalary || "Confidential"}</strong> | Expectation: <strong>${c.expectedSalary || "Negotiable"}</strong></td>
-        </tr>
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600;">Notice Period:</td>
-          <td style="padding: 4px 0; font-weight: 700; color: #0f172a;">${c.noticePeriod || "30 Days"}</td>
-        </tr>
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600;">Offer in Hand:</td>
-          <td style="padding: 4px 0;">${c.offerInHand || "No"}</td>
-        </tr>
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600;">Reason for Leaving:</td>
-          <td style="padding: 4px 0; font-style: italic;">${c.reasonForLeaving || "Exploring progressive career opportunities"}</td>
-        </tr>
-        <tr>
-          <td style="padding: 4px 8px 4px 0; color: #64748b; font-weight: 600;">Sourcing Details:</td>
-          <td style="padding: 4px 0; font-size: 11px; color: #64748b;">Source: ${c.source} • Ingested: ${new Date(c.dateOfSourcing).toLocaleDateString()}</td>
-        </tr>
-      </table>
-    </div>
-  `).join("");
+    return `
+      <tr style="background-color: ${idx % 2 === 0 ? "#ffffff" : "#f8fafc"};">
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; white-space: nowrap; color: #0f172a;">${formattedDate}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #0f172a;">${c.source || "Direct"}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #0f172a;">${companyName}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #0f172a; font-weight: 600;">${jobTitle}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; font-weight: 700; color: #0f172a; white-space: nowrap;">${c.fullName}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #0284c7;"><a href="mailto:${c.email}" style="color: #0284c7; text-decoration: underline;">${c.email}</a></td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; white-space: nowrap; color: #0f172a; font-family: monospace;">${c.phone}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #0f172a;">${c.location || "Bengaluru"}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; text-align: center; color: #0f172a;">${c.readyToRelocate || "Yes"}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; text-align: center; font-weight: 600; color: #0f172a;">${expText}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; text-align: center; color: #0f172a;">${relExpText}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #0f172a;">${c.designation || jobTitle}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #0f172a;">${c.qualification || "Graduate"}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #0f172a;">${c.currentCompany || "Confidential"}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #0f172a; white-space: nowrap;">${c.currentSalary || "Confidential"}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #0f172a; white-space: nowrap;">${c.expectedSalary || "Negotiable"}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #0f172a; white-space: nowrap;">${c.noticePeriod || "30 Days"}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; color: #475569; font-style: italic;">${c.reasonForLeaving || "Career growth"}</td>
+        <td style="padding: 8px 10px; border: 1px solid #cbd5e1; font-size: 11px; text-align: center; color: #0f172a;">${c.offerInHand || "No"}</td>
+      </tr>
+    `;
+  }).join("");
 
   const htmlContent = `
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 680px; margin: 0 auto; background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 16px; overflow: hidden;">
-      <div style="background-color: #0f172a; padding: 24px; text-align: center; color: #ffffff;">
-        <h1 style="margin: 0; font-size: 22px; font-weight: 800; letter-spacing: -0.5px;">${agencyName}</h1>
-        <p style="margin: 6px 0 0 0; color: #94a3b8; font-size: 12px; text-transform: uppercase; letter-spacing: 1.5px; font-weight: 600;">
-          Verified Candidate Shortlist Presentation
-        </p>
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 100%; margin: 0 auto; background-color: #ffffff; color: #0f172a; line-height: 1.5;">
+      <p style="margin: 0 0 14px 0; font-size: 14px; color: #0f172a;">
+        Hi <strong>${clientContactName || "Team"}</strong>,
+      </p>
+      <p style="margin: 0 0 16px 0; font-size: 13px; color: #334155;">
+        Please have a look at the candidate tracker below and attached are the resumes for <strong>${jobTitle}</strong>.
+      </p>
+
+      <!-- 7-Day Interactive Action Portal CTA Box -->
+      <div style="margin: 18px 0; padding: 14px 18px; background-color: #f0fdf4; border: 1.5px solid #86efac; border-radius: 8px;">
+        <table style="width: 100%; border-collapse: collapse;">
+          <tr>
+            <td>
+              <strong style="color: #166534; font-size: 13px;">⚡ Interactive Shortlist Review Portal (Active for 7 Days)</strong>
+              <p style="margin: 3px 0 0 0; color: #15803d; font-size: 11px;">
+                Review full candidate summaries, evaluate CVs, and log 1-click decisions (Shortlist / Hold / Reject).
+              </p>
+            </td>
+            <td style="text-align: right; vertical-align: middle; white-space: nowrap;">
+              <a href="${shareableUrl}" style="background-color: #16a34a; color: #ffffff; text-decoration: none; font-weight: 700; font-size: 12px; padding: 8px 18px; border-radius: 6px; display: inline-block;">
+                Open Review Portal &rarr;
+              </a>
+            </td>
+          </tr>
+        </table>
       </div>
 
-      <div style="padding: 28px 24px;">
-        <p style="margin: 0 0 14px 0; font-size: 15px; color: #0f172a;">
-          Dear <strong>${clientContactName}</strong>,
-        </p>
-        <p style="margin: 0 0 20px 0; font-size: 13px; color: #475569; line-height: 1.6;">
-          We are pleased to present our pre-screened candidate shortlist for the <strong>${jobTitle}</strong> search mandate at <strong>${companyName}</strong>.
-          Attached are the full original resumes and comprehensive recruiter screening telemetry.
-        </p>
-
-        <!-- 48h Action CTA Banner -->
-        <div style="background-color: #e0e7ff; border: 2px solid #6366f1; border-radius: 12px; padding: 20px; text-align: center; margin-bottom: 24px;">
-          <h2 style="margin: 0 0 6px 0; font-size: 16px; font-weight: 800; color: #312e81;">
-            ⚡ ${feedbackSlaHours}-Hour Fast-Track Review Portal Active
-          </h2>
-          <p style="margin: 0 0 16px 0; font-size: 12px; color: #4338ca;">
-            Review profiles, listen to screening summaries, and schedule interviews with 1-click zero-login access.
-          </p>
-          <a href="${shareableUrl}" style="display: inline-block; background-color: #4f46e5; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 13px; padding: 12px 28px; border-radius: 8px; box-shadow: 0 2px 4px rgba(79,70,229,0.3);">
-            Open Interactive Review Portal &rarr;
-          </a>
-          <p style="margin: 8px 0 0 0; font-size: 11px; color: #6366f1;">
-            Link: <a href="${shareableUrl}" style="color: #4f46e5;">${shareableUrl}</a>
-          </p>
-        </div>
-
-        <!-- Candidate Dossiers List -->
-        <h2 style="font-size: 14px; font-weight: 800; color: #0f172a; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 12px;">
-          Candidate Screening Dossiers (${candidates.length})
-        </h2>
-        ${candidateCardsHtml}
-
-        <p style="margin: 24px 0 0 0; font-size: 13px; color: #64748b; line-height: 1.6;">
-          Warm regards,<br />
-          <strong>Executive Search Advisory at ${agencyName}</strong><br />
-          <span style="font-size: 11px; color: #94a3b8;">Powered by RecruitOS Digital Operating System</span>
-        </p>
+      <!-- 19-Column Horizontal Tracker Table -->
+      <div style="margin: 18px 0; overflow-x: auto; -webkit-overflow-scrolling: touch;">
+        <table style="width: 100%; border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 11px; border: 1px solid #002060;">
+          <thead>
+            <tr style="background-color: #002060; color: #ffffff;">
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Date</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Source</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Client Name</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Applied Position Name</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Candidate Name</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Email ID</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Number</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Location</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: center; font-weight: 700; white-space: nowrap;">Ready to Relocate</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: center; font-weight: 700; white-space: nowrap;">Experience</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: center; font-weight: 700; white-space: nowrap;">Relevant Exp</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Designation</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Qualification</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Current/ Last Company</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Current Salary</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Expectation</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Notice Period</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: left; font-weight: 700; white-space: nowrap;">Reason of Leaving</th>
+              <th style="padding: 8px 10px; border: 1px solid #003399; text-align: center; font-weight: 700; white-space: nowrap;">Offer in Hand</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${tableRowsHtml}
+          </tbody>
+        </table>
       </div>
+
+      <p style="margin: 20px 0 0 0; font-size: 13px; color: #475569;">
+        Regards,<br />
+        <strong style="color: #0f172a;">${agencyName}</strong><br />
+        <span style="font-size: 11px; color: #94a3b8;">Talent Delivery & Executive Search Team</span>
+      </p>
 
       ${
         isDev
-          ? `<div style="background-color: #fffbeb; padding: 12px; border-top: 1px solid #fef3c7; font-size: 11px; color: #92400e; text-align: center;">
-              ⚙️ <strong>Development Mode:</strong> Original intended recipient was <code>${to}</code> (Dispatched/logged to <code>${recipient}</code>).
+          ? `<div style="margin-top: 24px; background-color: #fffbeb; padding: 10px 14px; border: 1px solid #fef3c7; border-radius: 6px; font-size: 11px; color: #92400e;">
+              ⚙️ <strong>Development Mode Notice:</strong> Intended recipient was <code>${to}</code> (CC: <code>${cc.join(", ") || "None"}</code>). Delivered to <code>${recipient}</code> for review.
             </div>`
           : ""
       }
@@ -634,16 +629,24 @@ export async function sendClientShortlistPresentationEmail({
   try {
     if (!process.env.GMAIL_SMTP_PASS) {
       console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Shortlist email logged for: ${recipient}`);
+      console.log(`   CC: ${ccRecipients.join(", ") || "None"}`);
       console.log(`   Subject: Candidate Shortlist: ${jobTitle} — ${companyName} (${candidates.length} profiles)`);
+      console.log(`   Attached files: ${attachments.map((a) => a.filename).join(", ") || "None"}`);
       return { success: true, simulated: true };
     }
 
     const info = await transporter.sendMail({
       from: `"${agencyName} Search Delivery" <${process.env.GMAIL_SMTP_USER || "ankur@botspring.in"}>`,
       to: recipient,
-      subject: `Candidate Shortlist: ${jobTitle} — ${companyName} (${candidates.length} Verified Profiles)`,
+      cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+      subject: `Candidate Shortlist: ${jobTitle} — ${companyName} (${candidates.length} Profiles)`,
       html: htmlContent,
-      attachments: attachments.filter((att) => (att.path && att.path.startsWith("http")) || fs.existsSync(att.path)),
+      attachments: attachments.map((att) => {
+        if (att.content) {
+          return { filename: att.filename, content: att.content, contentType: att.contentType || "application/pdf" };
+        }
+        return { filename: att.filename, path: att.path, contentType: att.contentType || "application/pdf" };
+      }),
     });
 
     console.log(`📧 Candidate shortlist email dispatched: ${info.messageId} to ${recipient} with ${attachments.length} attachment(s).`);

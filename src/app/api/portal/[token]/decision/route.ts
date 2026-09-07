@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { SubmissionStage, ClientDecision } from "@prisma/client";
+import { SubmissionStage, ClientDecision, CandidateJobStatus } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -9,7 +9,7 @@ export async function POST(req: Request, { params }: { params: { token: string }
   try {
     const token = params.token;
 
-    // 1. Validate Client Portal Share
+    // 1. Validate Client Portal Share & Expiration
     const portalShare = await prisma.clientPortalShare.findUnique({
       where: { portalToken: token },
       include: {
@@ -18,10 +18,17 @@ export async function POST(req: Request, { params }: { params: { token: string }
       },
     });
 
-    if (!portalShare || !portalShare.isActive) {
+    const now = new Date();
+    const isExpired = Boolean(portalShare?.expiresAt && now > portalShare.expiresAt);
+
+    if (!portalShare || !portalShare.isActive || isExpired) {
       return NextResponse.json(
-        { error: "Client presentation link is invalid or deactivated." },
-        { status: 404 }
+        {
+          error: isExpired
+            ? "This client review link has expired (links expire after 7 days to safeguard candidate confidentiality). Please contact your recruiter for a fresh link."
+            : "Client presentation link is invalid or deactivated.",
+        },
+        { status: isExpired ? 410 : 404 }
       );
     }
 
@@ -48,25 +55,40 @@ export async function POST(req: Request, { params }: { params: { token: string }
       return NextResponse.json({ error: "Candidate submission not found in this mandate." }, { status: 404 });
     }
 
+    // Check batch isolation: ensure candidate was part of this share batch
+    if (portalShare.candidateIds && portalShare.candidateIds.length > 0) {
+      if (!portalShare.candidateIds.includes(submission.candidateId)) {
+        return NextResponse.json(
+          { error: "Candidate is not authorized in this review batch." },
+          { status: 403 }
+        );
+      }
+    }
+
     let nextStage = submission.stage;
     let clientDecision = submission.clientDecision;
+    let candidateJobStatus = submission.candidateJobStatus;
 
     if (decision === "SHORTLIST") {
       nextStage = SubmissionStage.CLIENT_SHORTLISTED;
       clientDecision = ClientDecision.SHORTLISTED_FOR_INTERVIEW;
+      candidateJobStatus = CandidateJobStatus.SELECTED_FOR_NEXT_ROUND;
     } else if (decision === "REJECT") {
       nextStage = SubmissionStage.STAGE_REJECTED;
       clientDecision = ClientDecision.REJECTED_WITH_FEEDBACK;
-    } else if (decision === "QUESTION") {
+      candidateJobStatus = CandidateJobStatus.REJECTED;
+    } else if (decision === "HOLD" || decision === "QUESTION") {
       clientDecision = ClientDecision.INFO_REQUESTED;
+      candidateJobStatus = CandidateJobStatus.HOLD;
     }
 
-    // 3. Update Submission Record
+    // 3. Update Submission Record with candidateJobStatus
     const updatedSubmission = await prisma.candidateSubmission.update({
       where: { id: submission.id },
       data: {
         stage: nextStage,
         clientDecision,
+        candidateJobStatus,
         clientFeedbackNotes: notes?.trim() || submission.clientFeedbackNotes,
         clientFeedbackAt: new Date(),
         preferredInterviewTimes: preferredInterviewTimes?.trim() || submission.preferredInterviewTimes,
