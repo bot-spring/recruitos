@@ -107,6 +107,8 @@ interface ActiveMandate {
   slaTargetHours: number;
   hoursInStage: number;
   calculatedSlaStatus: "HEALTHY" | "WARNING" | "BREACHED";
+  slaStageType?: "SOURCING" | "CLIENT_REVIEW";
+  hasShortlistSubmitted?: boolean;
   createdAt: string;
   client: {
     id: string;
@@ -1209,9 +1211,21 @@ export default function CockpitPage() {
                             <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">
                               {m.client.name}
                             </span>
-                            <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${slaBadgeColors[m.calculatedSlaStatus]}`}>
-                              SLA: {m.calculatedSlaStatus} ({m.hoursInStage}h / {m.slaTargetHours}h)
-                            </span>
+                            {m.hasShortlistSubmitted ? (
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${
+                                m.calculatedSlaStatus === "BREACHED"
+                                  ? "bg-rose-100 text-rose-800 border-rose-300 animate-pulse"
+                                  : m.calculatedSlaStatus === "WARNING"
+                                  ? "bg-amber-100 text-amber-800 border-amber-300"
+                                  : "bg-blue-100 text-blue-800 border-blue-300"
+                              }`}>
+                                Client Review SLA: {m.calculatedSlaStatus} ({m.hoursInStage}h / {m.slaTargetHours}h)
+                              </span>
+                            ) : (
+                              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${slaBadgeColors[m.calculatedSlaStatus]}`}>
+                                Sourcing SLA: {m.calculatedSlaStatus} ({m.hoursInStage}h / {m.slaTargetHours}h)
+                              </span>
+                            )}
                           </div>
 
                           <div className="text-xs text-slate-500 flex flex-wrap items-center gap-3">
@@ -1255,11 +1269,11 @@ export default function CockpitPage() {
                           </button>
 
                           <button
-                            onClick={() => handleOpenClientSubmit(m)}
+                            onClick={() => router.push(`/cockpit/mandates/${m.id}`)}
                             className="inline-flex items-center space-x-1 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-xs cursor-pointer"
                           >
                             <Send className="h-3.5 w-3.5" />
-                            <span>Submit to Client</span>
+                            <span>{m.hasShortlistSubmitted ? "Shared with Client" : "Submit to Client"}</span>
                           </button>
 
                           <button

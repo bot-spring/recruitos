@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { MandateStatus, ClientStatus, PriorityLevel, WorkMode, SlaStatus } from "@prisma/client";
+import { MandateStatus, ClientStatus, PriorityLevel, WorkMode, SlaStatus, SubmissionStage } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -57,22 +57,75 @@ export async function GET(req: Request) {
             role: true,
           },
         },
+        clientPortalShares: {
+          where: { isActive: true },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: {
+            id: true,
+            portalToken: true,
+            createdAt: true,
+            expiresAt: true,
+            feedbackSlaHours: true,
+            reminderLevel: true,
+            lastReminderSentAt: true,
+            lastEmailMessageId: true,
+          },
+        },
+        _count: {
+          select: {
+            submissions: {
+              where: {
+                stage: {
+                  in: [
+                    SubmissionStage.SUBMITTED_TO_CLIENT,
+                    SubmissionStage.CLIENT_SHORTLISTED,
+                    SubmissionStage.INTERVIEW_SCHEDULED,
+                    SubmissionStage.INTERVIEW_COMPLETED,
+                  ],
+                },
+              },
+            },
+          },
+        },
       },
       orderBy: { updatedAt: "desc" },
     });
 
-    // Calculate live SLA velocity metrics for each mandate (RC-03)
+    // Calculate live SLA velocity metrics for each mandate (RC-03, CF-04)
     const now = new Date().getTime();
     const enrichedMandates = mandates.map((m) => {
       let hoursInStage = 0;
       let calculatedSlaStatus = m.slaStatus;
+      let slaStageType: "SOURCING" | "CLIENT_REVIEW" = "SOURCING";
+      let slaTargetHours = m.slaTargetHours || 72;
 
-      if (m.slaStartedAt) {
+      const latestPortalShare = m.clientPortalShares?.[0];
+      const hasShortlistSubmitted = Boolean(
+        m.firstShortlistSubmittedAt || (m._count?.submissions && m._count.submissions > 0) || latestPortalShare
+      );
+
+      if (hasShortlistSubmitted) {
+        slaStageType = "CLIENT_REVIEW";
+        slaTargetHours = latestPortalShare?.feedbackSlaHours || 48;
+        const submittedTime = latestPortalShare?.createdAt || m.firstShortlistSubmittedAt || m.createdAt;
+        hoursInStage = Math.max(0, Math.floor((now - new Date(submittedTime).getTime()) / (1000 * 60 * 60)));
+
+        if (hoursInStage >= 72) {
+          calculatedSlaStatus = SlaStatus.BREACHED;
+        } else if (hoursInStage >= slaTargetHours) {
+          calculatedSlaStatus = SlaStatus.WARNING;
+        } else {
+          calculatedSlaStatus = SlaStatus.HEALTHY;
+        }
+      } else if (m.slaStartedAt) {
+        slaStageType = "SOURCING";
+        slaTargetHours = m.slaTargetHours || 72;
         hoursInStage = Math.max(0, Math.floor((now - new Date(m.slaStartedAt).getTime()) / (1000 * 60 * 60)));
 
-        if (hoursInStage >= m.slaTargetHours) {
+        if (hoursInStage >= slaTargetHours) {
           calculatedSlaStatus = SlaStatus.BREACHED;
-        } else if (hoursInStage >= m.slaTargetHours / 2) {
+        } else if (hoursInStage >= slaTargetHours / 2) {
           calculatedSlaStatus = SlaStatus.WARNING;
         } else {
           calculatedSlaStatus = SlaStatus.HEALTHY;
@@ -82,7 +135,11 @@ export async function GET(req: Request) {
       return {
         ...m,
         hoursInStage,
+        slaTargetHours,
         calculatedSlaStatus,
+        slaStageType,
+        hasShortlistSubmitted,
+        latestPortalShare,
       };
     });
 

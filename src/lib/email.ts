@@ -657,3 +657,139 @@ export async function sendClientShortlistPresentationEmail({
   }
 }
 
+export interface ClientShortlistReminderEmailProps {
+  to: string;
+  cc?: string[];
+  clientContactName: string;
+  companyName: string;
+  jobTitle: string;
+  agencyName: string;
+  shareableUrl: string;
+  candidatesCount: number;
+  initialBatchCount?: number;
+  lastEmailMessageId?: string | null;
+  reminderLevel?: number; // 1 = 24h gentle, 2 = 48h SLA drop-off warning, 3 = manual/72h chase
+  hoursElapsed?: number;
+}
+
+/**
+ * Sends a threaded follow-up reminder to the client for unreviewed candidate shortlists.
+ * Uses `inReplyTo` and `references` headers so the reminder threads directly into the original conversation.
+ */
+export async function sendClientShortlistReminderEmail({
+  to,
+  cc = [],
+  clientContactName,
+  companyName,
+  jobTitle,
+  agencyName,
+  shareableUrl,
+  candidatesCount,
+  initialBatchCount,
+  lastEmailMessageId,
+  reminderLevel = 1,
+  hoursElapsed,
+}: ClientShortlistReminderEmailProps) {
+  const isDev = process.env.NODE_ENV !== "production";
+  const recipient = isDev ? (process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in") : to;
+  // In dev mode, deliver to recipient once (avoid sending duplicate to CC)
+  // In prod mode, ensure recipient is excluded from CC to avoid duplicate delivery
+  const ccRecipients = isDev
+    ? []
+    : cc.filter((c) => c && c.toLowerCase() !== recipient.toLowerCase());
+
+  const isUrgent = reminderLevel >= 2;
+  const badgeColor = isUrgent ? "#dc2626" : "#2563eb";
+  const badgeText = isUrgent
+    ? `⚡ SLA Follow-Up: 48h Window Elapsed (${hoursElapsed || 48}h)`
+    : `Gentle Reminder: Candidates Awaiting Review`;
+
+  const htmlContent = `
+    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 650px; margin: 0 auto; color: #0f172a; line-height: 1.6; border: 1px solid #e2e8f0; border-radius: 12px; padding: 28px; background-color: #ffffff;">
+      <div style="margin-bottom: 20px; border-bottom: 1px solid #e2e8f0; padding-bottom: 16px;">
+        <span style="display: inline-block; background-color: ${badgeColor}15; color: ${badgeColor}; border: 1px solid ${badgeColor}30; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
+          ${badgeText}
+        </span>
+        <h2 style="font-size: 18px; font-weight: 800; color: #0f172a; margin: 10px 0 0 0;">
+          Shortlist Review: ${jobTitle} — ${companyName}
+        </h2>
+      </div>
+
+      <p style="margin: 0 0 14px 0; font-size: 13px; color: #334155;">
+        Dear ${clientContactName || "Hiring Lead"},
+      </p>
+
+      ${
+        isUrgent
+          ? `<p style="margin: 0 0 14px 0; font-size: 13px; color: #334155;">
+              This is a follow-up regarding the <strong>${candidatesCount} candidate profile(s)</strong> presented for your <strong>${jobTitle}</strong> position. Top candidates in this market receive competitive offers quickly, and we want to ensure your interview slots are locked in before profiles move off the market.
+            </p>`
+          : `<p style="margin: 0 0 14px 0; font-size: 13px; color: #334155;">
+              Following up on the candidate shortlist presented below for your <strong>${jobTitle}</strong> opening. We have <strong>${candidatesCount} pre-screened candidate profile(s)</strong> awaiting your feedback on your temporary 7-day review portal.
+            </p>`
+      }
+
+      <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; text-align: center; margin: 20px 0;">
+        <p style="margin: 0 0 12px 0; font-size: 12px; color: #475569; font-weight: 600;">
+          Review full screening telemetry, original resumes, and shortlist for interview in 1 click:
+        </p>
+        <a href="${shareableUrl}" style="display: inline-block; background-color: #002060; color: #ffffff; text-decoration: none; font-weight: 800; font-size: 13px; padding: 12px 28px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,32,96,0.25);">
+          👉 Open 7-Day Candidate Review Portal (${candidatesCount} Profiles)
+        </a>
+        <p style="margin: 10px 0 0 0; font-size: 11px; color: #64748b;">
+          Direct link: <a href="${shareableUrl}" style="color: #002060; text-decoration: underline;">${shareableUrl}</a>
+        </p>
+      </div>
+
+      <p style="margin: 14px 0 0 0; font-size: 13px; color: #475569;">
+        Please refer to the original email below in this thread for the full 19-column candidate tracker and attached resume files.
+      </p>
+
+      <p style="margin: 20px 0 0 0; font-size: 13px; color: #475569;">
+        Warm regards,<br />
+        <strong style="color: #0f172a;">${agencyName}</strong><br />
+        <span style="font-size: 11px; color: #94a3b8;">Talent Delivery & Executive Search Team</span>
+      </p>
+
+      ${
+        isDev
+          ? `<div style="margin-top: 24px; background-color: #fffbeb; padding: 10px 14px; border: 1px solid #fef3c7; border-radius: 6px; font-size: 11px; color: #92400e;">
+              ⚙️ <strong>Development Mode Notice:</strong> Intended recipient was <code>${to}</code> (CC: <code>${cc.join(", ") || "None"}</code>). Delivered to <code>${recipient}</code> for review.
+            </div>`
+          : ""
+      }
+    </div>
+  `;
+
+  const threadProfilesCount = initialBatchCount || candidatesCount;
+
+  try {
+    if (!process.env.GMAIL_SMTP_PASS) {
+      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Reminder email logged for: ${recipient}`);
+      console.log(`   Thread in-reply-to: ${lastEmailMessageId || "None"}`);
+      console.log(`   Subject: Re: Candidate Shortlist: ${jobTitle} — ${companyName} (${threadProfilesCount} Profiles)`);
+      return { success: true, simulated: true };
+    }
+
+    const mailOptions: any = {
+      from: `"${agencyName} Search Delivery" <${process.env.GMAIL_SMTP_USER || "ankur@botspring.in"}>`,
+      to: recipient,
+      cc: ccRecipients.length > 0 ? ccRecipients : undefined,
+      subject: `Re: Candidate Shortlist: ${jobTitle} — ${companyName} (${threadProfilesCount} Profiles)`,
+      html: htmlContent,
+    };
+
+    if (lastEmailMessageId) {
+      mailOptions.inReplyTo = lastEmailMessageId;
+      mailOptions.references = [lastEmailMessageId];
+    }
+
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`📧 Candidate shortlist reminder dispatched: ${info.messageId} (threaded to ${lastEmailMessageId || "root"}) to ${recipient}.`);
+    return { success: true, messageId: info.messageId };
+  } catch (error: any) {
+    console.error("⚠️ Failed to dispatch candidate shortlist reminder email:", error.message);
+    return { success: false, error: error.message };
+  }
+}
+

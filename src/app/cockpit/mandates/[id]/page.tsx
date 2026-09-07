@@ -38,6 +38,7 @@ import {
   AlertTriangle,
   Radio,
   Share2,
+  BellRing,
 } from "lucide-react";
 
 interface MandateDetails {
@@ -109,10 +110,16 @@ interface AttachedCandidate {
   status: "NOT_SHARED" | "SHARED_WITH_COMPANY" | "SELECTED_FOR_NEXT_ROUND" | "OFFERED" | "HOLD" | "REJECTED" | "JOINED";
   stage: string;
   clientDecision: string | null;
+  clientFeedbackNotes: string | null;
+  clientFeedbackAt: string | null;
+  preferredInterviewTimes: string | null;
+  rejectionReason: string | null;
+  clientQuestionText: string | null;
   submittedToClientAt: string | null;
   lastCallOutcome: string | null;
   lastCallNotes: string | null;
   lastCallAt: string | null;
+  nextCallbackAt: string | null;
   readyToRelocate: string | null;
   relevantExpYears: number | null;
   currentSalary: string | null;
@@ -126,6 +133,7 @@ interface AttachedCandidate {
     id: string;
     disposition: string;
     notes: string | null;
+    callbackAt?: string | null;
     calledAt: string;
     recruiterName: string;
   }>;
@@ -196,11 +204,14 @@ export default function MandateWorkspacePage() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [activeQuickTab, setActiveQuickTab] = useState<"ALL" | "CALLBACKS_TODAY" | "READY_TO_SHARE">("ALL");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Centered Call Screening Modal State (with 7 Call-Screening Metrics)
   const [selectedCandidate, setSelectedCandidate] = useState<AttachedCandidate | null>(null);
   const [callDisposition, setCallDisposition] = useState<string>("");
+  const [callbackDate, setCallbackDate] = useState<string>("");
+  const [callbackTime, setCallbackTime] = useState<string>("12:00");
   const [callNotes, setCallNotes] = useState<string>("");
   const [readyToRelocate, setReadyToRelocate] = useState<string>("Yes");
   const [relevantExpYears, setRelevantExpYears] = useState<string>("");
@@ -211,6 +222,37 @@ export default function MandateWorkspacePage() {
   const [offerInHand, setOfferInHand] = useState<string>("No");
   const [callValidationError, setCallValidationError] = useState<string | null>(null);
   const [loggingCall, setLoggingCall] = useState(false);
+
+  // Helper to format scheduled callback badge
+  const getCallbackBadge = (callbackAtStr: string | null) => {
+    if (!callbackAtStr) return null;
+    try {
+      const cbDate = new Date(callbackAtStr);
+      const now = new Date();
+      const isOverdue = cbDate.getTime() < now.getTime();
+      const isToday = cbDate.toDateString() === now.toDateString();
+      const timeStr = cbDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+
+      if (isOverdue) {
+        return {
+          text: `⚠️ Overdue (${isToday ? timeStr : `${cbDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${timeStr}`})`,
+          className: "bg-rose-100 text-rose-800 border-rose-300 font-extrabold",
+        };
+      }
+      if (isToday) {
+        return {
+          text: `⏰ Call Today @ ${timeStr}`,
+          className: "bg-amber-100 text-amber-900 border-amber-400 font-extrabold",
+        };
+      }
+      return {
+        text: `📅 ${cbDate.toLocaleDateString("en-US", { month: "short", day: "numeric" })} @ ${timeStr}`,
+        className: "bg-blue-50 text-blue-800 border-blue-200 font-bold",
+      };
+    } catch (_) {
+      return null;
+    }
+  };
 
   // Pool Browse Modal State
   const [isPoolModalOpen, setIsPoolModalOpen] = useState(false);
@@ -230,6 +272,7 @@ export default function MandateWorkspacePage() {
   const [generatingPortal, setGeneratingPortal] = useState(false);
   const [generatedPortalUrl, setGeneratedPortalUrl] = useState<string | null>(null);
   const [copiedPortalUrl, setCopiedPortalUrl] = useState(false);
+  const [chasingClient, setChasingClient] = useState(false);
 
   // Fetch Mandate Workspace Data
   const fetchWorkspace = async () => {
@@ -264,7 +307,7 @@ export default function MandateWorkspacePage() {
   // Open Centered Candidate Call Screening Modal
   const handleOpenCandidateModal = (cand: AttachedCandidate) => {
     setSelectedCandidate(cand);
-    setCallDisposition(""); // Mandatory selection required
+    setCallDisposition(cand.lastCallOutcome || ""); // Pre-populate saved disposition!
     setCallNotes("");
     setCallValidationError(null);
     setReadyToRelocate(cand.readyToRelocate || "Yes");
@@ -274,6 +317,22 @@ export default function MandateWorkspacePage() {
     setNoticePeriod(cand.noticePeriod || (cand.noticePeriodDays ? `${cand.noticePeriodDays} Days` : ""));
     setReasonForLeaving(cand.reasonForLeaving || "");
     setOfferInHand(cand.offerInHand || "No");
+
+    if (cand.nextCallbackAt) {
+      try {
+        const d = new Date(cand.nextCallbackAt);
+        setCallbackDate(d.toISOString().split("T")[0]);
+        const hh = String(d.getHours()).padStart(2, "0");
+        const mm = String(d.getMinutes()).padStart(2, "0");
+        setCallbackTime(`${hh}:${mm}`);
+      } catch (_) {
+        setCallbackDate(new Date().toISOString().split("T")[0]);
+        setCallbackTime("12:00");
+      }
+    } else {
+      setCallbackDate(new Date().toISOString().split("T")[0]);
+      setCallbackTime("12:00");
+    }
   };
 
   // Log Call Outcome & Screening Metrics
@@ -284,6 +343,15 @@ export default function MandateWorkspacePage() {
     if (!callDisposition || callDisposition.trim() === "") {
       setCallValidationError("Please select a Call Outcome Disposition before saving.");
       return;
+    }
+
+    let callbackAtPayload: string | null = null;
+    if (callDisposition === "CONNECTED_CALLBACK") {
+      if (!callbackDate || !callbackTime) {
+        setCallValidationError("Please specify both a Date and Time for the scheduled call back.");
+        return;
+      }
+      callbackAtPayload = new Date(`${callbackDate}T${callbackTime}:00`).toISOString();
     }
 
     setLoggingCall(true);
@@ -297,6 +365,7 @@ export default function MandateWorkspacePage() {
           submissionId: selectedCandidate.submissionId,
           disposition: callDisposition,
           notes: callNotes,
+          callbackAt: callbackAtPayload,
           readyToRelocate,
           relevantExpYears,
           currentSalary,
@@ -314,7 +383,8 @@ export default function MandateWorkspacePage() {
 
       setSuccessMessage(`Call outcome logged: ${callDisposition.replace(/_/g, " ")}`);
       setCallNotes("");
-      setCallDisposition("");
+      // Keep callDisposition selected so recruiter sees the saved outcome:
+      setCallDisposition(callDisposition);
       fetchWorkspace();
 
       // Update selectedCandidate state in modal
@@ -323,6 +393,7 @@ export default function MandateWorkspacePage() {
           id: data.callLog.id,
           disposition: callDisposition,
           notes: callNotes,
+          callbackAt: callbackAtPayload,
           calledAt: new Date().toISOString(),
           recruiterName: session?.user?.name || "You",
         };
@@ -331,6 +402,7 @@ export default function MandateWorkspacePage() {
           lastCallOutcome: callDisposition,
           lastCallNotes: callNotes,
           lastCallAt: new Date().toISOString(),
+          nextCallbackAt: callbackAtPayload,
           readyToRelocate,
           relevantExpYears: relevantExpYears ? parseFloat(relevantExpYears) : null,
           currentSalary,
@@ -555,22 +627,78 @@ export default function MandateWorkspacePage() {
     }
   };
 
-  // Filter candidates in table
-  const filteredCandidates = candidates.filter((c) => {
-    const q = searchQuery.toLowerCase();
-    const matchesSearch =
-      c.fullName.toLowerCase().includes(q) ||
-      (c.currentCompany && c.currentCompany.toLowerCase().includes(q)) ||
-      (c.currentTitle && c.currentTitle.toLowerCase().includes(q)) ||
-      c.phone.includes(q);
+  // 1-Click Threaded Client Reminder Chase (CF-04)
+  const handleChaseClient = async () => {
+    if (!confirm("Send polite in-thread reminder email to the hiring manager for unreviewed candidate profiles?")) {
+      return;
+    }
+    setChasingClient(true);
+    try {
+      const res = await fetch(`/api/mandates/${mandateId}/chase-client`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to dispatch reminder.");
+      }
+      setSuccessMessage(data.message || "Reminder email sent to hiring manager!");
+      fetchWorkspace();
+    } catch (err: any) {
+      alert(err.message || "Failed to dispatch client chase.");
+    } finally {
+      setChasingClient(false);
+    }
+  };
 
-    const matchesStatus = statusFilter === "ALL" || c.status === statusFilter;
-    return matchesSearch && matchesStatus;
-  });
+  // Helper to determine if callback is due today or overdue
+  const isCallbackDue = (c: AttachedCandidate) => {
+    if (c.lastCallOutcome !== "CONNECTED_CALLBACK" || !c.nextCallbackAt) return false;
+    const now = new Date();
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
+    const cbTime = new Date(c.nextCallbackAt).getTime();
+    return cbTime < todayEnd;
+  };
+
+  const callbacksDueCount = candidates.filter(isCallbackDue).length;
+
+  // Filter candidates in table
+  const filteredCandidates = candidates
+    .filter((c) => {
+      const q = searchQuery.toLowerCase();
+      const matchesSearch =
+        c.fullName.toLowerCase().includes(q) ||
+        (c.currentCompany && c.currentCompany.toLowerCase().includes(q)) ||
+        (c.currentTitle && c.currentTitle.toLowerCase().includes(q)) ||
+        c.phone.includes(q);
+
+      const matchesStatus = statusFilter === "ALL" || c.status === statusFilter;
+
+      let matchesTab = true;
+      if (activeQuickTab === "CALLBACKS_TODAY") {
+        matchesTab = isCallbackDue(c);
+      } else if (activeQuickTab === "READY_TO_SHARE") {
+        matchesTab = c.lastCallOutcome === "CONNECTED_INTERESTED" && c.status === "NOT_SHARED";
+      }
+
+      return matchesSearch && matchesStatus && matchesTab;
+    })
+    .sort((a, b) => {
+      if (activeQuickTab === "CALLBACKS_TODAY") {
+        const timeA = a.nextCallbackAt ? new Date(a.nextCallbackAt).getTime() : Infinity;
+        const timeB = b.nextCallbackAt ? new Date(b.nextCallbackAt).getTime() : Infinity;
+        return timeA - timeB;
+      }
+      return 0;
+    });
 
   // Count candidates ready to share (Connected & Profile Matched + Not Shared)
   const readyToShareCount = candidates.filter(
     (c) => c.lastCallOutcome === "CONNECTED_INTERESTED" && c.status === "NOT_SHARED"
+  ).length;
+
+  // Count candidates currently shared with company awaiting feedback
+  const sharedWithClientCount = candidates.filter(
+    (c) => c.status === "SHARED_WITH_COMPANY" || c.stage === "SUBMITTED_TO_CLIENT"
   ).length;
 
   if (loading) {
@@ -779,6 +907,22 @@ export default function MandateWorkspacePage() {
                 </span>
               )}
             </button>
+
+            {/* 1-CLICK CLIENT CHASE REMINDER (CF-04) */}
+            {sharedWithClientCount > 0 && (
+              <button
+                type="button"
+                onClick={handleChaseClient}
+                disabled={chasingClient}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
+              >
+                <BellRing className="h-3.5 w-3.5 text-amber-600 animate-pulse" />
+                <span>{chasingClient ? "Sending Reminder..." : "⚡ Chase Client for Feedback"}</span>
+                <span className="bg-amber-200 text-amber-950 text-[10px] font-black px-1.5 py-0.2 rounded-full ml-1">
+                  {sharedWithClientCount} Awaiting
+                </span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -786,6 +930,58 @@ export default function MandateWorkspacePage() {
         {/* SECTION 3: ATTACHED CANDIDATES LIST (THE CORE RECRUITER DESK)           */}
         {/* ========================================================================= */}
         <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
+          {/* Quick Filter Segmented Control */}
+          <div className="px-4 py-2.5 bg-slate-100/70 border-b border-slate-200/80 flex items-center space-x-2 overflow-x-auto">
+            <button
+              onClick={() => setActiveQuickTab("ALL")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                activeQuickTab === "ALL"
+                  ? "bg-white text-slate-900 shadow-xs border border-slate-200"
+                  : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
+              }`}
+            >
+              All Candidates ({candidates.length})
+            </button>
+
+            <button
+              onClick={() => setActiveQuickTab("CALLBACKS_TODAY")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                activeQuickTab === "CALLBACKS_TODAY"
+                  ? "bg-amber-500 text-white shadow-xs"
+                  : "text-amber-900 bg-amber-100/70 hover:bg-amber-100 border border-amber-300/80"
+              }`}
+            >
+              <Clock className="h-3.5 w-3.5" />
+              <span>Callbacks Due Today</span>
+              {callbacksDueCount > 0 && (
+                <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
+                  activeQuickTab === "CALLBACKS_TODAY" ? "bg-white text-amber-900" : "bg-amber-600 text-white"
+                }`}>
+                  {callbacksDueCount}
+                </span>
+              )}
+            </button>
+
+            <button
+              onClick={() => setActiveQuickTab("READY_TO_SHARE")}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
+                activeQuickTab === "READY_TO_SHARE"
+                  ? "bg-blue-600 text-white shadow-xs"
+                  : "text-blue-900 bg-blue-50 hover:bg-blue-100/70 border border-blue-200"
+              }`}
+            >
+              <Zap className="h-3.5 w-3.5" />
+              <span>Ready to Share</span>
+              {readyToShareCount > 0 && (
+                <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
+                  activeQuickTab === "READY_TO_SHARE" ? "bg-white text-blue-900" : "bg-blue-600 text-white"
+                }`}>
+                  {readyToShareCount}
+                </span>
+              )}
+            </button>
+          </div>
+
           {/* Table Filters & Search */}
           <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 bg-slate-50/50">
             <div className="flex items-center space-x-3 flex-1 max-w-lg">
@@ -893,10 +1089,20 @@ export default function MandateWorkspacePage() {
                         {/* 5. Last Call Outcome */}
                         <td className="px-5 py-3.5">
                           {dispObj ? (
-                            <div>
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${dispObj.badge}`}>
-                                {dispObj.label}
-                              </span>
+                            <div className="space-y-1">
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${dispObj.badge}`}>
+                                  {dispObj.label}
+                                </span>
+                                {c.lastCallOutcome === "CONNECTED_CALLBACK" && c.nextCallbackAt && (() => {
+                                  const cbBadge = getCallbackBadge(c.nextCallbackAt);
+                                  return cbBadge ? (
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] border shadow-2xs ${cbBadge.className}`}>
+                                      {cbBadge.text}
+                                    </span>
+                                  ) : null;
+                                })()}
+                              </div>
                               {c.lastCallNotes && (
                                 <p className="text-[10px] text-slate-500 italic mt-0.5 max-w-xs truncate">
                                   "{c.lastCallNotes}"
@@ -1058,6 +1264,45 @@ export default function MandateWorkspacePage() {
                     </select>
                   </div>
 
+                  {/* Scheduled Callback Date & Time (revealed when CONNECTED_CALLBACK is selected) */}
+                  {callDisposition === "CONNECTED_CALLBACK" && (
+                    <div className="p-3.5 bg-amber-50/90 border border-amber-300 rounded-xl space-y-2 animate-in fade-in duration-200 shadow-2xs">
+                      <div className="flex items-center space-x-1.5 text-amber-950 font-extrabold text-xs">
+                        <Clock className="h-4 w-4 text-amber-700" />
+                        <span>Schedule Follow-Up Call Back</span>
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-bold text-amber-900 mb-1">
+                            Call Back Date <span className="text-rose-600">*</span>
+                          </label>
+                          <input
+                            type="date"
+                            value={callbackDate}
+                            onChange={(e) => setCallbackDate(e.target.value)}
+                            className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-amber-500"
+                            required
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-bold text-amber-900 mb-1">
+                            Call Back Time <span className="text-rose-600">*</span>
+                          </label>
+                          <input
+                            type="time"
+                            value={callbackTime}
+                            onChange={(e) => setCallbackTime(e.target.value)}
+                            className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-amber-500"
+                            required
+                          />
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-amber-800 font-medium">
+                        RecruitOS will display overdue alerts and prioritize this candidate on today's callback queue when this time arrives.
+                      </p>
+                    </div>
+                  )}
+
                   {/* 7 Recruiter Screening Items */}
                   <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
                     <p className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider text-blue-700">
@@ -1198,13 +1443,102 @@ export default function MandateWorkspacePage() {
               </div>
 
               {/* CALL & ACTIVITY HISTORY FOR THIS JOB */}
-              <div className="space-y-2">
+              <div className="space-y-3">
                 <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center justify-between">
                   <span>Call & Activity History (This Job)</span>
                   <span className="text-[10px] text-slate-400 font-mono">
                     {selectedCandidate.thisJobCallLogs.length} interactions logged
                   </span>
                 </h3>
+
+                {/* 1. Client Review Portal Feedback Event */}
+                {(selectedCandidate.clientDecision || selectedCandidate.submittedToClientAt) && (
+                  <div className="p-3.5 bg-gradient-to-r from-blue-50/80 to-indigo-50/80 border border-blue-200 rounded-xl space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center space-x-1.5">
+                        <Building2 className="h-4 w-4 text-blue-700" />
+                        <strong className="text-slate-900 text-xs font-bold">Client Review Portal Telemetry</strong>
+                      </div>
+                      {selectedCandidate.clientFeedbackAt && (
+                        <span className="text-[10px] text-slate-500 font-mono">
+                          Decision logged: {new Date(selectedCandidate.clientFeedbackAt).toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Decision Badge */}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {selectedCandidate.clientDecision === "SHORTLISTED_FOR_INTERVIEW" && (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700 mr-1" />
+                          Shortlisted for Interview by Client
+                        </span>
+                      )}
+                      {selectedCandidate.clientDecision === "REJECTED_WITH_FEEDBACK" && (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-extrabold bg-rose-100 text-rose-900 border border-rose-300">
+                          <AlertCircle className="h-3.5 w-3.5 text-rose-700 mr-1" />
+                          Rejected by Client: {selectedCandidate.rejectionReason || "Feedback Provided"}
+                        </span>
+                      )}
+                      {selectedCandidate.clientDecision === "INFO_REQUESTED" && (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
+                          <AlertTriangle className="h-3.5 w-3.5 text-amber-700 mr-1" />
+                          Information Requested / On Hold by Client
+                        </span>
+                      )}
+                      {(!selectedCandidate.clientDecision || selectedCandidate.clientDecision === "PENDING_REVIEW") && selectedCandidate.submittedToClientAt && (
+                        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-blue-100 text-blue-900 border border-blue-300">
+                          <Clock className="h-3.5 w-3.5 text-blue-700 mr-1" />
+                          Shared with Client — Awaiting Feedback
+                        </span>
+                      )}
+                      {selectedCandidate.submittedToClientAt && (
+                        <span className="text-[11px] text-slate-500">
+                          (Shared: {new Date(selectedCandidate.submittedToClientAt).toLocaleDateString()})
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Proposed Interview Times */}
+                    {selectedCandidate.preferredInterviewTimes && (
+                      <div className="bg-white p-2.5 rounded-lg border border-emerald-200 text-xs text-slate-800 space-y-1">
+                        <span className="text-[11px] font-extrabold text-emerald-800 flex items-center">
+                          <Calendar className="h-3 w-3 text-emerald-700 mr-1" />
+                          <span>Client Proposed Interview Availability:</span>
+                        </span>
+                        <p className="font-semibold text-slate-900 pl-4">
+                          {selectedCandidate.preferredInterviewTimes}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Client Feedback Comments */}
+                    {selectedCandidate.clientFeedbackNotes && (
+                      <div className="bg-white p-2.5 rounded-lg border border-slate-200 text-xs text-slate-800 space-y-1">
+                        <span className="text-[11px] font-extrabold text-slate-700 flex items-center">
+                          <MessageSquare className="h-3 w-3 text-slate-500 mr-1" />
+                          <span>Client Comments / Notes:</span>
+                        </span>
+                        <p className="italic text-slate-700 pl-4">
+                          "{selectedCandidate.clientFeedbackNotes}"
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Client Question Text */}
+                    {selectedCandidate.clientQuestionText && (
+                      <div className="bg-white p-2.5 rounded-lg border border-amber-200 text-xs text-slate-800 space-y-1">
+                        <span className="text-[11px] font-extrabold text-amber-800 flex items-center">
+                          <AlertTriangle className="h-3 w-3 text-amber-600 mr-1" />
+                          <span>Client Question / Clarification Requested:</span>
+                        </span>
+                        <p className="italic text-slate-800 pl-4">
+                          "{selectedCandidate.clientQuestionText}"
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {selectedCandidate.thisJobCallLogs.length === 0 ? (
                   <div className="p-4 bg-slate-50 rounded-xl text-center text-slate-400 text-xs">
@@ -1226,6 +1560,12 @@ export default function MandateWorkspacePage() {
                           </div>
                           {log.notes && (
                             <p className="text-xs text-slate-700 font-medium pl-1">{log.notes}</p>
+                          )}
+                          {log.callbackAt && (
+                            <div className="text-[10px] text-amber-800 font-bold flex items-center space-x-1 mt-1 pl-1">
+                              <Clock className="h-3 w-3 text-amber-600 mr-0.5" />
+                              <span>Scheduled Call Back: {new Date(log.callbackAt).toLocaleString()}</span>
+                            </div>
                           )}
                         </div>
                       );

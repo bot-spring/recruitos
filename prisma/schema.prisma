@@ -282,6 +282,7 @@ model JobMandate {
   slaStatus           SlaStatus     @default(HEALTHY) @map("sla_status")
   approvedAt          DateTime?     @map("approved_at")
   approvedByUserId    String?       @map("approved_by_user_id")
+  firstShortlistSubmittedAt DateTime? @map("first_shortlist_submitted_at")
 
   // Free Replacement Mandate Link (RC-07)
   isReplacement       Boolean       @default(false) @map("is_replacement")
@@ -367,6 +368,9 @@ model ClientPortalShare {
   feedbackSlaHours   Int        @default(48) @map("feedback_sla_hours")
   expiresAt          DateTime?  @map("expires_at")
   candidateIds       String[]   @default([]) @map("candidate_ids")
+  lastEmailMessageId String?    @map("last_email_message_id")
+  reminderLevel      Int        @default(0) @map("reminder_level")
+  lastReminderSentAt DateTime?  @map("last_reminder_sent_at")
   isActive           Boolean    @default(true) @map("is_active")
   viewsCount         Int        @default(0) @map("views_count")
   lastViewedAt       DateTime?  @map("last_viewed_at")
@@ -435,6 +439,7 @@ model CandidateSubmission {
   lastCallDisposition     CallDisposition?   @map("last_call_disposition")
   lastCallNotes           String?            @map("last_call_notes")
   lastCallAt              DateTime?          @map("last_call_at")
+  nextCallbackAt          DateTime?          @map("next_callback_at")
 
   // Recruiter Call Screening Parameters (Shared with Client)
   readyToRelocate         String?            @map("ready_to_relocate")
@@ -504,6 +509,7 @@ model CandidateSubmission {
   @@index([clientDecision])
   @@index([counterOfferRiskLevel])
   @@index([probationStatus])
+  @@index([nextCallbackAt])
   @@index([partnerSourcerEmail])
   @@map("candidate_submissions")
 }
@@ -627,6 +633,7 @@ model CallLog {
 
   disposition  CallDisposition
   notes        String?
+  callbackAt   DateTime?       @map("callback_at")
   calledAt     DateTime        @default(now()) @map("called_at")
   createdAt    DateTime        @default(now()) @map("created_at")
 

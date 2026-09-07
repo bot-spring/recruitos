@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { SubmissionStage, ClientDecision, CandidateJobStatus } from "@prisma/client";
+import { SubmissionStage, ClientDecision, CandidateJobStatus, MandateStatus } from "@prisma/client";
 import { sendClientShortlistPresentationEmail } from "@/lib/email";
 import crypto from "crypto";
 import path from "path";
@@ -155,9 +155,10 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     if (agencyOwner?.email && !ccList.includes(agencyOwner.email)) ccList.push(agencyOwner.email);
 
     let emailSent = false;
+    let messageId: string | null = null;
     if (clientEmail && emailCandidates.length > 0) {
       try {
-        await sendClientShortlistPresentationEmail({
+        const emailRes = await sendClientShortlistPresentationEmail({
           to: clientEmail,
           cc: ccList,
           clientContactName: clientContact?.name || clientPortal.clientContactName || "Hiring Lead",
@@ -169,11 +170,29 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           candidates: emailCandidates,
           attachments,
         });
-        emailSent = true;
+        if (emailRes.success) {
+          emailSent = true;
+          messageId = emailRes.messageId || null;
+          if (messageId) {
+            await prisma.clientPortalShare.update({
+              where: { id: clientPortal.id },
+              data: { lastEmailMessageId: messageId },
+            });
+          }
+        }
       } catch (emailErr) {
         console.error("Failed to send shortlist email to client:", emailErr);
       }
     }
+
+    // Mark 72h Agency First-Shortlist SLA as FULFILLED on JobMandate
+    await prisma.jobMandate.update({
+      where: { id: mandate.id },
+      data: {
+        firstShortlistSubmittedAt: mandate.firstShortlistSubmittedAt || new Date(),
+        status: MandateStatus.INTERVIEWS_ACTIVE,
+      },
+    });
 
     // 6. Log Audit Event
     await prisma.auditLog.create({

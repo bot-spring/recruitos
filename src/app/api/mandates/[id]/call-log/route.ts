@@ -21,6 +21,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       submissionId,
       disposition,
       notes,
+      callbackAt,
       readyToRelocate,
       relevantExpYears,
       currentSalary,
@@ -47,6 +48,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       return NextResponse.json({ error: "Candidate submission record not found." }, { status: 404 });
     }
 
+    const parsedCallbackAt = callbackAt ? new Date(callbackAt) : null;
+
     // Execute in transaction: Create CallLog & Update Submission
     const result = await prisma.$transaction(async (tx) => {
       const callLog = await tx.callLog.create({
@@ -58,6 +61,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           recruiterId: session.user.id,
           disposition: disposition as CallDisposition,
           notes: notes?.trim() || null,
+          callbackAt: parsedCallbackAt,
           calledAt: new Date(),
         },
         include: {
@@ -69,12 +73,17 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         ? parseFloat(String(relevantExpYears))
         : undefined;
 
+      const nextCallbackAtValue = disposition === "CONNECTED_CALLBACK"
+        ? (parsedCallbackAt || submission.nextCallbackAt)
+        : null;
+
       const updatedSubmission = await tx.candidateSubmission.update({
         where: { id: submission.id },
         data: {
           lastCallDisposition: disposition as CallDisposition,
           lastCallNotes: notes?.trim() || null,
           lastCallAt: new Date(),
+          nextCallbackAt: nextCallbackAtValue,
           readyToRelocate: readyToRelocate !== undefined ? readyToRelocate : submission.readyToRelocate,
           relevantExpYears: parsedRelExp !== undefined ? parsedRelExp : submission.relevantExpYears,
           currentSalary: currentSalary !== undefined ? currentSalary : submission.currentSalary,
