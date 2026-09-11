@@ -48,6 +48,7 @@ import {
   TrendingUp,
   Upload,
   Loader2,
+  Target,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 
@@ -756,13 +757,13 @@ export default function CockpitPage() {
           <div className="flex justify-between items-center h-16">
             <div className="flex items-center space-x-6">
               <div className="flex items-center space-x-3">
-                <div className="h-9 w-9 rounded-xl bg-[#fce17c] border border-[#f5d762] flex items-center justify-center font-black text-slate-900 text-base shadow-xs">
+                <div className="h-9 w-9 rounded-xl bg-brand-surface border border-brand-surfaceDark flex items-center justify-center font-extrabold text-slate-800 text-base shadow-sm">
                   R
                 </div>
                 <div>
                   <div className="flex items-center space-x-2">
                     <span className="font-extrabold text-slate-900 text-lg tracking-tight">RecruitOS</span>
-                    <span className="bg-[#fce17c]/30 text-slate-900 text-[10px] font-extrabold px-2 py-0.5 rounded border border-[#f5d762] uppercase tracking-wide">
+                    <span className="bg-brand-surfaceLight text-slate-800 text-[10px] font-extrabold px-2 py-0.5 rounded border border-brand-surface uppercase tracking-wide">
                       {session?.user?.agencyName || "Agency Cockpit"}
                     </span>
                   </div>
@@ -775,11 +776,11 @@ export default function CockpitPage() {
                   onClick={() => setCurrentTab("dashboard")}
                   className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                     currentTab === "dashboard"
-                      ? "bg-[#fce17c] text-slate-900 border border-[#f5d762] shadow-xs font-black"
-                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
+                      ? "bg-white text-slate-900 shadow-xs font-extrabold"
+                      : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
-                  <LayoutDashboard className="h-3.5 w-3.5 text-slate-900" />
+                  <LayoutDashboard className="h-3.5 w-3.5 text-slate-700" />
                   <span>Dashboard (Funnel Radar)</span>
                 </button>
 
@@ -787,8 +788,8 @@ export default function CockpitPage() {
                   onClick={() => setCurrentTab("mandates")}
                   className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
                     currentTab === "mandates"
-                      ? "bg-[#fce17c] text-slate-900 border border-[#f5d762] shadow-xs font-black"
-                      : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/50"
+                      ? "bg-white text-slate-900 shadow-xs font-extrabold"
+                      : "text-slate-600 hover:text-slate-900"
                   }`}
                 >
                   <Briefcase className="h-3.5 w-3.5 text-slate-700" />
@@ -863,12 +864,12 @@ export default function CockpitPage() {
                 <div>
                   <div className="flex items-center space-x-2">
                     <h1 className="text-base font-black text-slate-900 tracking-tight">Agency Executive Pipeline & Funnel Radar</h1>
-                    <span className="bg-[#fce17c]/40 text-slate-900 text-[10px] font-extrabold px-2 py-0.5 rounded-full border border-[#f5d762] uppercase tracking-wide">
+                    <span className="bg-[#fce17c]/30 text-slate-900 text-[10px] font-extrabold px-2 py-0.5 rounded border border-[#f5d762] uppercase tracking-wide">
                       RC-03 Velocity Radar
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Macro candidate velocity across all roles and micro mandate-wise conversion metrics.
+                    Macro candidate velocity across all active mandates and micro conversion progression metrics.
                   </p>
                 </div>
               </div>
@@ -876,9 +877,9 @@ export default function CockpitPage() {
               <div className="flex items-center space-x-3">
                 <button
                   onClick={() => setIsOfflineModalOpen(true)}
-                  className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#FFD400] hover:bg-[#E6BF00] text-slate-900 font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer border border-[#e5bf00]"
+                  className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fce17c] hover:bg-[#ebd066] border border-[#f5d762] text-slate-900 font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer"
                 >
-                  <Plus className="h-4 w-4 stroke-[2.5]" />
+                  <Plus className="h-4 w-4 text-slate-900" />
                   <span>+ New Search Mandate</span>
                 </button>
               </div>
@@ -895,76 +896,70 @@ export default function CockpitPage() {
                   </div>
                   <span className="text-[10px] text-slate-500 font-medium">Candidates in raw pipeline</span>
                 </div>
-                <div className="h-11 w-11 rounded-xl bg-[#fce17c]/30 border border-[#fce17c] flex items-center justify-center text-slate-900 flex-shrink-0">
-                  <Users className="h-5 w-5 text-slate-800" />
+                <div className="h-10 w-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600">
+                  <Users className="h-5 w-5" />
                 </div>
               </div>
 
-              {/* Card 2: Active Evaluation */}
+              {/* Card 2: In-Flight Evaluation */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
                 <div>
-                  <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">Active Evaluation</span>
-                  <div className="text-2xl font-black text-blue-950 mt-1">
-                    {loadingFunnel ? "..." : ((macroFunnel?.sharedWithCompany || 0) + (macroFunnel?.selectedForInterview || 0) + (macroFunnel?.interviewsDone || 0))}
+                  <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider block">Active In-Flight</span>
+                  <div className="text-2xl font-black text-slate-900 mt-1">
+                    {loadingFunnel ? "..." : ((macroFunnel?.shortlisted || 0) + (macroFunnel?.sharedWithCompany || 0) + (macroFunnel?.selectedForInterview || 0) + (macroFunnel?.interviewsDone || 0))}
                   </div>
-                  <span className="text-[10px] text-blue-600 font-medium">Client review & interviews</span>
+                  <span className="text-[10px] text-slate-500 font-medium">Screening to Interviews</span>
                 </div>
-                <div className="h-11 w-11 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center text-blue-700 flex-shrink-0">
-                  <Zap className="h-5 w-5 text-blue-700" />
+                <div className="h-10 w-10 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
+                  <Filter className="h-5 w-5" />
                 </div>
               </div>
 
-              {/* Card 3: Final Decisions & Offers */}
+              {/* Card 3: Decisions & Offers */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
                 <div>
-                  <span className="text-[11px] font-bold text-amber-800 uppercase tracking-wider block">Decision & Offer</span>
-                  <div className="text-2xl font-black text-amber-950 mt-1">
+                  <span className="text-[11px] font-bold text-purple-600 uppercase tracking-wider block">Decisions & Offers</span>
+                  <div className="text-2xl font-black text-slate-900 mt-1">
                     {loadingFunnel ? "..." : ((macroFunnel?.selected || 0) + (macroFunnel?.offered || 0))}
                   </div>
-                  <span className="text-[10px] text-amber-700 font-medium">Selected & offer rollouts</span>
+                  <span className="text-[10px] text-slate-500 font-medium">Final selection & pre-lock</span>
                 </div>
-                <div className="h-11 w-11 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center text-amber-700 flex-shrink-0">
-                  <TrendingUp className="h-5 w-5 text-amber-700" />
+                <div className="h-10 w-10 rounded-xl bg-purple-50 text-purple-600 border border-purple-100 flex items-center justify-center">
+                  <Flame className="h-5 w-5" />
                 </div>
               </div>
 
               {/* Card 4: Placements Secured */}
-              <div className="bg-white rounded-2xl border border-emerald-200 shadow-xs p-4 flex items-center justify-between relative overflow-hidden">
-                <div className="absolute top-0 right-0 w-16 h-16 bg-emerald-50 rounded-full -mr-6 -mt-6 pointer-events-none" />
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
                 <div>
-                  <div className="flex items-center space-x-1.5">
-                    <span className="text-[11px] font-bold text-emerald-800 uppercase tracking-wider block">Placements Secured</span>
-                    <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black px-1.5 py-0.5 rounded border border-emerald-200">
-                      Day 1 Placed
-                    </span>
-                  </div>
-                  <div className="text-2xl font-black text-emerald-950 mt-1">
+                  <span className="text-[11px] font-bold text-emerald-600 uppercase tracking-wider block">Placements Secured</span>
+                  <div className="text-2xl font-black text-slate-900 mt-1">
                     {loadingFunnel ? "..." : (macroFunnel?.joined || 0)}
                   </div>
-                  <span className="text-[10px] text-emerald-700 font-bold">
-                    {macroFunnel ? `${macroFunnel.conversionRate}% overall conversion` : "0% conversion"}
+                  <span className="text-[10px] text-emerald-600 font-extrabold">
+                    {macroFunnel ? `${macroFunnel.conversionRate}% Conversion Rate` : "0% Conversion Rate"}
                   </span>
                 </div>
-                <div className="h-11 w-11 rounded-xl bg-emerald-100 border border-emerald-300 flex items-center justify-center text-emerald-800 flex-shrink-0">
-                  <Award className="h-5 w-5 text-emerald-700" />
+                <div className="h-10 w-10 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100 flex items-center justify-center">
+                  <CheckCircle2 className="h-5 w-5" />
                 </div>
               </div>
             </div>
 
-            {/* SECTION A: MACRO CANDIDATE FUNNEL BANNER (8 Agreed Stages) */}
+            {/* SECTION A: MACRO CANDIDATE FUNNEL BANNER (8 Interconnected Pipeline Stages) */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                 <div className="flex items-center space-x-2">
-                  <div className="h-6 w-6 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center">
-                    <Flame className="h-3.5 w-3.5 text-amber-600" />
+                  <div className="h-7 w-7 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center">
+                    <Flame className="h-4 w-4 text-amber-500" />
                   </div>
                   <h2 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                    A. Aggregate Candidate Conversion Funnel (Across All Mandates)
+                    A. Aggregate Candidate Conversion Pipeline (All Mandates)
                   </h2>
                 </div>
                 {macroFunnel && (
                   <span className="inline-flex items-center space-x-1.5 text-xs font-black text-emerald-800 bg-emerald-50 px-3 py-1 rounded-xl border border-emerald-200 w-fit">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                     <span>Overall Placement Rate: {macroFunnel.conversionRate}%</span>
                   </span>
                 )}
@@ -988,115 +983,109 @@ export default function CockpitPage() {
                   {/* Stage 2: Shortlisted */}
                   <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
                     <div>
-                      <span className="bg-slate-200/80 text-slate-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide inline-block">
+                      <span className="bg-slate-200/80 text-slate-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-slate-300 uppercase tracking-wide inline-block">
                         2. Shortlisted
                       </span>
-                      <div className="text-2xl font-black text-slate-900 mt-2">{macroFunnel.shortlisted}</div>
+                      <div className="text-2xl font-black text-slate-800 mt-2">{macroFunnel.shortlisted}</div>
                     </div>
-                    <span className="text-[10px] text-slate-600 font-bold block mt-2 bg-slate-100 rounded px-1 py-0.5">
+                    <span className="text-[10px] text-slate-600 font-extrabold block mt-2">
                       {macroFunnel.ingested > 0 ? `${Math.round((macroFunnel.shortlisted / macroFunnel.ingested) * 100)}% pass` : "0% pass"}
                     </span>
                   </div>
 
                   {/* Stage 3: Shared with Company */}
-                  <div className="bg-blue-50/60 border border-blue-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
+                  <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
                     <div>
-                      <span className="bg-blue-100 text-blue-900 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide inline-block">
-                        3. Shared Client
+                      <span className="bg-blue-100 text-blue-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-blue-300 uppercase tracking-wide inline-block">
+                        3. Shared w/ Client
                       </span>
                       <div className="text-2xl font-black text-blue-950 mt-2">{macroFunnel.sharedWithCompany}</div>
                     </div>
-                    <span className="text-[10px] text-blue-700 font-bold block mt-2 bg-blue-100/70 rounded px-1 py-0.5">
-                      {macroFunnel.shortlisted > 0 ? `${Math.round((macroFunnel.sharedWithCompany / macroFunnel.shortlisted) * 100)}% shared` : "0%"}
+                    <span className="text-[10px] text-blue-600 font-extrabold block mt-2">
+                      {macroFunnel.shortlisted > 0 ? `${Math.round((macroFunnel.sharedWithCompany / macroFunnel.shortlisted) * 100)}% pass` : "0% pass"}
                     </span>
                   </div>
 
                   {/* Stage 4: Selected for Interview */}
-                  <div className="bg-purple-50/60 border border-purple-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
+                  <div className="bg-purple-50/70 border border-purple-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
                     <div>
-                      <span className="bg-purple-100 text-purple-900 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide inline-block">
-                        4. Interview
+                      <span className="bg-purple-100 text-purple-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-purple-300 uppercase tracking-wide inline-block">
+                        4. Interview Selected
                       </span>
                       <div className="text-2xl font-black text-purple-950 mt-2">{macroFunnel.selectedForInterview}</div>
                     </div>
-                    <span className="text-[10px] text-purple-700 font-bold block mt-2 bg-purple-100/70 rounded px-1 py-0.5">
-                      {macroFunnel.sharedWithCompany > 0 ? `${Math.round((macroFunnel.selectedForInterview / macroFunnel.sharedWithCompany) * 100)}% approved` : "0%"}
+                    <span className="text-[10px] text-purple-600 font-extrabold block mt-2">
+                      {macroFunnel.sharedWithCompany > 0 ? `${Math.round((macroFunnel.selectedForInterview / macroFunnel.sharedWithCompany) * 100)}% pass` : "Client Approved"}
                     </span>
                   </div>
 
                   {/* Stage 5: Interviews Done */}
-                  <div className="bg-indigo-50/60 border border-indigo-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
+                  <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
                     <div>
-                      <span className="bg-indigo-100 text-indigo-900 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide inline-block">
-                        5. Debriefed
+                      <span className="bg-indigo-100 text-indigo-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-indigo-300 uppercase tracking-wide inline-block">
+                        5. Interviews Done
                       </span>
                       <div className="text-2xl font-black text-indigo-950 mt-2">{macroFunnel.interviewsDone}</div>
                     </div>
-                    <span className="text-[10px] text-indigo-700 font-bold block mt-2 bg-indigo-100/70 rounded px-1 py-0.5">
-                      {macroFunnel.selectedForInterview > 0 ? `${Math.round((macroFunnel.interviewsDone / macroFunnel.selectedForInterview) * 100)}% debriefed` : "0%"}
+                    <span className="text-[10px] text-indigo-600 font-extrabold block mt-2">
+                      {macroFunnel.selectedForInterview > 0 ? `${Math.round((macroFunnel.interviewsDone / macroFunnel.selectedForInterview) * 100)}% debriefed` : "Debriefed"}
                     </span>
                   </div>
 
                   {/* Stage 6: Selected */}
                   <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
                     <div>
-                      <span className="bg-amber-100 text-amber-900 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide inline-block">
+                      <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-300 uppercase tracking-wide inline-block">
                         6. Selected
                       </span>
                       <div className="text-2xl font-black text-amber-950 mt-2">{macroFunnel.selected}</div>
                     </div>
-                    <span className="text-[10px] text-amber-800 font-bold block mt-2 bg-amber-100/70 rounded px-1 py-0.5">
-                      {macroFunnel.interviewsDone > 0 ? `${Math.round((macroFunnel.selected / macroFunnel.interviewsDone) * 100)}% selected` : "0%"}
-                    </span>
+                    <span className="text-[10px] text-amber-700 font-extrabold block mt-2">Final Choice</span>
                   </div>
 
                   {/* Stage 7: Offered */}
                   <div className="bg-fuchsia-50/70 border border-fuchsia-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
                     <div>
-                      <span className="bg-fuchsia-100 text-fuchsia-900 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wide inline-block">
+                      <span className="bg-fuchsia-100 text-fuchsia-900 text-[10px] font-black px-2 py-0.5 rounded-full border border-fuchsia-300 uppercase tracking-wide inline-block">
                         7. Offered
                       </span>
                       <div className="text-2xl font-black text-fuchsia-950 mt-2">{macroFunnel.offered}</div>
                     </div>
-                    <span className="text-[10px] text-fuchsia-800 font-bold block mt-2 bg-fuchsia-100/70 rounded px-1 py-0.5">
-                      {macroFunnel.selected > 0 ? `${Math.round((macroFunnel.offered / macroFunnel.selected) * 100)}% offers` : "0%"}
-                    </span>
+                    <span className="text-[10px] text-fuchsia-700 font-extrabold block mt-2">Offer Locked</span>
                   </div>
 
                   {/* Stage 8: Joined */}
-                  <div className="bg-emerald-50 border-2 border-emerald-300 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-xs">
+                  <div className="bg-emerald-50/80 border-2 border-emerald-300 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-xs">
                     <div>
-                      <span className="bg-emerald-100 text-emerald-950 text-[10px] font-black px-2 py-0.5 rounded-full border border-emerald-300 uppercase tracking-wide inline-block">
+                      <span className="bg-emerald-200/90 text-emerald-950 text-[10px] font-black px-2 py-0.5 rounded-full border border-emerald-400 uppercase tracking-wide inline-block">
                         8. Joined
                       </span>
                       <div className="text-2xl font-black text-emerald-950 mt-2">{macroFunnel.joined}</div>
                     </div>
-                    <span className="text-[10px] text-emerald-900 font-black block mt-2 bg-emerald-200/80 rounded px-1 py-0.5">
-                      Day 1 Placed 🎉
-                    </span>
+                    <span className="text-[10px] text-emerald-700 font-black block mt-2">Hired & Billed</span>
                   </div>
                 </div>
-              ) : null}
+              ) : (
+                <div className="py-8 text-center text-slate-400 text-xs">No active funnel data available.</div>
+              )}
             </div>
 
-            {/* SECTION B: MANDATE-WISE FUNNEL (MICRO BREAKDOWN PER ROLE) */}
+            {/* SECTION B: MANDATE-WISE CANDIDATE CONVERSION RADAR */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-              <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 bg-slate-50/50">
+              <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 bg-slate-50/60">
                 <div>
                   <div className="flex items-center space-x-2">
-                    <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider">
-                      B. Mandate-Wise Candidate Funnels & Conversion Drop-Offs
-                    </h3>
-                    <span className="bg-[#fce17c]/40 text-slate-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-[#f5d762]">
-                      {filteredMandateFunnels.length} Mandates
-                    </span>
+                    <Target className="h-4 w-4 text-slate-700" />
+                    <h2 className="text-xs font-black text-slate-900 uppercase tracking-wider">
+                      B. Active Mandate Conversion Radar & Drop-off Diagnostics
+                    </h2>
                   </div>
-                  <p className="text-[10px] text-slate-500 mt-0.5">
-                    Click any mandate row to slide out full JD specifications, client contacts, and pipeline candidates.
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Micro candidate distribution across each search mandate's 8 stages.
                   </p>
                 </div>
 
-                <div className="relative rounded-xl shadow-2xs max-w-xs w-full">
+                <div className="relative rounded-xl shadow-2xs w-full sm:w-72">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                     <Search className="h-3.5 w-3.5 text-slate-400" />
                   </div>
@@ -1104,51 +1093,52 @@ export default function CockpitPage() {
                     type="text"
                     value={funnelSearchQuery}
                     onChange={(e) => setFunnelSearchQuery(e.target.value)}
-                    placeholder="Search mandate title or client..."
-                    className="block w-full pl-9 pr-8 py-1.5 text-xs border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-[#fce17c] focus:border-[#f5d762] bg-white text-slate-900 placeholder:text-slate-400"
+                    placeholder="Filter by mandate or client..."
+                    className="block w-full pl-9 pr-8 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#fce17c] focus:border-[#f5d762]"
                   />
                   {funnelSearchQuery && (
                     <button
                       onClick={() => setFunnelSearchQuery("")}
-                      className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600"
+                      className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
                     >
-                      <X className="h-3.5 w-3.5" />
+                      <span className="text-xs font-bold">✕</span>
                     </button>
                   )}
                 </div>
               </div>
 
               {loadingFunnel ? (
-                <div className="p-12 text-center text-slate-400 text-xs">Loading mandate funnels...</div>
+                <div className="py-12 text-center text-slate-400 text-xs">Loading mandate breakdown...</div>
               ) : filteredMandateFunnels.length === 0 ? (
-                <div className="p-12 text-center text-slate-500 text-xs">No active search mandates found.</div>
+                <div className="py-12 text-center text-slate-400 text-xs">
+                  {funnelSearchQuery ? "No mandates match your filter criteria." : "No active mandates found."}
+                </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-slate-700 uppercase font-bold text-[11px] tracking-wider">
+                  <table className="min-w-full divide-y divide-slate-200 text-xs">
+                    <thead className="bg-slate-50">
                       <tr>
-                        <th scope="col" className="px-5 py-3">Mandate & Client</th>
-                        <th scope="col" className="px-3 py-3 text-center">Ingested</th>
-                        <th scope="col" className="px-3 py-3 text-center">Shortlisted</th>
-                        <th scope="col" className="px-3 py-3 text-center">Shared</th>
-                        <th scope="col" className="px-3 py-3 text-center">Interview</th>
-                        <th scope="col" className="px-3 py-3 text-center">Debriefed</th>
-                        <th scope="col" className="px-3 py-3 text-center">Selected</th>
-                        <th scope="col" className="px-3 py-3 text-center">Offered</th>
-                        <th scope="col" className="px-3 py-3 text-center bg-emerald-50/80 text-emerald-950 font-black border-l border-r border-emerald-200">Joined</th>
-                        <th scope="col" className="px-4 py-3 text-right">Actions</th>
+                        <th className="px-4 py-3 text-left font-black text-slate-600 uppercase tracking-wider">Mandate / Client</th>
+                        <th className="px-3 py-3 text-center font-bold text-slate-600 uppercase tracking-wider">1. Ingested</th>
+                        <th className="px-3 py-3 text-center font-bold text-slate-600 uppercase tracking-wider">2. Shortlisted</th>
+                        <th className="px-3 py-3 text-center font-bold text-blue-700 uppercase tracking-wider">3. Shared</th>
+                        <th className="px-3 py-3 text-center font-bold text-purple-700 uppercase tracking-wider">4. Interview</th>
+                        <th className="px-3 py-3 text-center font-bold text-indigo-700 uppercase tracking-wider">5. Debrief</th>
+                        <th className="px-3 py-3 text-center font-bold text-amber-800 uppercase tracking-wider">6. Selected</th>
+                        <th className="px-3 py-3 text-center font-bold text-fuchsia-800 uppercase tracking-wider">7. Offered</th>
+                        <th className="px-3 py-3 text-center font-bold text-emerald-800 uppercase tracking-wider bg-emerald-50/50">8. Joined</th>
+                        <th className="px-4 py-3 text-right font-bold text-slate-600 uppercase tracking-wider">Action</th>
                       </tr>
                     </thead>
                     <tbody className="bg-white divide-y divide-slate-100">
                       {filteredMandateFunnels.map((m) => (
                         <tr
                           key={m.id}
-                          className="hover:bg-slate-50/80 transition-colors cursor-pointer group"
+                          className="hover:bg-slate-50/70 transition-colors cursor-pointer group"
                           onClick={() => router.push(`/cockpit/mandates/${m.id}`)}
                         >
-                          {/* Role & Client */}
-                          <td className="px-5 py-3.5">
-                            <div className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors flex items-center space-x-1.5">
+                          <td className="px-4 py-3.5">
+                            <div className="font-extrabold text-slate-900 group-hover:text-blue-600 transition-colors flex items-center space-x-1.5">
                               <span>{m.title}</span>
                               <ChevronRight className="h-3 w-3 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity" />
                             </div>
