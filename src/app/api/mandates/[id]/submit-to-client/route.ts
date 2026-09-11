@@ -169,6 +169,11 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           feedbackSlaHours: clientPortal.feedbackSlaHours,
           candidates: emailCandidates,
           attachments,
+          sandboxContext: {
+            isSandbox: session.user.isSandboxMode,
+            userEmail: session.user.email,
+            userName: session.user.name,
+          },
         });
         if (emailRes.success) {
           emailSent = true;

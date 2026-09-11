@@ -121,30 +121,35 @@ export async function POST(req: Request) {
       return interview;
     });
 
-    const isDev = process.env.NODE_ENV !== "production";
-    const candidatePhone =
-      submission.candidate.phone || (isDev ? process.env.DEV_OVERRIDE_PHONE || "919818352440" : "");
-    const candidateEmail =
-      submission.candidate.email || (isDev ? process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in" : "");
+    const isUserSandbox = Boolean(session.user.isSandboxMode);
+    const candidatePhone = submission.candidate.phone || "";
+    const candidateEmail = submission.candidate.email || "";
 
     // 3. Dispatch Automated WhatsApp Briefing (RC-04)
     let whatsAppResult = null;
-    if (sendWhatsApp && candidatePhone) {
+    if (sendWhatsApp && (candidatePhone || isUserSandbox)) {
       try {
-        whatsAppResult = await sendWhatsAppInterviewBriefing({
-          candidateName: submission.candidate.fullName,
-          candidatePhone,
-          roleTitle: submission.mandate.title,
-          clientOrgName: submission.mandate.client.name,
-          scheduledAt: formattedDateString,
-          durationMinutes: parseInt(String(durationMinutes), 10) || 60,
-          interviewType,
-          meetingLink: meetingLink.trim(),
-          panelistNames: Array.isArray(panelistNames) ? panelistNames : [],
-          agencyName: submission.mandate.agency.name,
-          recruiterName: session.user.name || "Search Lead",
-          instructions: instructions?.trim() || undefined,
-        });
+        whatsAppResult = await sendWhatsAppInterviewBriefing(
+          {
+            candidateName: submission.candidate.fullName,
+            candidatePhone: candidatePhone || "919818352440",
+            roleTitle: submission.mandate.title,
+            clientOrgName: submission.mandate.client.name,
+            scheduledAt: formattedDateString,
+            durationMinutes: parseInt(String(durationMinutes), 10) || 60,
+            interviewType,
+            meetingLink: meetingLink.trim(),
+            panelistNames: Array.isArray(panelistNames) ? panelistNames : [],
+            agencyName: submission.mandate.agency.name,
+            recruiterName: session.user.name || "Search Lead",
+            instructions: instructions?.trim() || undefined,
+          },
+          {
+            isSandbox: isUserSandbox,
+            userPhone: session.user.phone,
+            userName: session.user.name,
+          }
+        );
 
         if (whatsAppResult?.messageId) {
           await prisma.interviewSchedule.update({
@@ -157,11 +162,11 @@ export async function POST(req: Request) {
       }
     }
 
-    // 4. Dispatch Email Calendar Notification (Nodemailer diverted to ankur@botspring.in)
-    if (sendEmail && candidateEmail) {
+    // 4. Dispatch Email Calendar Notification
+    if (sendEmail && (candidateEmail || isUserSandbox)) {
       try {
         await sendInterviewInvitationEmail({
-          to: candidateEmail,
+          to: candidateEmail || session.user.email,
           candidateName: submission.candidate.fullName,
           jobTitle: submission.mandate.title,
           companyName: submission.mandate.client.name,
@@ -173,6 +178,11 @@ export async function POST(req: Request) {
           panelistNames: Array.isArray(panelistNames) ? panelistNames : [],
           instructions: instructions?.trim() || null,
           keySkills: submission.mandate.skills || [],
+          sandboxContext: {
+            isSandbox: isUserSandbox,
+            userEmail: session.user.email,
+            userName: session.user.name,
+          },
         });
       } catch (mailErr) {
         console.warn("Email dispatch error:", mailErr);

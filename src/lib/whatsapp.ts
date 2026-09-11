@@ -78,19 +78,32 @@ export async function getWhatsAppConfig(): Promise<WhatsAppConfig> {
   }
 }
 
-export async function sendWhatsAppInterviewBriefing(payload: WhatsAppInterviewPayload) {
+export interface WhatsAppSandboxContext {
+  isSandbox?: boolean;
+  userPhone?: string | null;
+  userName?: string | null;
+}
+
+export async function sendWhatsAppInterviewBriefing(
+  payload: WhatsAppInterviewPayload,
+  sandboxContext?: WhatsAppSandboxContext
+) {
   const config = await getWhatsAppConfig();
   const token = config.token;
   const phoneNumberId = config.phoneNumberId;
 
-  const isDev = process.env.NODE_ENV !== "production";
-  const sanitizedPhone = payload.candidatePhone.replace(/[^0-9]/g, "");
-  const devPhone = config.devOverridePhone.replace(/[^0-9]/g, "");
-  const recipientPhone = isDev ? devPhone : sanitizedPhone;
+  const isSandbox = Boolean(sandboxContext?.isSandbox);
+  const sanitizedCandidatePhone = payload.candidatePhone.replace(/[^0-9]/g, "");
 
-  const devNotice = isDev
-    ? `\n\n⚙️ *Dev Test Mode:* Intended candidate: ${payload.candidateName} (${sanitizedPhone}). Delivered to test device ${devPhone}.`
-    : "";
+  let recipientPhone = sanitizedCandidatePhone;
+  let devNotice = "";
+
+  if (isSandbox) {
+    const userTargetPhone = sandboxContext?.userPhone ? sandboxContext.userPhone.replace(/[^0-9]/g, "") : "";
+    const devPhone = userTargetPhone || config.devOverridePhone.replace(/[^0-9]/g, "") || "919818352440";
+    recipientPhone = devPhone;
+    devNotice = `\n\n⚙️ *[QA DEMO SANDBOX]:* Intended candidate: ${payload.candidateName} (+${sanitizedCandidatePhone}). Delivered exclusively to demo device (+${devPhone}).`;
+  }
 
   const messageText = `
 🎯 *Interview Confirmed: ${payload.roleTitle}*
@@ -149,7 +162,7 @@ Best of luck!
 
   // Graceful simulation / fallback logger for test & dev environments
   console.log("================================================================================");
-  console.log(`📱 [WHATSAPP DISPATCH SIMULATION] Sent to: ${recipientPhone} (Intended: ${sanitizedPhone})`);
+  console.log(`📱 [WHATSAPP DISPATCH SIMULATION] Sent to: ${recipientPhone} (Intended: ${sanitizedCandidatePhone})`);
   console.log("--------------------------------------------------------------------------------");
   console.log(messageText);
   console.log("================================================================================");

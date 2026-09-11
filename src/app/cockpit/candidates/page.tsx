@@ -44,6 +44,7 @@ import {
   RefreshCw,
   ExternalLink,
 } from "lucide-react";
+import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 
 interface CandidateRecord {
   id: string;
@@ -1004,6 +1005,7 @@ export default function CandidateBankPage() {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
+      <UserSandboxBanner />
       {/* Cockpit Navigation Bar */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -1040,7 +1042,9 @@ export default function CandidateBankPage() {
               </nav>
             </div>
 
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-3">
+              <UserSandboxToggle />
+
               <div className="hidden sm:flex items-center space-x-2 bg-brand-surfaceLight px-3 py-1.5 rounded-lg border border-brand-surface text-xs font-semibold text-slate-800">
                 <span>{session?.user?.name}</span>
               </div>

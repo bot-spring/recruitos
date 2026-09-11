@@ -146,6 +146,11 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       lastEmailMessageId: portalShare.lastEmailMessageId,
       reminderLevel: nextReminderLevel,
       hoursElapsed,
+      sandboxContext: {
+        isSandbox: session.user.isSandboxMode,
+        userEmail: session.user.email,
+        userName: session.user.name,
+      },
     });
 
     // 6. Update Portal Share tracking

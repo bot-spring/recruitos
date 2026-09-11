@@ -41,13 +41,24 @@ import {
   HelpCircle,
   Check,
 } from "lucide-react";
+import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 
 interface AgencyUser {
   id: string;
   name: string;
   email: string;
+  phone?: string | null;
   role: string;
   isActive: boolean;
+  isSandboxMode?: boolean;
+  createdAt?: string;
+  agency?: {
+    id: string;
+    name: string;
+    slug: string;
+    isActive: boolean;
+    tier: string;
+  } | null;
 }
 
 interface AgencyTenant {
@@ -101,7 +112,18 @@ export default function SuperAdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [tierFilter, setTierFilter] = useState<string>("ALL");
-  const [activeTab, setActiveTab] = useState<"agencies" | "audit" | "whatsapp">("agencies");
+  const [activeTab, setActiveTab] = useState<"agencies" | "users" | "audit" | "whatsapp">("agencies");
+
+  // User Management & Sandbox Controls State
+  const [users, setUsers] = useState<AgencyUser[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState("");
+  const [userSandboxFilter, setUserSandboxFilter] = useState<"ALL" | "SANDBOX" | "LIVE">("ALL");
+  const [editingUser, setEditingUser] = useState<AgencyUser | null>(null);
+  const [editUserPhone, setEditUserPhone] = useState("");
+  const [editUserName, setEditUserName] = useState("");
+  const [updatingUser, setUpdatingUser] = useState(false);
+  const [togglingUserId, setTogglingUserId] = useState<string | null>(null);
 
   // Platform Environment Mode (QA Demo Sandbox vs Live Production)
   const [isProductionMode, setIsProductionMode] = useState(false);
@@ -159,7 +181,9 @@ export default function SuperAdminDashboard() {
     customDomain: "",
     ownerName: "",
     ownerEmail: "",
+    ownerPhone: "",
     ownerPassword: "",
+    isSandboxMode: false,
   });
 
   // Edit Modal State
@@ -173,10 +197,11 @@ export default function SuperAdminDashboard() {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [agenciesRes, metricsRes, auditRes] = await Promise.all([
+      const [agenciesRes, metricsRes, auditRes, usersRes] = await Promise.all([
         fetch("/api/super-admin/agencies"),
         fetch("/api/super-admin/metrics"),
         fetch("/api/super-admin/audit-logs?limit=30"),
+        fetch("/api/super-admin/users"),
       ]);
 
       if (agenciesRes.ok) {
@@ -191,10 +216,99 @@ export default function SuperAdminDashboard() {
         const aData = await auditRes.json();
         setAuditLogs(aData.logs || []);
       }
+      if (usersRes.ok) {
+        const uData = await usersRes.json();
+        setUsers(uData.users || []);
+      }
     } catch (err) {
       console.error("Failed to load super admin data", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleToggleUserSandbox = async (targetUser: AgencyUser) => {
+    if (togglingUserId) return;
+    setTogglingUserId(targetUser.id);
+    const newMode = !targetUser.isSandboxMode;
+
+    try {
+      const res = await fetch(`/api/super-admin/users/${targetUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isSandboxMode: newMode }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update user sandbox mode");
+
+      // Update state in both users table and agencies list
+      setUsers((prev) =>
+        prev.map((u) => (u.id === targetUser.id ? { ...u, isSandboxMode: newMode } : u))
+      );
+      setAgencies((prev) =>
+        prev.map((a) => ({
+          ...a,
+          users: a.users.map((u) => (u.id === targetUser.id ? { ...u, isSandboxMode: newMode } : u)),
+        }))
+      );
+      setSuccessMessage(
+        `${targetUser.name} is now set to ${
+          newMode ? "🧪 Demo Sandbox (Safe Comms)" : "🟢 Live Production"
+        }`
+      );
+    } catch (err: any) {
+      alert(err.message || "Failed to toggle user sandbox mode");
+    } finally {
+      setTogglingUserId(null);
+    }
+  };
+
+  const handleOpenEditUser = (u: AgencyUser) => {
+    setEditingUser(u);
+    setEditUserName(u.name);
+    setEditUserPhone(u.phone || "");
+  };
+
+  const handleSaveUserEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+    setUpdatingUser(true);
+
+    try {
+      const res = await fetch(`/api/super-admin/users/${editingUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: editUserName.trim(),
+          phone: editUserPhone.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update user profile");
+
+      setUsers((prev) =>
+        prev.map((u) =>
+          u.id === editingUser.id
+            ? { ...u, name: editUserName.trim(), phone: editUserPhone.trim() || null }
+            : u
+        )
+      );
+      setAgencies((prev) =>
+        prev.map((a) => ({
+          ...a,
+          users: a.users.map((u) =>
+            u.id === editingUser.id
+              ? { ...u, name: editUserName.trim(), phone: editUserPhone.trim() || null }
+              : u
+          ),
+        }))
+      );
+      setSuccessMessage(`Updated profile for ${editUserName}`);
+      setEditingUser(null);
+    } catch (err: any) {
+      alert(err.message || "Failed to update user");
+    } finally {
+      setUpdatingUser(false);
     }
   };
 
@@ -409,7 +523,9 @@ export default function SuperAdminDashboard() {
         customDomain: "",
         ownerName: "",
         ownerEmail: "",
+        ownerPhone: "",
         ownerPassword: "",
+        isSandboxMode: false,
       });
       fetchData();
     } catch (err: any) {
@@ -469,9 +585,28 @@ export default function SuperAdminDashboard() {
     return matchesSearch && matchesTier;
   });
 
+  const filteredUsers = users.filter((u) => {
+    const q = userSearchQuery.toLowerCase().trim();
+    const matchesSearch =
+      !q ||
+      u.name.toLowerCase().includes(q) ||
+      u.email.toLowerCase().includes(q) ||
+      (u.phone && u.phone.toLowerCase().includes(q)) ||
+      (u.agency?.name && u.agency.name.toLowerCase().includes(q)) ||
+      (u.agency?.slug && u.agency.slug.toLowerCase().includes(q));
+
+    const matchesFilter =
+      userSandboxFilter === "ALL" ||
+      (userSandboxFilter === "SANDBOX" && u.isSandboxMode) ||
+      (userSandboxFilter === "LIVE" && !u.isSandboxMode);
+
+    return matchesSearch && matchesFilter;
+  });
+
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
-      {/* Super Admin Top Header */}
+      <UserSandboxBanner />
+      {/* Super Admin Top Navigation */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center h-16">
@@ -490,41 +625,11 @@ export default function SuperAdminDashboard() {
             </div>
 
             <div className="flex items-center space-x-3">
-              {/* Platform Environment Mode Switcher */}
-              <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
-                <button
-                  type="button"
-                  onClick={() => handleToggleMode(false)}
-                  disabled={togglingMode}
-                  title="Test Mode: Login credentials visible & test safe routing active"
-                  className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center space-x-1.5 cursor-pointer ${
-                    !isProductionMode
-                      ? "bg-white text-purple-700 shadow-sm border border-slate-200"
-                      : "text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  <Sparkles className="h-3.5 w-3.5 text-purple-600" />
-                  <span>🧪 QA Sandbox</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleToggleMode(true)}
-                  disabled={togglingMode}
-                  title="Production Mode: Clean login & real candidate/client message delivery"
-                  className={`px-3 py-1.5 rounded-lg font-bold transition flex items-center space-x-1.5 cursor-pointer ${
-                    isProductionMode
-                      ? "bg-emerald-600 text-white shadow-sm"
-                      : "text-slate-500 hover:text-slate-800"
-                  }`}
-                >
-                  <ShieldCheck className="h-3.5 w-3.5" />
-                  <span>🚀 Live Production</span>
-                </button>
-              </div>
+              <UserSandboxToggle />
 
               <div className="hidden sm:flex items-center space-x-2 bg-brand-surfaceLight px-3 py-1.5 rounded-lg border border-brand-surface text-xs font-semibold text-slate-800">
                 <ShieldCheck className="h-4 w-4 text-purple-600" />
-                <span>{session?.user?.name || "Platform Owner (Ankur)"}</span>
+                <span>{session?.user?.name || "Platform Owner"}</span>
               </div>
               <button
                 onClick={() => signOut({ callbackUrl: "/login" })}
@@ -540,81 +645,6 @@ export default function SuperAdminDashboard() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {/* PLATFORM ENVIRONMENT MODE BANNER */}
-        <div
-          className={`p-4 rounded-2xl border transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs ${
-            isProductionMode
-              ? "bg-emerald-50/80 border-emerald-200 text-emerald-950"
-              : "bg-purple-50/80 border-purple-200 text-purple-950"
-          }`}
-        >
-          <div className="flex items-start space-x-3">
-            <div
-              className={`h-9 w-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                isProductionMode
-                  ? "bg-emerald-600 text-white"
-                  : "bg-purple-600 text-white"
-              }`}
-            >
-              {isProductionMode ? (
-                <ShieldCheck className="h-5 w-5" />
-              ) : (
-                <Sparkles className="h-5 w-5" />
-              )}
-            </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h2 className="font-extrabold text-sm">
-                  {isProductionMode
-                    ? "🚀 Live Production Mode (External Client & Candidate Ready)"
-                    : "🧪 Internal QA & Demo Sandbox Mode Active"}
-                </h2>
-                <span
-                  className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider ${
-                    isProductionMode
-                      ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
-                      : "bg-purple-100 text-purple-800 border border-purple-300"
-                  }`}
-                >
-                  {isProductionMode ? "Live Engine" : "Safe Test Mode"}
-                </span>
-              </div>
-              <p className="text-xs text-slate-600 mt-0.5">
-                {isProductionMode
-                  ? "Login page test credentials are completely hidden. Outbound WhatsApp candidate invitations and email notifications route directly to real candidates and client hiring managers."
-                  : "Login page displays 1-click persona quick-fill buttons. Outbound candidate WhatsApp briefings route to your test handset (+91 9818352440) and emails route to ankur@botspring.in."}
-              </p>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            disabled={togglingMode}
-            onClick={() => handleToggleMode(!isProductionMode)}
-            className={`px-4 py-2 rounded-xl font-extrabold text-xs transition shadow-sm cursor-pointer whitespace-nowrap self-start sm:self-auto disabled:opacity-50 flex items-center space-x-1.5 ${
-              isProductionMode
-                ? "bg-white text-emerald-800 border border-emerald-300 hover:bg-emerald-100"
-                : "bg-purple-600 text-white hover:bg-purple-700"
-            }`}
-          >
-            {togglingMode ? (
-              <>
-                <RefreshCw className="h-3.5 w-3.5 animate-spin" />
-                <span>Switching Mode...</span>
-              </>
-            ) : isProductionMode ? (
-              <>
-                <Sparkles className="h-3.5 w-3.5" />
-                <span>Revert to Sandbox</span>
-              </>
-            ) : (
-              <>
-                <ShieldCheck className="h-3.5 w-3.5" />
-                <span>Switch to Live Production</span>
-              </>
-            )}
-          </button>
-        </div>
 
         {/* Success Alert */}
         {successMessage && (
@@ -737,6 +767,22 @@ export default function SuperAdminDashboard() {
           >
             <Building2 className="h-4 w-4" />
             <span>Provisioned Agency Tenants ({agencies.length})</span>
+          </button>
+          <button
+            onClick={() => setActiveTab("users")}
+            className={`pb-3 text-xs font-extrabold flex items-center space-x-2 cursor-pointer transition-colors ${
+              activeTab === "users"
+                ? "border-b-2 border-purple-600 text-purple-700"
+                : "text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <Users className="h-4 w-4" />
+            <span>Users & Demo Controls ({users.length})</span>
+            {users.filter((u) => u.isSandboxMode).length > 0 && (
+              <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[9px] font-extrabold bg-amber-100 text-amber-800 border border-amber-200">
+                {users.filter((u) => u.isSandboxMode).length} Demo Active
+              </span>
+            )}
           </button>
           <button
             onClick={() => setActiveTab("audit")}
@@ -868,8 +914,21 @@ export default function SuperAdminDashboard() {
                             <td className="px-6 py-4 whitespace-nowrap">
                               {owner ? (
                                 <div>
-                                  <div className="font-bold text-slate-800">{owner.name}</div>
-                                  <div className="text-[10px] text-slate-500">{owner.email}</div>
+                                  <div className="flex items-center space-x-1.5">
+                                    <span className="font-bold text-slate-800">{owner.name}</span>
+                                    {owner.isSandboxMode && (
+                                      <span className="inline-flex items-center px-1.5 py-0.2 rounded text-[9px] font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
+                                        🧪 Demo
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-slate-500 font-mono">{owner.email}</div>
+                                  {owner.phone && (
+                                    <div className="text-[10px] text-emerald-700 font-mono flex items-center space-x-1 mt-0.5">
+                                      <Phone className="h-2.5 w-2.5" />
+                                      <span>{owner.phone}</span>
+                                    </div>
+                                  )}
                                 </div>
                               ) : (
                                 <span className="text-slate-400 italic">No owner assigned</span>
@@ -902,6 +961,17 @@ export default function SuperAdminDashboard() {
                             </td>
 
                             <td className="px-6 py-4 whitespace-nowrap text-right space-x-2">
+                              <button
+                                onClick={() => {
+                                  setUserSearchQuery(a.name);
+                                  setActiveTab("users");
+                                }}
+                                className="inline-flex items-center space-x-1 px-2.5 py-1 bg-purple-50 hover:bg-purple-100 text-purple-700 border border-purple-200 font-bold rounded-lg text-xs transition-colors cursor-pointer"
+                              >
+                                <Users className="h-3 w-3" />
+                                <span>Users ({a._count.users})</span>
+                              </button>
+
                               <Link
                                 href={`/storefront/${a.slug}`}
                                 target="_blank"
@@ -922,6 +992,223 @@ export default function SuperAdminDashboard() {
                           </tr>
                         );
                       })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* TAB: USERS & DEMO CONTROLS */}
+        {activeTab === "users" && (
+          <div className="space-y-4">
+            {/* Search & Filter Controls */}
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
+                <div className="relative flex-1 sm:w-72">
+                  <Search className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    placeholder="Search by name, email, phone, agency..."
+                    className="w-full pl-9 pr-4 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:ring-2 focus:ring-purple-600 focus:outline-none"
+                  />
+                </div>
+
+                <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs">
+                  <button
+                    onClick={() => setUserSandboxFilter("ALL")}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer ${
+                      userSandboxFilter === "ALL"
+                        ? "bg-white text-slate-900 shadow-xs"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    All ({users.length})
+                  </button>
+                  <button
+                    onClick={() => setUserSandboxFilter("SANDBOX")}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                      userSandboxFilter === "SANDBOX"
+                        ? "bg-amber-100 text-amber-900 shadow-xs"
+                        : "text-slate-600 hover:text-amber-800"
+                    }`}
+                  >
+                    <Sparkles className="h-3 w-3 text-amber-600" />
+                    <span>Demo Sandbox ({users.filter((u) => u.isSandboxMode).length})</span>
+                  </button>
+                  <button
+                    onClick={() => setUserSandboxFilter("LIVE")}
+                    className={`px-3 py-1 rounded-lg font-bold transition-all cursor-pointer flex items-center space-x-1 ${
+                      userSandboxFilter === "LIVE"
+                        ? "bg-emerald-100 text-emerald-900 shadow-xs"
+                        : "text-slate-600 hover:text-emerald-800"
+                    }`}
+                  >
+                    <ShieldCheck className="h-3 w-3 text-emerald-600" />
+                    <span>Live ({users.filter((u) => !u.isSandboxMode).length})</span>
+                  </button>
+                </div>
+              </div>
+
+              <button
+                onClick={fetchData}
+                className="px-3 py-2 bg-white border border-slate-300 text-slate-700 font-bold text-xs rounded-xl hover:bg-slate-50 transition-colors cursor-pointer flex items-center space-x-1.5"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loadingUsers ? "animate-spin text-purple-600" : ""}`} />
+                <span>Refresh Users</span>
+              </button>
+            </div>
+
+            {/* Explanatory Policy Callout */}
+            <div className="bg-purple-50/70 border border-purple-200/80 rounded-2xl p-4 flex items-start space-x-3 text-xs">
+              <div className="h-6 w-6 rounded-lg bg-purple-600 text-white flex items-center justify-center font-bold flex-shrink-0 mt-0.5">
+                <Sparkles className="h-3.5 w-3.5" />
+              </div>
+              <div className="space-y-0.5">
+                <span className="font-extrabold text-purple-950">
+                  Super Admin Sandbox & Comms Dispatch Policy
+                </span>
+                <p className="text-purple-900/80 text-[11px] leading-relaxed">
+                  Only Super Admin can designate which recruiter accounts operate in <strong>Demo Sandbox Active</strong> mode.
+                  When active for a user, candidate/client submission emails route safely to that user’s registered email, and WhatsApp interview briefings route to their mobile phone. Regular users cannot switch modes themselves.
+                </p>
+              </div>
+            </div>
+
+            {/* Users Table */}
+            <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
+              {loadingUsers ? (
+                <div className="p-12 text-center text-slate-400">
+                  <div className="inline-block w-6 h-6 border-2 border-slate-400 border-t-transparent rounded-full animate-spin mb-2"></div>
+                  <p className="text-xs font-medium">Loading platform users...</p>
+                </div>
+              ) : filteredUsers.length === 0 ? (
+                <div className="p-12 text-center text-slate-500">
+                  <Users className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+                  <p className="font-bold text-slate-700 text-sm">No recruiters or staff found</p>
+                  <p className="text-xs text-slate-400 mt-1">Try adjusting your search or filters.</p>
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
+                    <thead className="bg-brand-surfaceLight text-slate-700 uppercase font-semibold tracking-wider">
+                      <tr>
+                        <th scope="col" className="px-6 py-3.5">Recruiter / Staff</th>
+                        <th scope="col" className="px-6 py-3.5">Agency Tenant</th>
+                        <th scope="col" className="px-6 py-3.5">Platform Role</th>
+                        <th scope="col" className="px-6 py-3.5">Mobile / WhatsApp</th>
+                        <th scope="col" className="px-6 py-3.5">Comms Routing Mode</th>
+                        <th scope="col" className="px-6 py-3.5 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-slate-100">
+                      {filteredUsers.map((u) => (
+                        <tr key={u.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <div className="flex items-center space-x-3">
+                              <div className="w-8 h-8 rounded-full bg-slate-100 border border-slate-200 flex items-center justify-center font-extrabold text-slate-700 text-xs">
+                                {u.name.substring(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <div className="font-bold text-slate-900">{u.name}</div>
+                                <div className="text-[11px] text-slate-500 font-mono">{u.email}</div>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {u.agency ? (
+                              <div>
+                                <div className="font-bold text-slate-800">{u.agency.name}</div>
+                                <span className="text-[10px] text-purple-700 font-mono bg-purple-50 px-1.5 py-0.5 rounded border border-purple-100">
+                                  /{u.agency.slug}
+                                </span>
+                              </div>
+                            ) : (
+                              <span className="text-slate-400 italic text-[11px]">Global Platform User</span>
+                            )}
+                          </td>
+
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-extrabold bg-slate-100 text-slate-700 border border-slate-200">
+                              {u.role.replace(/_/g, " ")}
+                            </span>
+                          </td>
+
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {u.phone ? (
+                              <div className="flex items-center space-x-1.5">
+                                <Phone className="h-3.5 w-3.5 text-emerald-600" />
+                                <span className="font-mono font-bold text-slate-800">{u.phone}</span>
+                                <button
+                                  onClick={() => handleOpenEditUser(u)}
+                                  title="Edit phone number"
+                                  className="text-slate-400 hover:text-slate-700 cursor-pointer p-0.5"
+                                >
+                                  <Edit2 className="h-3 w-3" />
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => handleOpenEditUser(u)}
+                                className="inline-flex items-center space-x-1 text-[11px] text-amber-700 font-bold hover:underline cursor-pointer"
+                              >
+                                <Plus className="h-3 w-3" />
+                                <span>Add WhatsApp Phone</span>
+                              </button>
+                            )}
+                          </td>
+
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            <button
+                              onClick={() => handleToggleUserSandbox(u)}
+                              disabled={togglingUserId === u.id}
+                              title={
+                                u.isSandboxMode
+                                  ? "Demo Sandbox is ACTIVE (safe comms). Click to switch to Live Production."
+                                  : "Live Production is ACTIVE. Click to switch to Demo Sandbox."
+                              }
+                              className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-black transition-all cursor-pointer shadow-xs border ${
+                                u.isSandboxMode
+                                  ? "bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-300 ring-2 ring-amber-400/30"
+                                  : "bg-white hover:bg-slate-50 text-slate-700 hover:text-emerald-800 border-slate-200 hover:border-emerald-300"
+                              }`}
+                            >
+                              {togglingUserId === u.id ? (
+                                <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-500" />
+                              ) : u.isSandboxMode ? (
+                                <>
+                                  <span className="relative flex h-2 w-2">
+                                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                                    <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+                                  </span>
+                                  <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+                                  <span>🧪 Demo Sandbox Active</span>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+                                  <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                                  <span>🟢 Live Production</span>
+                                </>
+                              )}
+                            </button>
+                          </td>
+
+                          <td className="px-6 py-4 whitespace-nowrap text-right">
+                            <button
+                              onClick={() => handleOpenEditUser(u)}
+                              className="inline-flex items-center space-x-1 px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-lg text-xs transition-colors cursor-pointer"
+                            >
+                              <Edit2 className="h-3 w-3" />
+                              <span>Edit</span>
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -1693,6 +1980,40 @@ export default function SuperAdminDashboard() {
                       className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
                     />
                   </div>
+
+                  <div className="col-span-2">
+                    <label className="block font-semibold text-slate-700 mb-0.5">Owner Mobile / WhatsApp Phone</label>
+                    <input
+                      type="text"
+                      value={formData.ownerPhone}
+                      onChange={(e) => setFormData({ ...formData, ownerPhone: e.target.value })}
+                      placeholder="+91 9818352440"
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-mono"
+                    />
+                    <p className="text-[10px] text-slate-500 mt-0.5">
+                      WhatsApp interview briefings will route safely to this number during Demo Sandbox testing.
+                    </p>
+                  </div>
+
+                  <div className="col-span-2 bg-amber-50/70 border border-amber-200 rounded-xl p-3">
+                    <label className="flex items-start space-x-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.isSandboxMode}
+                        onChange={(e) => setFormData({ ...formData, isSandboxMode: e.target.checked })}
+                        className="h-4 w-4 mt-0.5 rounded text-amber-600 focus:ring-amber-500 border-slate-300 cursor-pointer"
+                      />
+                      <div>
+                        <span className="font-bold text-amber-950 text-xs flex items-center space-x-1">
+                          <Sparkles className="h-3.5 w-3.5 text-amber-600 inline" />
+                          <span>Provision as QA Demo Sandbox Account</span>
+                        </span>
+                        <p className="text-[10px] text-amber-900/80 mt-0.5">
+                          All outbound communications (emails & WhatsApp) will be safely captured by this demo user. Can be toggled any time by Super Admin.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
                 </div>
               </div>
 
@@ -2042,6 +2363,97 @@ export default function SuperAdminDashboard() {
                       <span>Submit to Meta for Approval</span>
                     </>
                   )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: EDIT USER PROFILE & PHONE */}
+      {editingUser && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-purple-50 px-6 py-4 border-b border-purple-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <div className="h-7 w-7 rounded-lg bg-purple-600 text-white flex items-center justify-center font-bold">
+                  <User className="h-4 w-4" />
+                </div>
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Edit Recruiter Profile</h3>
+                  <p className="text-[10px] text-purple-800 font-mono">{editingUser.email}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setEditingUser(null)}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveUserEdit} className="p-6 space-y-4">
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">Full Name *</label>
+                <input
+                  type="text"
+                  required
+                  value={editUserName}
+                  onChange={(e) => setEditUserName(e.target.value)}
+                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="block font-semibold text-slate-700 mb-1">
+                  Mobile / WhatsApp Phone Number
+                </label>
+                <div className="relative">
+                  <Phone className="h-4 w-4 absolute left-3 top-2.5 text-slate-400" />
+                  <input
+                    type="text"
+                    value={editUserPhone}
+                    onChange={(e) => setEditUserPhone(e.target.value)}
+                    placeholder="+91 9818352440"
+                    className="w-full pl-9 pr-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-mono"
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  When in Demo Sandbox Mode, candidate interview briefings will route directly to this WhatsApp number.
+                </p>
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-[11px] space-y-1.5">
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Agency Tenant:</span>
+                  <span className="font-bold text-slate-800">{editingUser.agency?.name || "Global / None"}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Platform Role:</span>
+                  <span className="font-mono text-purple-700 font-bold">{editingUser.role}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Comms Mode:</span>
+                  <span className={`font-bold ${editingUser.isSandboxMode ? "text-amber-700" : "text-emerald-700"}`}>
+                    {editingUser.isSandboxMode ? "🧪 Demo Sandbox Active" : "🟢 Live Production"}
+                  </span>
+                </div>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-2 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setEditingUser(null)}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={updatingUser}
+                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl shadow-sm transition-all cursor-pointer disabled:opacity-50"
+                >
+                  {updatingUser ? "Saving..." : "Save Profile"}
                 </button>
               </div>
             </form>

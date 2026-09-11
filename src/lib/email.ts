@@ -11,6 +11,59 @@ const transporter = nodemailer.createTransport({
   },
 });
 
+export interface EmailSandboxContext {
+  isSandbox?: boolean;
+  userEmail?: string;
+  userName?: string;
+}
+
+export function resolveEmailRouting({
+  to,
+  cc = [],
+  subject,
+  sandboxContext,
+}: {
+  to: string;
+  cc?: string[];
+  subject: string;
+  sandboxContext?: EmailSandboxContext;
+}) {
+  const isSandbox = Boolean(sandboxContext?.isSandbox);
+  if (isSandbox) {
+    const destination =
+      sandboxContext?.userEmail?.trim() || process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in";
+    return {
+      recipient: destination,
+      ccRecipients: [] as string[],
+      subject: `[DEMO TEST] ${subject}`,
+      isSandbox: true,
+      originalTo: to,
+      originalCc: cc,
+      bannerHtml: `
+        <div style="background-color: #fef3c7; border: 1.5px solid #f59e0b; border-radius: 8px; padding: 12px 16px; margin-bottom: 20px; font-size: 12px; color: #92400e; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; line-height: 1.5;">
+          <div style="font-weight: 800; font-size: 13px; margin-bottom: 4px; display: flex; align-items: center;">
+            🧪 QA SANDBOX DEMO DISPATCH
+          </div>
+          <div>Initiated by: <strong>${sandboxContext?.userName || sandboxContext?.userEmail || "Demo User"}</strong></div>
+          <div style="margin-top: 2px;">Original intended recipient: <code style="background-color: #fde68a; padding: 1px 4px; border-radius: 4px;">${to}</code> ${cc.length > 0 ? `(CC: <code style="background-color: #fde68a; padding: 1px 4px; border-radius: 4px;">${cc.join(", ")}</code>)` : ""}</div>
+          <div style="margin-top: 4px; font-weight: 600; color: #b45309;">🛡️ Safe Sandbox Guarantee: Delivered exclusively to your test inbox. Real client/candidate was NOT contacted.</div>
+        </div>
+      `,
+    };
+  }
+
+  // Live production routing: recipient receives email, CCs receive email
+  return {
+    recipient: to,
+    ccRecipients: cc.filter((c) => c && c.toLowerCase() !== to.toLowerCase()),
+    subject,
+    isSandbox: false,
+    originalTo: to,
+    originalCc: cc,
+    bannerHtml: "",
+  };
+}
+
 export interface MandateIntakeEmailProps {
   to: string;
   clientContactName: string;
@@ -18,6 +71,7 @@ export interface MandateIntakeEmailProps {
   jobTitle: string;
   agencyName: string;
   mandateId: string;
+  sandboxContext?: EmailSandboxContext;
 }
 
 export interface ClientOnboardingEmailProps {
@@ -32,6 +86,7 @@ export interface ClientOnboardingEmailProps {
   slaHours: number;
   recruiterName: string;
   recruiterEmail: string;
+  sandboxContext?: EmailSandboxContext;
 }
 
 export interface InterviewInviteEmailProps {
@@ -47,6 +102,7 @@ export interface InterviewInviteEmailProps {
   panelistNames: string[];
   instructions?: string | null;
   keySkills?: string[];
+  sandboxContext?: EmailSandboxContext;
 }
 
 /**
@@ -60,12 +116,17 @@ export async function sendMandateIntakeConfirmationEmail({
   jobTitle,
   agencyName,
   mandateId,
+  sandboxContext,
 }: MandateIntakeEmailProps) {
-  const isDev = process.env.NODE_ENV !== "production";
-  const recipient = isDev ? (process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in") : to;
+  const routing = resolveEmailRouting({
+    to,
+    subject: `Mandate Received: ${jobTitle} — ${agencyName}`,
+    sandboxContext,
+  });
 
   const htmlContent = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+      ${routing.bannerHtml}
       <div style="background-color: #d3dbed; padding: 24px; text-align: center; border-bottom: 1px solid #cbd5e1;">
         <h1 style="margin: 0; color: #0f172a; font-size: 20px; font-weight: 800; letter-spacing: -0.5px;">${agencyName}</h1>
         <p style="margin: 4px 0 0 0; color: #475569; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Hiring Mandate Intake Acknowledgment</p>
@@ -110,32 +171,24 @@ export async function sendMandateIntakeConfirmationEmail({
           <span style="font-size: 11px; color: #94a3b8;">Powered by RecruitOS Digital Talent Engine</span>
         </p>
       </div>
-
-      ${
-        isDev
-          ? `<div style="background-color: #fffbeb; padding: 12px; border-top: 1px solid #fef3c7; font-size: 11px; color: #92400e; text-align: center;">
-              ⚙️ <strong>Development Mode:</strong> Original intended recipient was <code>${to}</code> (Dispatched/logged to <code>${recipient}</code>).
-            </div>`
-          : ""
-      }
     </div>
   `;
 
   try {
     if (!process.env.GMAIL_SMTP_PASS) {
-      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Email logged for: ${recipient}`);
-      console.log(`   Subject: Mandate Received: ${jobTitle} at ${companyName}`);
+      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Email logged for: ${routing.recipient}`);
+      console.log(`   Subject: ${routing.subject}`);
       return { success: true, simulated: true };
     }
 
     const info = await transporter.sendMail({
       from: `"${agencyName} via RecruitOS" <${process.env.GMAIL_SMTP_USER || "ankur@botspring.in"}>`,
-      to: recipient,
-      subject: `Mandate Received: ${jobTitle} — ${agencyName}`,
+      to: routing.recipient,
+      subject: routing.subject,
       html: htmlContent,
     });
 
-    console.log(`📧 Intake confirmation email dispatched: ${info.messageId} to ${recipient}`);
+    console.log(`📧 Intake confirmation email dispatched: ${info.messageId} to ${routing.recipient}`);
     return { success: true, messageId: info.messageId };
   } catch (error: any) {
     console.error("⚠️ Failed to dispatch email via SMTP (continuing workflow):", error.message);
@@ -158,15 +211,20 @@ export async function sendClientOnboardingWelcomeEmail({
   slaHours,
   recruiterName,
   recruiterEmail,
+  sandboxContext,
 }: ClientOnboardingEmailProps) {
-  const isDev = process.env.NODE_ENV !== "production";
-  const recipient = isDev ? (process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in") : to;
+  const routing = resolveEmailRouting({
+    to,
+    subject: `Search Mandate Activated: ${jobTitle} — ${agencyName}`,
+    sandboxContext,
+  });
 
   const htmlContent = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+      ${routing.bannerHtml}
       <div style="background-color: #d3dbed; padding: 24px; text-align: center; border-bottom: 1px solid #cbd5e1;">
         <h1 style="margin: 0; color: #0f172a; font-size: 20px; font-weight: 800; letter-spacing: -0.5px;">${agencyName}</h1>
-        <p style="margin: 4px 0 0 0; color: #166534; font-size: 12px; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;">✓ Search Mandate Activated & Onboarded</p>
+        <p style="margin: 4px 0 0 0; color: #1e293b; font-size: 12px; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;">Executive Search Mandate Activated</p>
       </div>
 
       <div style="padding: 32px 24px;">
@@ -174,27 +232,31 @@ export async function sendClientOnboardingWelcomeEmail({
           Dear <strong>${clientContactName}</strong>,
         </p>
         <p style="margin: 0 0 20px 0; font-size: 14px; color: #475569; line-height: 1.6;">
-          We are pleased to inform you that your hiring mandate for <strong>${jobTitle}</strong> at <strong>${companyName}</strong> has been officially approved and activated in our dedicated delivery pipeline.
+          We are pleased to inform you that your search mandate for <strong>${jobTitle}</strong> at <strong>${companyName}</strong> has been officially approved and activated on our talent delivery desk.
         </p>
 
         <!-- Terms & SLAs Grid -->
         <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin-bottom: 24px;">
           <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
             <tr>
-              <td style="padding: 6px 0; color: #64748b; font-weight: 600; width: 45%;">Commercial Terms:</td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${feePercentage}% of Annual CTC</td>
+              <td style="padding: 6px 0; color: #64748b; font-weight: 600; width: 45%;">Role Title:</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${jobTitle}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Placement Fee:</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${feePercentage}% of CTC</td>
             </tr>
             <tr>
               <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Replacement Guarantee:</td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${guaranteeDays} Calendar Days ($0 Replacement)</td>
+              <td style="padding: 6px 0; color: #0f172a;">${guaranteeDays} Calendar Days</td>
             </tr>
             <tr>
-              <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Sourcing SLA Clock:</td>
-              <td style="padding: 6px 0; color: #166534; font-weight: 700;">${slaHours} Hours Initial Shortlist Target</td>
+              <td style="padding: 6px 0; color: #64748b; font-weight: 600;">First Shortlist SLA:</td>
+              <td style="padding: 6px 0; color: #059669; font-weight: 700;">Within ${slaHours} Hours</td>
             </tr>
             <tr>
-              <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Dedicated Desk Lead:</td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${recruiterName} (${recruiterEmail})</td>
+              <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Assigned Recruiter:</td>
+              <td style="padding: 6px 0; color: #0f172a; font-weight: 600;">${recruiterName} (${recruiterEmail})</td>
             </tr>
           </table>
         </div>
@@ -209,32 +271,24 @@ export async function sendClientOnboardingWelcomeEmail({
           <span style="font-size: 11px; color: #94a3b8;">Powered by RecruitOS Multi-Tenant Talent Engine</span>
         </p>
       </div>
-
-      ${
-        isDev
-          ? `<div style="background-color: #fffbeb; padding: 12px; border-top: 1px solid #fef3c7; font-size: 11px; color: #92400e; text-align: center;">
-              ⚙️ <strong>Development Mode:</strong> Original intended recipient was <code>${to}</code> (Dispatched/logged to <code>${recipient}</code>).
-            </div>`
-          : ""
-      }
     </div>
   `;
 
   try {
     if (!process.env.GMAIL_SMTP_PASS) {
-      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Onboarding kickoff email logged for: ${recipient}`);
-      console.log(`   Subject: Search Mandate Activated: ${jobTitle} — ${agencyName}`);
+      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Onboarding kickoff email logged for: ${routing.recipient}`);
+      console.log(`   Subject: ${routing.subject}`);
       return { success: true, simulated: true };
     }
 
     const info = await transporter.sendMail({
       from: `"${agencyName} Executive Search" <${process.env.GMAIL_SMTP_USER || "ankur@botspring.in"}>`,
-      to: recipient,
-      subject: `Search Mandate Activated: ${jobTitle} — ${agencyName}`,
+      to: routing.recipient,
+      subject: routing.subject,
       html: htmlContent,
     });
 
-    console.log(`📧 Onboarding email dispatched: ${info.messageId} to ${recipient}`);
+    console.log(`📧 Onboarding email dispatched: ${info.messageId} to ${routing.recipient}`);
     return { success: true, messageId: info.messageId };
   } catch (error: any) {
     console.error("⚠️ Failed to dispatch onboarding email via SMTP:", error.message);
@@ -258,12 +312,17 @@ export async function sendInterviewInvitationEmail({
   panelistNames,
   instructions,
   keySkills = [],
+  sandboxContext,
 }: InterviewInviteEmailProps) {
-  const isDev = process.env.NODE_ENV !== "production";
-  const recipient = isDev ? (process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in") : to;
+  const routing = resolveEmailRouting({
+    to,
+    subject: `Interview Invitation: ${jobTitle} with ${companyName}`,
+    sandboxContext,
+  });
 
   const htmlContent = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+      ${routing.bannerHtml}
       <div style="background-color: #d3dbed; padding: 24px; text-align: center; border-bottom: 1px solid #cbd5e1;">
         <h1 style="margin: 0; color: #0f172a; font-size: 20px; font-weight: 800; letter-spacing: -0.5px;">${agencyName}</h1>
         <p style="margin: 4px 0 0 0; color: #1e293b; font-size: 12px; text-transform: uppercase; font-weight: bold; letter-spacing: 1px;">Interview Confirmed</p>
@@ -349,31 +408,24 @@ export async function sendInterviewInvitationEmail({
         </p>
       </div>
 
-      ${
-        isDev
-          ? `<div style="background-color: #fffbeb; padding: 12px; border-top: 1px solid #fef3c7; font-size: 11px; color: #92400e; text-align: center;">
-              ⚙️ <strong>Development Mode:</strong> Original intended recipient was <code>${to}</code> (Dispatched/logged to <code>${recipient}</code>).
-            </div>`
-          : ""
-      }
     </div>
   `;
 
   try {
     if (!process.env.GMAIL_SMTP_PASS) {
-      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Interview invite logged for: ${recipient}`);
-      console.log(`   Subject: Interview Invitation: ${jobTitle} with ${companyName}`);
+      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Interview invite logged for: ${routing.recipient}`);
+      console.log(`   Subject: ${routing.subject}`);
       return { success: true, simulated: true };
     }
 
     const info = await transporter.sendMail({
       from: `"${agencyName} Talent Advisory" <${process.env.GMAIL_SMTP_USER || "ankur@botspring.in"}>`,
-      to: recipient,
-      subject: `Interview Invitation: ${jobTitle} with ${companyName}`,
+      to: routing.recipient,
+      subject: routing.subject,
       html: htmlContent,
     });
 
-    console.log(`📧 Interview invite email dispatched: ${info.messageId} to ${recipient}`);
+    console.log(`📧 Interview invite email dispatched: ${info.messageId} to ${routing.recipient}`);
     return { success: true, messageId: info.messageId };
   } catch (error: any) {
     console.error("⚠️ Failed to dispatch interview email via SMTP:", error.message);
@@ -394,6 +446,7 @@ export interface PlacementInvoiceEmailProps {
   totalInvoiceAmount: number;
   currency: string;
   dueDate: string;
+  sandboxContext?: EmailSandboxContext;
 }
 
 /**
@@ -412,12 +465,17 @@ export async function sendPlacementInvoiceEmail({
   totalInvoiceAmount,
   currency,
   dueDate,
+  sandboxContext,
 }: PlacementInvoiceEmailProps) {
-  const isDev = process.env.NODE_ENV !== "production";
-  const recipient = isDev ? (process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in") : to;
+  const routing = resolveEmailRouting({
+    to,
+    subject: `Invoice ${invoiceNumber}: ${candidateName} (${jobTitle}) — ${agencyName}`,
+    sandboxContext,
+  });
 
   const htmlContent = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+      ${routing.bannerHtml}
       <div style="background-color: #d3dbed; padding: 24px; text-align: center; border-bottom: 1px solid #cbd5e1;">
         <h1 style="margin: 0; color: #0f172a; font-size: 20px; font-weight: 800;">${agencyName}</h1>
         <p style="margin: 4px 0 0 0; color: #1e293b; font-size: 12px; text-transform: uppercase; font-weight: bold;">Placement Commercial Tax Invoice</p>
@@ -428,30 +486,31 @@ export async function sendPlacementInvoiceEmail({
           Dear Accounts Team at <strong>${companyName}</strong>,
         </p>
         <p style="margin: 0 0 20px 0; font-size: 14px; color: #475569; line-height: 1.6;">
-          Please find attached the placement commercial tax invoice for <strong>${candidateName}</strong> who successfully joined as <strong>${jobTitle}</strong>.
+          Please find attached our placement commission invoice for the successful hiring of <strong>${candidateName}</strong> for the <strong>${jobTitle}</strong> position.
         </p>
 
+        <!-- Invoice Breakdown Table -->
         <div style="background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 18px; margin-bottom: 24px;">
           <table style="width: 100%; border-collapse: collapse; font-size: 13px;">
             <tr>
-              <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Invoice Reference:</td>
-              <td style="padding: 6px 0; color: #0f172a; font-weight: 700;">${invoiceNumber}</td>
+              <td style="padding: 6px 0; color: #64748b; font-weight: 600; width: 45%;">Invoice Reference:</td>
+              <td style="padding: 6px 0; font-family: monospace; font-weight: 700; color: #0f172a;">${invoiceNumber}</td>
+            </tr>
+            <tr>
+              <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Due Date:</td>
+              <td style="padding: 6px 0; color: #d97706; font-weight: 700;">${dueDate}</td>
             </tr>
             <tr>
               <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Base Professional Fee:</td>
               <td style="padding: 6px 0; color: #0f172a;">${currency} ${baseFeeAmount.toLocaleString()}</td>
             </tr>
             <tr>
-              <td style="padding: 6px 0; color: #64748b; font-weight: 600;">GST / Tax (18%):</td>
+              <td style="padding: 6px 0; color: #64748b; font-weight: 600;">GST / Applicable Tax:</td>
               <td style="padding: 6px 0; color: #0f172a;">${currency} ${taxAmount.toLocaleString()}</td>
             </tr>
-            <tr style="border-top: 1px solid #cbd5e1;">
-              <td style="padding: 8px 0; color: #0f172a; font-weight: 800;">Total Payable:</td>
-              <td style="padding: 8px 0; color: #166534; font-weight: 900; font-size: 15px;">${currency} ${totalInvoiceAmount.toLocaleString()}</td>
-            </tr>
-            <tr>
-              <td style="padding: 6px 0; color: #64748b; font-weight: 600;">Payment Due Date:</td>
-              <td style="padding: 6px 0; color: #b45309; font-weight: 700;">${dueDate}</td>
+            <tr style="border-top: 1px solid #e2e8f0;">
+              <td style="padding: 10px 0 0 0; color: #0f172a; font-weight: 800; font-size: 14px;">Total Payable:</td>
+              <td style="padding: 10px 0 0 0; color: #16a34a; font-weight: 800; font-size: 15px;">${currency} ${totalInvoiceAmount.toLocaleString()}</td>
             </tr>
           </table>
         </div>
@@ -465,32 +524,24 @@ export async function sendPlacementInvoiceEmail({
           <strong>${agencyName} Finance & Client Accounts</strong>
         </p>
       </div>
-
-      ${
-        isDev
-          ? `<div style="background-color: #fffbeb; padding: 12px; border-top: 1px solid #fef3c7; font-size: 11px; color: #92400e; text-align: center;">
-              ⚙️ <strong>Development Mode:</strong> Original intended recipient was <code>${to}</code> (Dispatched/logged to <code>${recipient}</code>).
-            </div>`
-          : ""
-      }
     </div>
   `;
 
   try {
     if (!process.env.GMAIL_SMTP_PASS) {
-      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Invoice email logged for: ${recipient}`);
-      console.log(`   Subject: Invoice ${invoiceNumber}: ${jobTitle} Placement — ${agencyName}`);
+      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Invoice email logged for: ${routing.recipient}`);
+      console.log(`   Subject: ${routing.subject}`);
       return { success: true, simulated: true };
     }
 
     const info = await transporter.sendMail({
       from: `"${agencyName} Billing" <${process.env.GMAIL_SMTP_USER || "ankur@botspring.in"}>`,
-      to: recipient,
-      subject: `Invoice ${invoiceNumber}: ${candidateName} (${jobTitle}) — ${agencyName}`,
+      to: routing.recipient,
+      subject: routing.subject,
       html: htmlContent,
     });
 
-    console.log(`📧 Placement invoice email dispatched: ${info.messageId} to ${recipient}`);
+    console.log(`📧 Placement invoice email dispatched: ${info.messageId} to ${routing.recipient}`);
     return { success: true, messageId: info.messageId };
   } catch (error: any) {
     console.error("⚠️ Failed to dispatch invoice email via SMTP:", error.message);
@@ -533,6 +584,7 @@ export interface ClientShortlistPresentationEmailProps {
     content?: Buffer;
     contentType?: string;
   }>;
+  sandboxContext?: EmailSandboxContext;
 }
 
 /**
@@ -550,10 +602,14 @@ export async function sendClientShortlistPresentationEmail({
   feedbackSlaHours,
   candidates,
   attachments = [],
+  sandboxContext,
 }: ClientShortlistPresentationEmailProps) {
-  const isDev = process.env.NODE_ENV !== "production";
-  const recipient = isDev ? (process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in") : to;
-  const ccRecipients = isDev ? [] : cc;
+  const routing = resolveEmailRouting({
+    to,
+    cc,
+    subject: `Candidate Shortlist: ${jobTitle} — ${companyName} (${candidates.length} Profiles)`,
+    sandboxContext,
+  });
 
   const tableRowsHtml = candidates.map((c, idx) => {
     const formattedDate = c.dateOfSourcing
@@ -589,6 +645,7 @@ export async function sendClientShortlistPresentationEmail({
 
   const htmlContent = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 100%; margin: 0 auto; background-color: #ffffff; color: #0f172a; line-height: 1.5;">
+      ${routing.bannerHtml}
       <p style="margin: 0 0 14px 0; font-size: 14px; color: #0f172a;">
         Hi <strong>${clientContactName || "Team"}</strong>,
       </p>
@@ -652,31 +709,23 @@ export async function sendClientShortlistPresentationEmail({
         <strong style="color: #0f172a;">${agencyName}</strong><br />
         <span style="font-size: 11px; color: #94a3b8;">Talent Delivery & Executive Search Team</span>
       </p>
-
-      ${
-        isDev
-          ? `<div style="margin-top: 24px; background-color: #fffbeb; padding: 10px 14px; border: 1px solid #fef3c7; border-radius: 6px; font-size: 11px; color: #92400e;">
-              ⚙️ <strong>Development Mode Notice:</strong> Intended recipient was <code>${to}</code> (CC: <code>${cc.join(", ") || "None"}</code>). Delivered to <code>${recipient}</code> for review.
-            </div>`
-          : ""
-      }
     </div>
   `;
 
   try {
     if (!process.env.GMAIL_SMTP_PASS) {
-      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Shortlist email logged for: ${recipient}`);
-      console.log(`   CC: ${ccRecipients.join(", ") || "None"}`);
-      console.log(`   Subject: Candidate Shortlist: ${jobTitle} — ${companyName} (${candidates.length} profiles)`);
+      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Shortlist email logged for: ${routing.recipient}`);
+      console.log(`   CC: ${routing.ccRecipients.join(", ") || "None"}`);
+      console.log(`   Subject: ${routing.subject}`);
       console.log(`   Attached files: ${attachments.map((a) => a.filename).join(", ") || "None"}`);
       return { success: true, simulated: true };
     }
 
     const info = await transporter.sendMail({
       from: `"${agencyName} Search Delivery" <${process.env.GMAIL_SMTP_USER || "ankur@botspring.in"}>`,
-      to: recipient,
-      cc: ccRecipients.length > 0 ? ccRecipients : undefined,
-      subject: `Candidate Shortlist: ${jobTitle} — ${companyName} (${candidates.length} Profiles)`,
+      to: routing.recipient,
+      cc: routing.ccRecipients.length > 0 ? routing.ccRecipients : undefined,
+      subject: routing.subject,
       html: htmlContent,
       attachments: attachments.map((att) => {
         if (att.content) {
@@ -686,7 +735,7 @@ export async function sendClientShortlistPresentationEmail({
       }),
     });
 
-    console.log(`📧 Candidate shortlist email dispatched: ${info.messageId} to ${recipient} with ${attachments.length} attachment(s).`);
+    console.log(`📧 Candidate shortlist email dispatched: ${info.messageId} to ${routing.recipient} with ${attachments.length} attachment(s).`);
     return { success: true, messageId: info.messageId };
   } catch (error: any) {
     console.error("⚠️ Failed to dispatch candidate shortlist email:", error.message);
@@ -707,6 +756,7 @@ export interface ClientShortlistReminderEmailProps {
   lastEmailMessageId?: string | null;
   reminderLevel?: number; // 1 = 24h gentle, 2 = 48h SLA drop-off warning, 3 = manual/72h chase
   hoursElapsed?: number;
+  sandboxContext?: EmailSandboxContext;
 }
 
 /**
@@ -726,14 +776,17 @@ export async function sendClientShortlistReminderEmail({
   lastEmailMessageId,
   reminderLevel = 1,
   hoursElapsed,
+  sandboxContext,
 }: ClientShortlistReminderEmailProps) {
-  const isDev = process.env.NODE_ENV !== "production";
-  const recipient = isDev ? (process.env.DEV_OVERRIDE_EMAIL || "ankur@botspring.in") : to;
-  // In dev mode, deliver to recipient once (avoid sending duplicate to CC)
-  // In prod mode, ensure recipient is excluded from CC to avoid duplicate delivery
-  const ccRecipients = isDev
-    ? []
-    : cc.filter((c) => c && c.toLowerCase() !== recipient.toLowerCase());
+  const threadProfilesCount = initialBatchCount || candidatesCount;
+  const rawSubject = `Re: Candidate Shortlist: ${jobTitle} — ${companyName} (${threadProfilesCount} Profiles)`;
+
+  const routing = resolveEmailRouting({
+    to,
+    cc,
+    subject: rawSubject,
+    sandboxContext,
+  });
 
   const isUrgent = reminderLevel >= 2;
   const badgeColor = isUrgent ? "#dc2626" : "#2563eb";
@@ -743,6 +796,7 @@ export async function sendClientShortlistReminderEmail({
 
   const htmlContent = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 650px; margin: 0 auto; color: #0f172a; line-height: 1.6; border: 1px solid #e2e8f0; border-radius: 12px; padding: 28px; background-color: #ffffff;">
+      ${routing.bannerHtml}
       <div style="margin-bottom: 20px; border-bottom: 1px solid #e2e8f0; padding-bottom: 16px;">
         <span style="display: inline-block; background-color: ${badgeColor}15; color: ${badgeColor}; border: 1px solid ${badgeColor}30; font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 6px; text-transform: uppercase; letter-spacing: 0.5px;">
           ${badgeText}
@@ -787,32 +841,22 @@ export async function sendClientShortlistReminderEmail({
         <strong style="color: #0f172a;">${agencyName}</strong><br />
         <span style="font-size: 11px; color: #94a3b8;">Talent Delivery & Executive Search Team</span>
       </p>
-
-      ${
-        isDev
-          ? `<div style="margin-top: 24px; background-color: #fffbeb; padding: 10px 14px; border: 1px solid #fef3c7; border-radius: 6px; font-size: 11px; color: #92400e;">
-              ⚙️ <strong>Development Mode Notice:</strong> Intended recipient was <code>${to}</code> (CC: <code>${cc.join(", ") || "None"}</code>). Delivered to <code>${recipient}</code> for review.
-            </div>`
-          : ""
-      }
     </div>
   `;
 
-  const threadProfilesCount = initialBatchCount || candidatesCount;
-
   try {
     if (!process.env.GMAIL_SMTP_PASS) {
-      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Reminder email logged for: ${recipient}`);
+      console.log(`ℹ️ [Email Simulation] GMAIL_SMTP_PASS not set. Reminder email logged for: ${routing.recipient}`);
       console.log(`   Thread in-reply-to: ${lastEmailMessageId || "None"}`);
-      console.log(`   Subject: Re: Candidate Shortlist: ${jobTitle} — ${companyName} (${threadProfilesCount} Profiles)`);
+      console.log(`   Subject: ${routing.subject}`);
       return { success: true, simulated: true };
     }
 
     const mailOptions: any = {
       from: `"${agencyName} Search Delivery" <${process.env.GMAIL_SMTP_USER || "ankur@botspring.in"}>`,
-      to: recipient,
-      cc: ccRecipients.length > 0 ? ccRecipients : undefined,
-      subject: `Re: Candidate Shortlist: ${jobTitle} — ${companyName} (${threadProfilesCount} Profiles)`,
+      to: routing.recipient,
+      cc: routing.ccRecipients.length > 0 ? routing.ccRecipients : undefined,
+      subject: routing.subject,
       html: htmlContent,
     };
 
@@ -822,7 +866,7 @@ export async function sendClientShortlistReminderEmail({
     }
 
     const info = await transporter.sendMail(mailOptions);
-    console.log(`📧 Candidate shortlist reminder dispatched: ${info.messageId} (threaded to ${lastEmailMessageId || "root"}) to ${recipient}.`);
+    console.log(`📧 Candidate shortlist reminder dispatched: ${info.messageId} (threaded to ${lastEmailMessageId || "root"}) to ${routing.recipient}.`);
     return { success: true, messageId: info.messageId };
   } catch (error: any) {
     console.error("⚠️ Failed to dispatch candidate shortlist reminder email:", error.message);

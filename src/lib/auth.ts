@@ -44,24 +44,33 @@ export const authOptions: NextAuthOptions = {
           id: user.id,
           email: user.email,
           name: user.name,
+          phone: user.phone || null,
           role: user.role,
           agencyId: user.agencyId,
           agencyName: user.agency?.name || null,
           agencySlug: user.agency?.slug || null,
+          isSandboxMode: Boolean(user.isSandboxMode),
         };
       },
     }),
   ],
   callbacks: {
-    async jwt({ token, user }) {
+    async jwt({ token, user, trigger, session }) {
       if (user) {
         token.id = user.id;
         token.email = user.email;
         token.name = user.name;
+        token.phone = user.phone;
         token.role = user.role;
         token.agencyId = user.agencyId;
         token.agencyName = user.agencyName;
         token.agencySlug = user.agencySlug;
+        token.isSandboxMode = user.isSandboxMode;
+      }
+      if (trigger === "update" && session?.user) {
+        if (typeof session.user.isSandboxMode === "boolean") {
+          token.isSandboxMode = session.user.isSandboxMode;
+        }
       }
       return token;
     },
@@ -70,10 +79,12 @@ export const authOptions: NextAuthOptions = {
         session.user.id = token.id as string;
         session.user.email = token.email as string;
         session.user.name = token.name as string;
+        session.user.phone = (token.phone as string) || null;
         session.user.role = token.role as any;
         session.user.agencyId = (token.agencyId as string) || null;
         session.user.agencyName = (token.agencyName as string) || null;
         session.user.agencySlug = (token.agencySlug as string) || null;
+        session.user.isSandboxMode = Boolean(token.isSandboxMode);
       }
       return session;
     },

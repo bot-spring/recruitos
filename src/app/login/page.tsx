@@ -1,9 +1,9 @@
 "use client";
 
-import React, { useState, useEffect, Suspense } from "react";
+import React, { useState, Suspense } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Lock, Mail, ShieldAlert, ArrowRight, Sparkles, Building2, User } from "lucide-react";
+import { Lock, Mail, ShieldAlert, ArrowRight } from "lucide-react";
 
 function LoginForm() {
   const router = useRouter();
@@ -14,18 +14,6 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [isProductionMode, setIsProductionMode] = useState(false);
-
-  useEffect(() => {
-    fetch("/api/system/mode")
-      .then((res) => res.json())
-      .then((data) => {
-        if (typeof data.isProductionMode === "boolean") {
-          setIsProductionMode(data.isProductionMode);
-        }
-      })
-      .catch(() => {});
-  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -51,12 +39,6 @@ function LoginForm() {
       setError("An unexpected error occurred. Please try again.");
       setLoading(false);
     }
-  };
-
-  const handleQuickFill = (userEmail: string, userPass: string) => {
-    setEmail(userEmail);
-    setPassword(userPass);
-    setError(null);
   };
 
   return (
@@ -87,6 +69,7 @@ function LoginForm() {
             <input
               type="email"
               required
+              autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="name@agency.com"
@@ -106,6 +89,7 @@ function LoginForm() {
             <input
               type="password"
               required
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••••••"
@@ -134,76 +118,6 @@ function LoginForm() {
           </button>
         </div>
       </form>
-
-      {/* Quick Login Testing Assist (Hidden in Live Production Mode) */}
-      {!isProductionMode && (
-        <div className="mt-8 pt-6 border-t border-slate-100">
-          <div className="flex items-center space-x-2 mb-3">
-            <Sparkles className="h-3.5 w-3.5 text-slate-400" />
-            <p className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
-              Development Test Credentials
-            </p>
-          </div>
-          <div className="grid grid-cols-1 gap-2">
-            <button
-              type="button"
-              onClick={() => handleQuickFill("ankur@botspring.in", "Password@123")}
-              className="flex items-center justify-between p-2 rounded-lg bg-brand-surfaceLight border border-brand-surface text-left hover:border-brand-surfaceDark transition-colors text-xs"
-            >
-              <div className="flex items-center space-x-2">
-                <div className="w-6 h-6 rounded-md bg-brand-surface flex items-center justify-center text-[10px] font-bold text-slate-700">
-                  SA
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-800">Super Admin (Ankur)</div>
-                  <div className="text-[10px] text-slate-500">ankur@botspring.in</div>
-                </div>
-              </div>
-              <span className="text-[10px] bg-white px-2 py-0.5 rounded border border-brand-surfaceDark text-slate-700 font-mono">
-                Fill
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleQuickFill("owner@apexsearch.com", "Password@123")}
-              className="flex items-center justify-between p-2 rounded-lg bg-white border border-slate-200 text-left hover:border-slate-300 transition-colors text-xs"
-            >
-              <div className="flex items-center space-x-2">
-                <div className="w-6 h-6 rounded-md bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-700">
-                  <Building2 className="h-3.5 w-3.5 text-slate-600" />
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-800">Agency Owner (Apex Search)</div>
-                  <div className="text-[10px] text-slate-500">owner@apexsearch.com</div>
-                </div>
-              </div>
-              <span className="text-[10px] bg-slate-50 px-2 py-0.5 rounded border border-slate-200 text-slate-600 font-mono">
-                Fill
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => handleQuickFill("priya@apexsearch.com", "Password@123")}
-              className="flex items-center justify-between p-2 rounded-lg bg-white border border-slate-200 text-left hover:border-slate-300 transition-colors text-xs"
-            >
-              <div className="flex items-center space-x-2">
-                <div className="w-6 h-6 rounded-md bg-slate-100 flex items-center justify-center text-[10px] font-bold text-slate-700">
-                  <User className="h-3.5 w-3.5 text-slate-600" />
-                </div>
-                <div>
-                  <div className="font-semibold text-slate-800">Desk Recruiter (Priya)</div>
-                  <div className="text-[10px] text-slate-500">priya@apexsearch.com</div>
-                </div>
-              </div>
-              <span className="text-[10px] bg-slate-50 px-2 py-0.5 rounded border border-slate-200 text-slate-600 font-mono">
-                Fill
-              </span>
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

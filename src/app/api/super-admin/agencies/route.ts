@@ -22,8 +22,10 @@ export async function GET() {
             id: true,
             email: true,
             name: true,
+            phone: true,
             role: true,
             isActive: true,
+            isSandboxMode: true,
             createdAt: true,
           },
         },
@@ -57,7 +59,7 @@ export async function POST(req: Request) {
     }
 
     const body = await req.json();
-    const { name, slug, tier, maxSeats, ownerName, ownerEmail, ownerPassword, customDomain } = body;
+    const { name, slug, tier, maxSeats, ownerName, ownerEmail, ownerPassword, ownerPhone, isSandboxMode, customDomain } = body;
 
     // Basic validations
     if (!name || !slug || !ownerName || !ownerEmail || !ownerPassword) {
@@ -116,9 +118,11 @@ export async function POST(req: Request) {
           name: ownerName.trim(),
           email: ownerEmail.toLowerCase().trim(),
           passwordHash,
+          phone: ownerPhone?.trim() || null,
           role: UserRole.AGENCY_OWNER,
           agencyId: agency.id,
           isActive: true,
+          isSandboxMode: Boolean(isSandboxMode),
         },
       });
 

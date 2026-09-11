@@ -8,10 +8,12 @@ declare module "next-auth" {
       id: string;
       email: string;
       name: string;
+      phone?: string | null;
       role: UserRole;
       agencyId: string | null;
       agencyName?: string | null;
       agencySlug?: string | null;
+      isSandboxMode: boolean;
     };
   }
 
@@ -19,10 +21,12 @@ declare module "next-auth" {
     id: string;
     email: string;
     name: string;
+    phone?: string | null;
     role: UserRole;
     agencyId: string | null;
     agencyName?: string | null;
     agencySlug?: string | null;
+    isSandboxMode: boolean;
   }
 }
 
@@ -31,10 +35,12 @@ declare module "next-auth/jwt" {
     id: string;
     email: string;
     name: string;
+    phone?: string | null;
     role: UserRole;
     agencyId: string | null;
     agencyName?: string | null;
     agencySlug?: string | null;
+    isSandboxMode?: boolean;
   }
 }
 

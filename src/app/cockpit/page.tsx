@@ -49,6 +49,7 @@ import {
   Upload,
   Loader2,
 } from "lucide-react";
+import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 
 interface InboundMandate {
   id: string;
@@ -748,6 +749,7 @@ export default function CockpitPage() {
 
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
+      <UserSandboxBanner />
       {/* Top Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -808,7 +810,9 @@ export default function CockpitPage() {
               </nav>
             </div>
 
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-3">
+              <UserSandboxToggle />
+
               <div className="hidden sm:flex items-center space-x-2 bg-brand-surfaceLight px-3 py-1.5 rounded-lg border border-brand-surface text-xs font-semibold text-slate-800">
                 <span className="font-bold">{session?.user?.name}</span>
                 <span className="text-[10px] bg-white px-1.5 py-0.5 rounded border border-brand-surfaceDark text-slate-600 uppercase">
