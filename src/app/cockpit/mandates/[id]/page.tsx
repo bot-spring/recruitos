@@ -39,6 +39,9 @@ import {
   Radio,
   Share2,
   BellRing,
+  RotateCcw,
+  ShieldCheck,
+  RefreshCw,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 
@@ -259,13 +262,77 @@ export default function MandateWorkspacePage() {
   const [isPoolModalOpen, setIsPoolModalOpen] = useState(false);
   const [attachingId, setAttachingId] = useState<string | null>(null);
 
-  // Multi-Resume Ingestion Modal State (Up to 5 files, 10MB limit)
+  // Multi-Resume Ingestion Modal State (RC-02 Split-Screen Review)
   const [isIngestModalOpen, setIsIngestModalOpen] = useState(false);
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
   const [batchResults, setBatchResults] = useState<any[]>([]);
+  const [activeBatchIndex, setActiveBatchIndex] = useState(0);
+  const [newSkillInput, setNewSkillInput] = useState("");
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [savingBatch, setSavingBatch] = useState(false);
+  const [parseProgress, setParseProgress] = useState({
+    current: 0,
+    total: 0,
+    currentFileName: "",
+    percent: 0,
+  });
+
+  const updateActiveParsedField = (field: string, value: any) => {
+    setBatchResults((prev) => {
+      const updated = [...prev];
+      if (updated[activeBatchIndex]?.parsed) {
+        updated[activeBatchIndex] = {
+          ...updated[activeBatchIndex],
+          parsed: {
+            ...updated[activeBatchIndex].parsed,
+            [field]: value,
+          },
+        };
+      }
+      return updated;
+    });
+  };
+
+  const handleRemoveSkill = (skillToRemove: string) => {
+    setBatchResults((prev) => {
+      const updated = [...prev];
+      const curr = updated[activeBatchIndex]?.parsed;
+      if (curr && Array.isArray(curr.skills)) {
+        updated[activeBatchIndex] = {
+          ...updated[activeBatchIndex],
+          parsed: {
+            ...curr,
+            skills: curr.skills.filter((s: string) => s !== skillToRemove),
+          },
+        };
+      }
+      return updated;
+    });
+  };
+
+  const handleAddSkill = () => {
+    if (!newSkillInput.trim()) return;
+    const skillToAdd = newSkillInput.trim();
+    setBatchResults((prev) => {
+      const updated = [...prev];
+      const curr = updated[activeBatchIndex]?.parsed;
+      if (curr) {
+        const existing = Array.isArray(curr.skills) ? curr.skills : [];
+        if (!existing.includes(skillToAdd)) {
+          updated[activeBatchIndex] = {
+            ...updated[activeBatchIndex],
+            parsed: {
+              ...curr,
+              skills: [...existing, skillToAdd],
+            },
+          };
+        }
+      }
+      return updated;
+    });
+    setNewSkillInput("");
+  };
 
   // Client Portal Share Modal State
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
@@ -493,33 +560,68 @@ export default function MandateWorkspacePage() {
     setParsing(true);
     setParseError(null);
     setBatchResults([]);
+    setActiveBatchIndex(0);
+    setParseProgress({
+      current: 1,
+      total: fileList.length,
+      currentFileName: fileList[0].name,
+      percent: 5,
+    });
+
+    const accumulatedResults: any[] = [];
 
     try {
-      const formData = new FormData();
-      fileList.forEach((file) => {
-        formData.append("files", file);
-      });
+      for (let i = 0; i < fileList.length; i++) {
+        const file = fileList[i];
+        setParseProgress({
+          current: i + 1,
+          total: fileList.length,
+          currentFileName: file.name,
+          percent: Math.max(5, Math.round((i / fileList.length) * 100)),
+        });
 
-      const res = await fetch("/api/candidates/parse", {
-        method: "POST",
-        body: formData,
-      });
+        const formData = new FormData();
+        formData.append("file", file);
 
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to parse resume document(s).");
-      }
+        try {
+          const res = await fetch("/api/candidates/parse", {
+            method: "POST",
+            body: formData,
+          });
 
-      if (data.results && Array.isArray(data.results)) {
-        setBatchResults(data.results);
-      } else if (data.parsed) {
-        setBatchResults([{
-          fileName: fileList[0].name,
-          success: true,
-          parsed: data.parsed,
-          resumeUrl: data.resumeUrl,
-          rawResumeText: data.rawResumeText,
-        }]);
+          const data = await res.json();
+          if (res.ok && data.results && data.results[0]) {
+            accumulatedResults.push(data.results[0]);
+          } else if (res.ok && data.parsed) {
+            accumulatedResults.push({
+              fileName: file.name,
+              success: true,
+              parsed: data.parsed,
+              resumeUrl: data.resumeUrl,
+              rawResumeText: data.rawResumeText,
+            });
+          } else {
+            accumulatedResults.push({
+              fileName: file.name,
+              success: false,
+              error: data.error || "Failed to extract entities",
+            });
+          }
+        } catch (itemErr: any) {
+          accumulatedResults.push({
+            fileName: file.name,
+            success: false,
+            error: itemErr.message || "Network error while parsing",
+          });
+        }
+
+        setBatchResults([...accumulatedResults]);
+        setParseProgress({
+          current: i + 1,
+          total: fileList.length,
+          currentFileName: file.name,
+          percent: Math.round(((i + 1) / fileList.length) * 100),
+        });
       }
     } catch (err: any) {
       setParseError(err.message || "Failed to parse resumes with Gemini AI.");
@@ -1737,22 +1839,36 @@ export default function MandateWorkspacePage() {
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 2: INGEST RESUMES DIRECTLY TO THIS JOB (BATCH UP TO 5 CVS)         */}
+      {/* ========================================================================= */}
+      {/* MODAL 2: INGEST RESUMES DIRECTLY TO THIS JOB (BATCH UP TO 5 CVS) - RC-02   */}
       {/* ========================================================================= */}
       {isIngestModalOpen && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-3xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
-            <div className="bg-brand-surfaceLight px-6 py-4 border-b border-brand-surface flex items-center justify-between">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
+          <div
+            className={`bg-white rounded-3xl shadow-2xl border border-slate-200 ${
+              batchResults.length > 0 && !parsing ? "max-w-5xl" : "max-w-2xl"
+            } w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs flex flex-col max-h-[92vh]`}
+          >
+            {/* Modal Header with Botspring Gold (#fce17c) */}
+            <div className="bg-[#fce17c] px-6 py-4 border-b border-[#ebd06b] flex items-center justify-between text-slate-900 flex-shrink-0">
               <div className="flex items-center space-x-2.5">
-                <UploadCloud className="h-5 w-5 text-slate-800" />
+                <div className="w-8 h-8 rounded-xl bg-white/80 border border-[#e8c757] flex items-center justify-center text-slate-900 shadow-2xs font-black">
+                  <Sparkles className="h-4 w-4 text-amber-700" />
+                </div>
                 <div>
                   <div className="flex items-center space-x-2">
-                    <h3 className="font-extrabold text-slate-900 text-sm">Ingest Resumes for '{mandate.title}'</h3>
-                    <span className="bg-slate-200 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">
-                      Up to 5 CVs • Max 10MB each
+                    <h3 className="font-black text-slate-900 text-sm tracking-tight">
+                      CV Intake Engine for '{mandate.title}' (RC-02)
+                    </h3>
+                    <span className="bg-white/90 text-slate-900 text-[10px] font-black px-2 py-0.5 rounded border border-[#ebd06b] uppercase">
+                      Mandate Direct
                     </span>
                   </div>
-                  <p className="text-[10px] text-slate-500">Extracts candidate details & permanently archives resume files on server</p>
+                  <p className="text-[11px] text-slate-800 font-medium">
+                    {batchResults.length > 0 && !parsing
+                      ? "Split-screen review: Inspect extracted fields, adjust skills & attach directly to this mandate"
+                      : "Drag and drop up to 5 resumes for automated entity extraction & mandate attachment"}
+                  </p>
                 </div>
               </div>
               <button
@@ -1761,14 +1877,15 @@ export default function MandateWorkspacePage() {
                   setBatchResults([]);
                   setUploadFiles([]);
                   setParseError(null);
+                  setActiveBatchIndex(0);
                 }}
-                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+                className="text-slate-700 hover:text-slate-900 text-xl font-bold leading-none cursor-pointer w-7 h-7 rounded-lg hover:bg-black/10 flex items-center justify-center transition-colors"
               >
                 &times;
               </button>
             </div>
 
-            <div className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
+            <div className="p-6 overflow-y-auto flex-1 space-y-4">
               {parseError && (
                 <div className="p-3.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 flex items-start space-x-2.5">
                   <AlertCircle className="h-4 w-4 mt-0.5 flex-shrink-0 text-rose-600" />
@@ -1779,189 +1896,468 @@ export default function MandateWorkspacePage() {
                 </div>
               )}
 
+              {/* State 1: Dropzone */}
               {batchResults.length === 0 && !parsing && (
-                <div className="border-2 border-dashed border-slate-300 hover:border-slate-500 rounded-3xl p-10 text-center bg-slate-50/50 transition-colors">
-                  <input
-                    type="file"
-                    multiple
-                    accept=".pdf,.docx,.txt"
-                    onChange={handleMultiFileSelect}
-                    id="mandate-resume-upload-batch"
-                    className="hidden"
-                  />
-                  <label htmlFor="mandate-resume-upload-batch" className="cursor-pointer block">
-                    <UploadCloud className="h-12 w-12 text-slate-400 mx-auto mb-3" />
-                    <span className="font-extrabold text-slate-900 text-sm hover:underline block">
-                      Click to Select Resumes (PDF, DOCX)
-                    </span>
-                    <p className="text-xs text-slate-500 mt-1.5 max-w-md mx-auto">
-                      Select <strong>up to 5 resumes</strong> at once. Each file must be under <strong>10MB</strong>.
-                    </p>
-                    <div className="mt-3 inline-flex items-center space-x-2 text-[11px] font-semibold text-slate-600 bg-white px-3 py-1 rounded-full border border-slate-200 shadow-2xs">
-                      <span>✓ Server-side permanent storage</span>
-                      <span>•</span>
-                      <span>✓ Gemini AI text & entity parsing</span>
+                <div className="space-y-4">
+                  <div className="bg-amber-50/60 p-4 rounded-2xl border border-amber-200/80 flex items-center justify-between">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-8 h-8 rounded-xl bg-[#fce17c] border border-[#ebd06b] flex items-center justify-center text-slate-900 font-bold">
+                        <Briefcase className="h-4 w-4" />
+                      </div>
+                      <div>
+                        <span className="text-[11px] font-bold text-amber-900 uppercase tracking-wider block">Target Job Mandate</span>
+                        <span className="text-xs font-black text-slate-900">{mandate.title} ({mandate.client.name})</span>
+                      </div>
                     </div>
-                  </label>
+                    <span className="bg-white text-emerald-800 border border-emerald-300 text-[10px] font-extrabold px-2.5 py-1 rounded-full shadow-2xs">
+                      ✓ Auto-Attach Enabled
+                    </span>
+                  </div>
+
+                  <div className="border-2 border-dashed border-amber-300 hover:border-amber-400 rounded-3xl p-10 text-center bg-amber-50/20 hover:bg-amber-50/40 transition-all">
+                    <input
+                      type="file"
+                      multiple
+                      accept=".pdf,.docx,.txt"
+                      onChange={handleMultiFileSelect}
+                      id="mandate-resume-upload-batch"
+                      className="hidden"
+                    />
+                    <label htmlFor="mandate-resume-upload-batch" className="cursor-pointer block">
+                      <div className="w-16 h-16 rounded-2xl bg-[#fce17c]/40 border border-[#ebd06b] flex items-center justify-center text-slate-900 mx-auto mb-3 shadow-2xs">
+                        <UploadCloud className="h-8 w-8 text-slate-800" />
+                      </div>
+                      <span className="font-black text-slate-900 text-sm hover:underline block">
+                        Click to Select Resumes (PDF, DOCX)
+                      </span>
+                      <p className="text-xs text-slate-500 mt-1.5 max-w-md mx-auto font-medium">
+                        Select <strong>up to 5 resumes</strong> at once. Each file must be under <strong>10MB</strong>.
+                      </p>
+                      <div className="mt-4 inline-flex items-center space-x-2 text-[11px] font-bold text-slate-700 bg-white px-3.5 py-1.5 rounded-full border border-slate-200 shadow-2xs">
+                        <span>✓ Permanent CV document storage</span>
+                        <span>•</span>
+                        <span>✓ Gemini AI entity extraction</span>
+                        <span>•</span>
+                        <span>✓ Auto-attach to pipeline</span>
+                      </div>
+                    </label>
+                  </div>
                 </div>
               )}
 
+              {/* State 2: Active Parsing Progress Indicator */}
               {parsing && (
-                <div className="p-12 text-center space-y-3">
-                  <div className="w-10 h-10 border-3 border-slate-800 border-t-transparent rounded-full animate-spin mx-auto"></div>
-                  <div>
-                    <p className="text-sm font-bold text-slate-800">
-                      Processing {uploadFiles.length} resume(s)...
+                <div className="p-8 bg-slate-50/80 rounded-3xl border border-slate-200 text-center space-y-4">
+                  <div className="w-10 h-10 border-3 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+
+                  <div className="space-y-1">
+                    <div className="flex items-center justify-center space-x-2 text-sm font-black text-slate-900">
+                      <span>Parsing Resume {parseProgress.current} of {parseProgress.total}</span>
+                      <span className="text-xs font-bold text-amber-700 font-mono">({parseProgress.percent}%)</span>
+                    </div>
+                    <p className="text-xs text-slate-600 font-medium truncate max-w-md mx-auto">
+                      Extracting: <span className="font-mono text-slate-900 font-bold">{parseProgress.currentFileName}</span>
                     </p>
-                    <p className="text-xs text-slate-500 mt-1">
+                    <p className="text-[11px] text-slate-400">
                       Extracting candidate entities, qualifications & saving file copies to server
                     </p>
                   </div>
+
+                  <div className="max-w-md mx-auto space-y-1.5">
+                    <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-[#fce17c] rounded-full transition-all duration-300 shadow-2xs border border-[#ebd06b]"
+                        style={{ width: `${Math.max(8, parseProgress.percent)}%` }}
+                      />
+                    </div>
+                    <div className="flex justify-between text-[10px] text-slate-500 font-semibold">
+                      <span>File {parseProgress.current} of {parseProgress.total}</span>
+                      <span>{parseProgress.percent}% Complete</span>
+                    </div>
+                  </div>
                 </div>
               )}
 
+              {/* State 3: Split-Screen Review & Human-Correction Drawer (RC-02) */}
               {batchResults.length > 0 && !parsing && (
                 <div className="space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider">
-                        Parsed Candidate Dossiers ({batchResults.filter((r) => r.success).length} Ready)
-                      </h4>
-                      <p className="text-[11px] text-slate-500">
-                        Review extracted information before attaching to '{mandate.title}'
-                      </p>
+                  {/* Top Batch Dossiers Selector Bar */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-200">
+                    <div className="flex items-center space-x-2 overflow-x-auto pb-1 sm:pb-0">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 mr-1 flex-shrink-0">
+                        Parsed Dossiers:
+                      </span>
+                      {batchResults.map((r, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onClick={() => setActiveBatchIndex(idx)}
+                          className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center space-x-1.5 transition-all cursor-pointer flex-shrink-0 border ${
+                            activeBatchIndex === idx
+                              ? "bg-[#fce17c] text-slate-900 border-[#ebd06b] shadow-xs ring-1 ring-[#ebd06b]"
+                              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                          }`}
+                        >
+                          <FileText className="h-3.5 w-3.5 text-slate-500" />
+                          <span className="truncate max-w-[120px] font-bold">
+                            {r.parsed?.fullName || r.fileName}
+                          </span>
+                          {r.success ? (
+                            <CheckCircle2 className="h-3 w-3 text-emerald-600 ml-0.5" />
+                          ) : (
+                            <AlertCircle className="h-3 w-3 text-rose-600 ml-0.5" />
+                          )}
+                        </button>
+                      ))}
                     </div>
+
                     <button
                       type="button"
                       onClick={() => {
                         setBatchResults([]);
                         setUploadFiles([]);
                         setParseError(null);
+                        setActiveBatchIndex(0);
                       }}
-                      className="text-xs text-blue-600 hover:underline font-semibold"
+                      className="text-xs text-blue-600 hover:underline font-bold flex-shrink-0 flex items-center space-x-1 cursor-pointer"
                     >
-                      + Upload Different Files
+                      <RotateCcw className="h-3 w-3" />
+                      <span>Upload Different Files</span>
                     </button>
                   </div>
 
-                  <div className="space-y-3 max-h-[50vh] overflow-y-auto pr-1">
-                    {batchResults.map((res, idx) => (
-                      <div
-                        key={idx}
-                        className={`p-4 rounded-2xl border transition-all ${
-                          res.success
-                            ? "bg-slate-50/80 border-slate-200"
-                            : "bg-rose-50/60 border-rose-200"
-                        }`}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="space-y-1">
+                  {/* Active Candidate Split-Screen Container */}
+                  {batchResults[activeBatchIndex] && (
+                    <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
+                      {/* LEFT PANE: Document Source & Raw Text Excerpt (5 cols) */}
+                      <div className="md:col-span-5 space-y-3">
+                        {/* Document Metadata Card */}
+                        <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-2">
+                          <div className="flex items-start justify-between">
                             <div className="flex items-center space-x-2">
-                              <FileText className="h-4 w-4 text-slate-500" />
-                              <span className="font-mono text-[11px] font-bold text-slate-700">{res.fileName}</span>
-                              {res.success ? (
-                                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.2 rounded-full border border-emerald-300">
-                                  Parsed Successfully
+                              <div className="w-8 h-8 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-700">
+                                <FileText className="h-4 w-4 text-slate-700" />
+                              </div>
+                              <div>
+                                <span className="font-bold text-slate-900 text-xs block truncate max-w-[180px]">
+                                  {batchResults[activeBatchIndex].fileName}
                                 </span>
-                              ) : (
-                                <span className="bg-rose-100 text-rose-800 text-[10px] font-bold px-2 py-0.2 rounded-full border border-rose-300">
-                                  Parse Error
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {batchResults[activeBatchIndex].fileSize
+                                    ? `${Math.round(batchResults[activeBatchIndex].fileSize / 1024)} KB`
+                                    : "Document File"}
                                 </span>
-                              )}
+                              </div>
                             </div>
 
-                            {res.success && res.parsed && (
-                              <div className="pt-2">
-                                <div className="text-sm font-extrabold text-slate-900">
-                                  {res.parsed.fullName || "Unnamed Candidate"}
-                                </div>
-                                <div className="text-xs text-slate-600 font-medium">
-                                  {res.parsed.currentTitle || "Title not found"} {res.parsed.currentCompany ? `at ${res.parsed.currentCompany}` : ""}
-                                </div>
-                                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-2 text-[11px]">
-                                  <div>
-                                    <span className="text-slate-400 block text-[10px]">Phone</span>
-                                    <span className="font-mono font-bold text-slate-800">{res.parsed.phone || "N/A"}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400 block text-[10px]">Email</span>
-                                    <span className="font-bold text-slate-800 truncate block">{res.parsed.email || "N/A"}</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400 block text-[10px]">Experience</span>
-                                    <span className="font-bold text-slate-800">{res.parsed.totalExpYears ?? 0} Years</span>
-                                  </div>
-                                  <div>
-                                    <span className="text-slate-400 block text-[10px]">Qualification</span>
-                                    <span className="font-bold text-slate-800">{res.parsed.qualification || "N/A"}</span>
-                                  </div>
-                                </div>
-                                {res.parsed.skills && res.parsed.skills.length > 0 && (
-                                  <div className="flex flex-wrap gap-1 mt-2.5">
-                                    {res.parsed.skills.slice(0, 6).map((sk: string, sIdx: number) => (
-                                      <span
-                                        key={sIdx}
-                                        className="bg-white border border-slate-200 text-slate-700 text-[9px] px-1.5 py-0.5 rounded font-medium"
-                                      >
-                                        {sk}
-                                      </span>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-
-                            {!res.success && (
-                              <p className="text-xs text-rose-700 mt-1 font-medium">{res.error || "Unknown extraction error"}</p>
+                            {batchResults[activeBatchIndex].resumeUrl && (
+                              <a
+                                href={batchResults[activeBatchIndex].resumeUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center space-x-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg transition-colors"
+                              >
+                                <span>View PDF</span>
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
                             )}
                           </div>
 
-                          {res.resumeUrl && (
-                            <a
-                              href={res.resumeUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-[11px] font-bold text-blue-600 hover:underline flex items-center space-x-1"
-                            >
-                              <span>Saved CV Copy</span>
-                              <FileText className="h-3 w-3" />
-                            </a>
-                          )}
+                          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 flex items-center space-x-2 text-[11px] text-emerald-900 font-bold">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0" />
+                            <span>Duplicate Check Passed — Record Ready</span>
+                          </div>
+                        </div>
+
+                        {/* Target Mandate Badge */}
+                        <div className="bg-white rounded-2xl p-3.5 border border-slate-200 space-y-1">
+                          <label className="block font-bold text-slate-700 text-xs">
+                            Mandate Pipeline Target
+                          </label>
+                          <div className="px-3 py-2 bg-slate-50 rounded-xl border border-slate-200 flex items-center space-x-2">
+                            <Briefcase className="h-3.5 w-3.5 text-slate-500" />
+                            <span className="font-bold text-slate-900 text-xs truncate">
+                              {mandate.title} ({mandate.client.name})
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-400">
+                            Candidate will be saved in master talent pool & submitted directly to this job.
+                          </p>
+                        </div>
+
+                        {/* Raw Resume Text Preview Box */}
+                        <div className="bg-white rounded-2xl p-3.5 border border-slate-200 space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
+                              Original CV Text Excerpt
+                            </span>
+                            <span className="text-[10px] text-slate-400 font-mono">Cross-Verification</span>
+                          </div>
+                          <div className="max-h-56 overflow-y-auto bg-slate-900 text-slate-200 p-3 rounded-xl font-mono text-[10px] leading-relaxed select-text">
+                            {batchResults[activeBatchIndex].rawResumeText ||
+                              batchResults[activeBatchIndex].parsed?.summary ||
+                              "No raw text available. Review extracted attributes on right."}
+                          </div>
                         </div>
                       </div>
-                    ))}
-                  </div>
 
-                  <div className="flex justify-end space-x-3 pt-3 border-t border-slate-200">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsIngestModalOpen(false);
-                        setBatchResults([]);
-                        setUploadFiles([]);
-                        setParseError(null);
-                      }}
-                      className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSaveBatchIngest}
-                      disabled={savingBatch || batchResults.filter((r) => r.success).length === 0}
-                      className="px-5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
-                    >
-                      {savingBatch ? (
-                        <>
-                          <div className="w-3 h-3 border-2 border-slate-900 border-t-transparent rounded-full animate-spin"></div>
-                          <span>Saving to Mandate...</span>
-                        </>
-                      ) : (
-                        <span>
-                          Save & Attach {batchResults.filter((r) => r.success).length} Candidate(s)
-                        </span>
-                      )}
-                    </button>
+                      {/* RIGHT PANE: Human-Editable Form Fields (7 cols) */}
+                      <div className="md:col-span-7 bg-slate-50/70 rounded-2xl p-4 border border-slate-200 space-y-3.5">
+                        <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                          <h5 className="font-black text-slate-900 text-xs uppercase tracking-wider flex items-center space-x-1.5">
+                            <Sparkles className="h-3.5 w-3.5 text-amber-600" />
+                            <span>AI-Extracted Structured Attributes</span>
+                          </h5>
+                          <span className="text-[10px] text-slate-500 italic">Editable before saving</span>
+                        </div>
+
+                        {batchResults[activeBatchIndex].parsed ? (
+                          <div className="space-y-3">
+                            {/* Candidate Full Name */}
+                            <div>
+                              <label className="block font-bold text-slate-700 mb-0.5 text-[11px]">
+                                Full Legal Name *
+                              </label>
+                              <input
+                                type="text"
+                                required
+                                value={batchResults[activeBatchIndex].parsed.fullName || ""}
+                                onChange={(e) => updateActiveParsedField("fullName", e.target.value)}
+                                className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-bold focus:ring-2 focus:ring-[#fce17c] focus:outline-none"
+                              />
+                            </div>
+
+                            {/* Designation & Company */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
+                                  Current Designation
+                                </label>
+                                <input
+                                  type="text"
+                                  value={batchResults[activeBatchIndex].parsed.currentTitle || ""}
+                                  onChange={(e) => updateActiveParsedField("currentTitle", e.target.value)}
+                                  placeholder="Senior Software Engineer"
+                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
+                                  Current Company
+                                </label>
+                                <input
+                                  type="text"
+                                  value={batchResults[activeBatchIndex].parsed.currentCompany || ""}
+                                  onChange={(e) => updateActiveParsedField("currentCompany", e.target.value)}
+                                  placeholder="Swiggy"
+                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Experience & Notice Period */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
+                                  Total Experience (Years)
+                                </label>
+                                <input
+                                  type="number"
+                                  step="0.5"
+                                  value={batchResults[activeBatchIndex].parsed.totalExpYears ?? 0}
+                                  onChange={(e) =>
+                                    updateActiveParsedField("totalExpYears", parseFloat(e.target.value) || 0)
+                                  }
+                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-bold"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
+                                  Notice Period (Days)
+                                </label>
+                                <input
+                                  type="number"
+                                  value={batchResults[activeBatchIndex].parsed.noticePeriodDays ?? 30}
+                                  onChange={(e) =>
+                                    updateActiveParsedField("noticePeriodDays", parseInt(e.target.value, 10) || 0)
+                                  }
+                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-bold"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Compensation Trajectory (CTC) */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
+                                  Current CTC (INR Annual)
+                                </label>
+                                <input
+                                  type="text"
+                                  value={batchResults[activeBatchIndex].parsed.currentCtc || ""}
+                                  onChange={(e) => updateActiveParsedField("currentCtc", e.target.value)}
+                                  placeholder="e.g. 2400000"
+                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-mono"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
+                                  Expected CTC (INR Annual)
+                                </label>
+                                <input
+                                  type="text"
+                                  value={batchResults[activeBatchIndex].parsed.expectedCtc || ""}
+                                  onChange={(e) => updateActiveParsedField("expectedCtc", e.target.value)}
+                                  placeholder="e.g. 3200000"
+                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-mono font-bold text-emerald-800"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Mobile Phone & Email */}
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
+                                  Candidate Mobile / WhatsApp
+                                </label>
+                                <input
+                                  type="text"
+                                  value={batchResults[activeBatchIndex].parsed.phone || ""}
+                                  onChange={(e) => updateActiveParsedField("phone", e.target.value)}
+                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-mono"
+                                />
+                              </div>
+
+                              <div>
+                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
+                                  Candidate Email
+                                </label>
+                                <input
+                                  type="email"
+                                  value={batchResults[activeBatchIndex].parsed.email || ""}
+                                  onChange={(e) => updateActiveParsedField("email", e.target.value)}
+                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Qualification */}
+                            <div>
+                              <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
+                                Highest Qualification / Degree
+                              </label>
+                              <input
+                                type="text"
+                                value={batchResults[activeBatchIndex].parsed.qualification || ""}
+                                onChange={(e) => updateActiveParsedField("qualification", e.target.value)}
+                                placeholder="B.Tech Computer Science, IIT Bombay"
+                                className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900"
+                              />
+                            </div>
+
+                            {/* Interactive Skills Tags */}
+                            <div>
+                              <label className="block font-semibold text-slate-700 mb-1 text-[11px]">
+                                Primary Skills Tags
+                              </label>
+                              <div className="flex flex-wrap gap-1.5 mb-2 bg-white p-2.5 rounded-xl border border-slate-200 min-h-[42px]">
+                                {Array.isArray(batchResults[activeBatchIndex].parsed.skills) &&
+                                batchResults[activeBatchIndex].parsed.skills.length > 0 ? (
+                                  batchResults[activeBatchIndex].parsed.skills.map((sk: string, sIdx: number) => (
+                                    <span
+                                      key={sIdx}
+                                      className="bg-[#fce17c]/40 text-slate-900 border border-[#ebd06b] text-[10px] font-bold px-2 py-0.5 rounded-lg flex items-center space-x-1"
+                                    >
+                                      <span>{sk}</span>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveSkill(sk)}
+                                        className="text-slate-600 hover:text-slate-900 cursor-pointer ml-1 leading-none font-black"
+                                      >
+                                        &times;
+                                      </button>
+                                    </span>
+                                  ))
+                                ) : (
+                                  <span className="text-slate-400 text-[11px] italic">No skill tags extracted yet</span>
+                                )}
+                              </div>
+
+                              <div className="flex space-x-2">
+                                <input
+                                  type="text"
+                                  value={newSkillInput}
+                                  onChange={(e) => setNewSkillInput(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      handleAddSkill();
+                                    }
+                                  }}
+                                  placeholder="Add skill tag (press Enter)..."
+                                  className="flex-1 px-3 py-1 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={handleAddSkill}
+                                  className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-lg text-xs transition-colors cursor-pointer"
+                                >
+                                  + Add Skill
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="p-6 text-center text-rose-700 bg-rose-50 rounded-xl border border-rose-200">
+                            <AlertCircle className="h-5 w-5 mx-auto mb-1 text-rose-600" />
+                            <p className="font-bold text-xs">{batchResults[activeBatchIndex].error || "Parse failed"}</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Modal Action Footer */}
+                  <div className="flex flex-col sm:flex-row items-center justify-between pt-3 border-t border-slate-200 gap-2">
+                    <span className="text-[11px] text-slate-500 flex items-center space-x-1">
+                      <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                      <span>{batchResults.filter((r) => r.success).length} Profile(s) ready to attach to '{mandate.title}'</span>
+                    </span>
+
+                    <div className="flex items-center space-x-3 w-full sm:w-auto justify-end">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsIngestModalOpen(false);
+                          setBatchResults([]);
+                          setUploadFiles([]);
+                          setParseError(null);
+                        }}
+                        className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer text-xs"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleSaveBatchIngest}
+                        disabled={savingBatch || batchResults.filter((r) => r.success).length === 0}
+                        className="px-5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center space-x-1.5 border border-[#e5bf00] text-xs"
+                      >
+                        {savingBatch ? (
+                          <>
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-800" />
+                            <span>Saving to Mandate...</span>
+                          </>
+                        ) : (
+                          <span>
+                            Save & Attach {batchResults.filter((r) => r.success).length} Candidate(s)
+                          </span>
+                        )}
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}

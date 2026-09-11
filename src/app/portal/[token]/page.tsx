@@ -328,30 +328,30 @@ export default function ZeroLoginClientPortalPage() {
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="h-9 w-9 rounded-xl bg-brand-surface border border-brand-surfaceDark flex items-center justify-center font-black text-slate-800 text-sm shadow-sm">
+            <div className="h-9 w-9 rounded-xl bg-[#fce17c] border border-[#f5d762] flex items-center justify-center font-black text-slate-900 text-sm shadow-xs">
               {portal.agency.name.substring(0, 2).toUpperCase()}
             </div>
             <div>
               <div className="flex items-center space-x-2">
                 <span className="font-extrabold text-slate-900 text-sm">{portal.agency.name}</span>
-                <span className="bg-brand-surfaceLight text-slate-700 text-[10px] font-extrabold px-2 py-0.5 rounded border border-brand-surface uppercase">
+                <span className="bg-[#fce17c]/30 text-slate-900 text-[10px] font-extrabold px-2 py-0.5 rounded border border-[#f5d762] uppercase tracking-wide">
                   Candidate Screening Portal
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 font-medium">Prepared for {portal.clientOrgName}</p>
+              <p className="text-[11px] text-slate-500 font-medium">Prepared for <strong className="text-slate-800">{portal.clientOrgName}</strong></p>
             </div>
           </div>
 
           <div className="flex items-center space-x-3">
             {/* 7-Day Expiry Countdown Pill */}
-            <div className="flex items-center space-x-1.5 text-xs bg-amber-50 text-amber-900 border border-amber-200/90 px-3 py-1 rounded-full font-bold shadow-2xs">
+            <div className="flex items-center space-x-1.5 text-xs bg-amber-50 text-amber-900 border border-amber-200/90 px-3 py-1 rounded-full font-extrabold shadow-2xs">
               <Clock className="h-3.5 w-3.5 text-amber-600 animate-pulse" />
               <span>Link Active: {daysRemaining} Day{daysRemaining === 1 ? "" : "s"} Left</span>
             </div>
 
             <div className="hidden md:flex items-center space-x-1.5 text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1 rounded-full font-bold">
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-              <span>PII Confidential</span>
+              <span>Zero-Login Secure Link</span>
             </div>
           </div>
         </div>
@@ -376,7 +376,7 @@ export default function ZeroLoginClientPortalPage() {
         )}
 
         {/* Role Brief & 48h Feedback SLA Velocity Hero */}
-        <div className="bg-white rounded-3xl border border-slate-200/90 shadow-sm p-6 sm:p-8 space-y-6">
+        <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 sm:p-8 space-y-6">
           <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
             <div className="space-y-2">
               <div className="inline-flex items-center space-x-2 bg-slate-100 border border-slate-200 px-3 py-1 rounded-full text-xs font-bold text-slate-700">
@@ -394,30 +394,41 @@ export default function ZeroLoginClientPortalPage() {
                   {portal.mandate.location || "Bengaluru"} ({portal.mandate.workMode})
                 </span>
                 <span>•</span>
-                <span>Experience: {portal.mandate.minExp}–{portal.mandate.maxExp} Years</span>
+                <span>Experience: <strong className="text-slate-700">{portal.mandate.minExp}–{portal.mandate.maxExp} Years</strong></span>
                 <span>•</span>
-                <span>Openings: {portal.mandate.openings}</span>
+                <span>Openings: <strong className="text-slate-700">{portal.mandate.openings}</strong></span>
               </div>
             </div>
 
-            {/* 48-Hour Feedback SLA Velocity Clock */}
-            <div className="bg-brand-surfaceLight border-2 border-brand-surface rounded-2xl p-4 sm:w-80 flex-shrink-0">
+            {/* 48-Hour Feedback SLA Velocity Clock (CF-04) */}
+            <div className="bg-[#fce17c]/15 border-2 border-[#fce17c] rounded-2xl p-4 sm:w-80 flex-shrink-0 shadow-2xs">
               <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-extrabold uppercase tracking-wider text-slate-700">
-                  Screening SLA Clock
+                <span className="text-[11px] font-black uppercase tracking-wider text-slate-800 flex items-center space-x-1.5">
+                  <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                  <span>Screening SLA Clock</span>
                 </span>
-                <Clock className="h-4 w-4 text-slate-700" />
+                <Clock className="h-4 w-4 text-slate-800" />
               </div>
               <div className="text-xl font-black text-slate-900">
                 {portal.feedbackSlaHours}-Hour Review Window
               </div>
               <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
-                Candidate availability is prioritized for rapid client review to ensure top talent is secured promptly.
+                Fast client decisions secure high-demand talent before competing offers occur.
               </p>
               {portal.mandate.assignedRecruiter && (
-                <div className="mt-3 pt-2.5 border-t border-brand-surface text-xs text-slate-700">
-                  <span className="text-slate-500 block text-[10px]">Lead Search Recruiter:</span>
-                  <span className="font-bold text-slate-900">{portal.mandate.assignedRecruiter.name}</span>
+                <div className="mt-3 pt-2.5 border-t border-[#fce17c]/60 text-xs text-slate-700 flex items-center justify-between">
+                  <div>
+                    <span className="text-slate-500 block text-[10px] font-bold">Search Lead:</span>
+                    <span className="font-extrabold text-slate-900">{portal.mandate.assignedRecruiter.name}</span>
+                  </div>
+                  {portal.mandate.assignedRecruiter.phone && (
+                    <a
+                      href={`tel:${portal.mandate.assignedRecruiter.phone}`}
+                      className="text-[11px] font-mono font-bold text-slate-800 bg-white px-2 py-0.5 rounded border border-[#fce17c] hover:bg-[#fce17c]/20"
+                    >
+                      {portal.mandate.assignedRecruiter.phone}
+                    </a>
+                  )}
                 </div>
               )}
             </div>
@@ -426,14 +437,14 @@ export default function ZeroLoginClientPortalPage() {
           {/* Key Skills */}
           {portal.mandate.skills && portal.mandate.skills.length > 0 && (
             <div className="pt-4 border-t border-slate-100">
-              <span className="block text-xs font-bold uppercase tracking-wider text-slate-500 mb-2">
-                Mandate Skill Competencies
+              <span className="block text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
+                Mandate Target Competencies
               </span>
               <div className="flex flex-wrap gap-2">
                 {portal.mandate.skills.map((skill, idx) => (
                   <span
                     key={idx}
-                    className="bg-slate-100 border border-slate-200 text-slate-800 text-xs font-semibold px-3 py-1 rounded-lg"
+                    className="bg-slate-100 hover:bg-[#fce17c]/20 border border-slate-200 text-slate-800 text-xs font-bold px-3 py-1 rounded-xl transition-colors"
                   >
                     {skill}
                   </span>
@@ -449,21 +460,21 @@ export default function ZeroLoginClientPortalPage() {
             <div className="flex flex-wrap bg-white p-1 rounded-2xl border border-slate-200 shadow-2xs gap-1 max-w-xl">
               <button
                 onClick={() => setActiveFilter("ALL")}
-                className={`py-2 px-3 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                className={`py-2 px-3 rounded-xl font-black text-xs transition-all cursor-pointer ${
                   activeFilter === "ALL"
                     ? "bg-slate-900 text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                 }`}
               >
-                All Submitted Profiles ({portal.candidates.length})
+                All Profiles ({portal.candidates.length})
               </button>
 
               <button
                 onClick={() => setActiveFilter("PENDING")}
-                className={`py-2 px-3 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                className={`py-2 px-3 rounded-xl font-black text-xs transition-all cursor-pointer ${
                   activeFilter === "PENDING"
-                    ? "bg-brand-yellow text-slate-900 shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
+                    ? "bg-[#FFD400] text-slate-900 border border-[#e5bf00] shadow-xs"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                 }`}
               >
                 Pending Review ({pendingCount})
@@ -471,10 +482,10 @@ export default function ZeroLoginClientPortalPage() {
 
               <button
                 onClick={() => setActiveFilter("SHORTLISTED")}
-                className={`py-2 px-3 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                className={`py-2 px-3 rounded-xl font-black text-xs transition-all cursor-pointer ${
                   activeFilter === "SHORTLISTED"
                     ? "bg-emerald-600 text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                 }`}
               >
                 Shortlisted ({shortlistedCount})
@@ -482,10 +493,10 @@ export default function ZeroLoginClientPortalPage() {
 
               <button
                 onClick={() => setActiveFilter("HOLD")}
-                className={`py-2 px-3 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                className={`py-2 px-3 rounded-xl font-black text-xs transition-all cursor-pointer ${
                   activeFilter === "HOLD"
                     ? "bg-amber-500 text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                 }`}
               >
                 On Hold ({holdCount})
@@ -493,18 +504,18 @@ export default function ZeroLoginClientPortalPage() {
 
               <button
                 onClick={() => setActiveFilter("REJECTED")}
-                className={`py-2 px-3 rounded-xl font-bold text-xs transition-all cursor-pointer ${
+                className={`py-2 px-3 rounded-xl font-black text-xs transition-all cursor-pointer ${
                   activeFilter === "REJECTED"
                     ? "bg-slate-200 text-slate-800 shadow-xs"
-                    : "text-slate-600 hover:text-slate-900"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
                 }`}
               >
                 Archived ({rejectedCount})
               </button>
             </div>
 
-            <span className="text-xs text-slate-500 font-medium">
-              Showing {filteredCandidates.length} candidate profile(s)
+            <span className="text-xs text-slate-500 font-bold">
+              Showing {filteredCandidates.length} candidate profile{filteredCandidates.length === 1 ? "" : "s"}
             </span>
           </div>
 
@@ -538,7 +549,7 @@ export default function ZeroLoginClientPortalPage() {
                 return (
                   <div
                     key={cand.submissionId}
-                    className={`bg-white rounded-3xl border transition-all p-6 sm:p-7 space-y-5 shadow-sm ${
+                    className={`bg-white rounded-3xl border transition-all p-6 sm:p-7 space-y-5 shadow-xs ${
                       isShortlisted
                         ? "border-emerald-300 ring-2 ring-emerald-400/20"
                         : isHold
@@ -551,35 +562,35 @@ export default function ZeroLoginClientPortalPage() {
                     {/* Header: Candidate Identity & Actions */}
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                       <div>
-                        <div className="flex items-center space-x-2.5">
-                          <div className="w-11 h-11 rounded-2xl bg-brand-surface border border-brand-surfaceDark flex items-center justify-center font-black text-slate-800 text-sm shadow-xs">
+                        <div className="flex items-center space-x-3">
+                          <div className="w-12 h-12 rounded-2xl bg-[#fce17c] border border-[#f5d762] flex items-center justify-center font-black text-slate-900 text-base shadow-xs flex-shrink-0">
                             {cand.fullName.substring(0, 2).toUpperCase()}
                           </div>
                           <div>
                             <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                              <h3 className="font-extrabold text-slate-900 text-lg">{cand.fullName}</h3>
+                              <h3 className="font-black text-slate-900 text-lg tracking-tight">{cand.fullName}</h3>
                               {isShortlisted && (
-                                <span className="bg-emerald-100 text-emerald-800 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center space-x-1">
-                                  <Check className="h-3 w-3 text-emerald-600" />
-                                  <span>Selected for Next Round</span>
+                                <span className="bg-emerald-100 text-emerald-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center space-x-1 shadow-2xs">
+                                  <Check className="h-3 w-3 text-emerald-700" />
+                                  <span>Selected for Interview</span>
                                 </span>
                               )}
                               {isHold && (
-                                <span className="bg-amber-100 text-amber-900 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-amber-300 flex items-center space-x-1">
-                                  <PauseCircle className="h-3 w-3 text-amber-600" />
+                                <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-amber-300 flex items-center space-x-1 shadow-2xs">
+                                  <PauseCircle className="h-3 w-3 text-amber-700" />
                                   <span>On Hold</span>
                                 </span>
                               )}
                               {isRejected && (
-                                <span className="bg-slate-100 text-slate-600 text-[10px] font-extrabold px-2.5 py-0.5 rounded-full border border-slate-300">
-                                  Archived / Rejected
+                                <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-slate-300">
+                                  Archived / Declined
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-slate-600 font-semibold flex items-center gap-2 flex-wrap pt-0.5">
-                              <span>Applied Role: <strong className="text-slate-900">{portal.mandate.title}</strong></span>
+                            <p className="text-xs text-slate-600 font-medium flex items-center gap-2 flex-wrap pt-0.5">
+                              <span>Applied: <strong className="text-slate-900 font-bold">{portal.mandate.title}</strong></span>
                               <span>•</span>
-                              <span>Current: <strong className="text-slate-900">{cand.currentTitle || "Professional"}</strong> {cand.currentCompany ? `at ${cand.currentCompany}` : ""}</span>
+                              <span>Current: <strong className="text-slate-900 font-bold">{cand.currentTitle || "Professional"}</strong> {cand.currentCompany ? `at ${cand.currentCompany}` : ""}</span>
                             </p>
                           </div>
                         </div>
@@ -605,74 +616,80 @@ export default function ZeroLoginClientPortalPage() {
                             setExpandedCandidate(cand);
                             setExpandedTab("CV");
                           }}
-                          className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition-colors shadow-xs cursor-pointer"
+                          className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#FFD400] hover:bg-[#E6BF00] text-slate-900 font-black rounded-xl text-xs transition-all shadow-xs border border-[#e5bf00] cursor-pointer"
                         >
-                          <Maximize2 className="h-3.5 w-3.5 text-brand-yellow" />
+                          <Maximize2 className="h-3.5 w-3.5 stroke-[2.5]" />
                           <span>Expand CV & Screening</span>
                         </button>
                       </div>
                     </div>
 
-                    {/* Candidate Direct Contacts */}
-                    <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600 bg-slate-50/70 p-3 rounded-xl border border-slate-200/70">
+                    {/* Candidate Direct Contacts (PII Visible per User Request) */}
+                    <div className="flex flex-wrap items-center gap-4 text-xs text-slate-700 bg-slate-50 p-3 rounded-xl border border-slate-200">
                       <div className="flex items-center space-x-1.5">
-                        <Mail className="h-3.5 w-3.5 text-slate-400" />
-                        <span className="text-slate-500">Email:</span>
-                        <strong className="text-slate-900">{cand.email}</strong>
+                        <Mail className="h-3.5 w-3.5 text-slate-500" />
+                        <span className="text-slate-500 font-medium">Email:</span>
+                        <a href={`mailto:${cand.email}`} className="text-blue-700 font-bold hover:underline">
+                          {cand.email}
+                        </a>
                       </div>
                       <div className="flex items-center space-x-1.5">
-                        <Phone className="h-3.5 w-3.5 text-slate-400" />
-                        <span className="text-slate-500">Phone:</span>
-                        <strong className="text-slate-900 font-mono">{cand.phone}</strong>
+                        <Phone className="h-3.5 w-3.5 text-slate-500" />
+                        <span className="text-slate-500 font-medium">Phone:</span>
+                        <a href={`tel:${cand.phone}`} className="text-slate-900 font-mono font-bold hover:underline">
+                          {cand.phone}
+                        </a>
                       </div>
+                      {cand.location && (
+                        <div className="flex items-center space-x-1.5">
+                          <MapPin className="h-3.5 w-3.5 text-slate-500" />
+                          <span className="text-slate-500 font-medium">Location:</span>
+                          <strong className="text-slate-900 font-bold">{cand.location}</strong>
+                        </div>
+                      )}
                       <div className="flex items-center space-x-1.5">
-                        <Building2 className="h-3.5 w-3.5 text-slate-400" />
-                        <span className="text-slate-500">Client:</span>
-                        <strong className="text-slate-900">{portal.clientOrgName}</strong>
-                      </div>
-                      <div className="flex items-center space-x-1.5">
-                        <Calendar className="h-3.5 w-3.5 text-slate-400" />
-                        <span className="text-slate-500">Sourced:</span>
-                        <strong className="text-slate-900">{new Date(cand.dateOfSourcing).toLocaleDateString()}</strong>
+                        <Calendar className="h-3.5 w-3.5 text-slate-500" />
+                        <span className="text-slate-500 font-medium">Sourced:</span>
+                        <strong className="text-slate-900 font-bold">{new Date(cand.dateOfSourcing).toLocaleDateString()}</strong>
                         <span className="text-slate-400 text-[10px]">({cand.sourceName})</span>
                       </div>
                     </div>
 
-                    {/* 19-Column Screening Telemetry Snapshot */}
+                    {/* Telemetry Snapshot Grid */}
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-50/90 p-4 rounded-2xl border border-slate-200/80 text-xs">
                       <div>
                         <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Total Experience</span>
-                        <strong className="text-slate-900 text-xs">{cand.totalExpYears} Years</strong>
+                        <strong className="text-slate-900 text-xs font-black">{cand.totalExpYears} Years</strong>
                       </div>
                       <div>
                         <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Relevant Experience</span>
-                        <strong className="text-slate-900 text-xs">
+                        <strong className="text-slate-900 text-xs font-black">
                           {cand.relevantExpYears !== null && cand.relevantExpYears !== undefined ? `${cand.relevantExpYears} Years` : "Verified in Screening"}
                         </strong>
                       </div>
                       <div>
                         <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Current Salary (CTC)</span>
-                        <strong className="text-slate-900 text-xs">{cand.currentSalary || "Confidential"}</strong>
+                        <strong className="text-slate-900 text-xs font-black">{cand.currentSalary || "Confidential"}</strong>
                       </div>
                       <div>
                         <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Expected Salary (CTC)</span>
-                        <strong className="text-emerald-700 text-xs">{cand.expectedSalary || "Negotiable"}</strong>
+                        <strong className="text-emerald-700 text-xs font-black">{cand.expectedSalary || "Negotiable"}</strong>
                       </div>
                       <div>
                         <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Notice Period</span>
-                        <strong className="text-slate-900 text-xs">{cand.noticePeriod || `${cand.noticePeriodDays} Days`}</strong>
+                        <strong className="text-slate-900 text-xs font-black">{cand.noticePeriod || `${cand.noticePeriodDays} Days`}</strong>
                       </div>
                       <div>
                         <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Ready to Relocate</span>
-                        <strong className="text-slate-900 text-xs">{cand.readyToRelocate || "Yes"}</strong>
+                        <strong className="text-slate-900 text-xs font-bold">{cand.readyToRelocate || "Yes"}</strong>
                       </div>
                       <div>
                         <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Offer in Hand</span>
-                        <strong className="text-slate-900 text-xs">{cand.offerInHand || "No"}</strong>
+                        <strong className="text-slate-900 text-xs font-bold">{cand.offerInHand || "No"}</strong>
                       </div>
                       <div>
                         <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Highest Qualification</span>
-                        <strong className="text-slate-900 text-xs truncate block">{cand.qualification || "Graduate / Degree"}</strong>
+                        <strong className="text-slate-900 text-xs font-bold truncate block">{cand.qualification || "Graduate / Degree"}</strong>
                       </div>
                     </div>
 
@@ -694,14 +711,14 @@ export default function ZeroLoginClientPortalPage() {
 
                     {/* Skills Matrix */}
                     <div>
-                      <span className="block text-[11px] font-bold uppercase tracking-wider text-slate-500 mb-1.5">
+                      <span className="block text-[11px] font-black uppercase tracking-wider text-slate-500 mb-1.5">
                         Verified Technical & Domain Competencies
                       </span>
                       <div className="flex flex-wrap gap-1.5">
                         {cand.skills.map((s, idx) => (
                           <span
                             key={idx}
-                            className="bg-brand-surfaceLight border border-brand-surface text-slate-800 text-xs font-semibold px-2.5 py-1 rounded-lg"
+                            className="bg-slate-100 hover:bg-[#fce17c]/30 border border-slate-200 text-slate-800 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors"
                           >
                             {s}
                           </span>
@@ -711,18 +728,23 @@ export default function ZeroLoginClientPortalPage() {
 
                     {/* Client Decision Feedback Box (if already acted) */}
                     {cand.clientFeedbackNotes && (
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700">
-                        <span className="font-bold text-slate-900 block text-[11px] mb-0.5">Your Logged Feedback:</span>
-                        <p>{cand.clientFeedbackNotes}</p>
+                      <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700 space-y-1">
+                        <span className="font-extrabold text-slate-900 block text-[11px]">Logged Client Feedback:</span>
+                        <p className="text-slate-800 font-medium">{cand.clientFeedbackNotes}</p>
                         {cand.preferredInterviewTimes && (
-                          <p className="text-[11px] text-emerald-800 font-semibold mt-1">
-                            Preferred Timeframe: {cand.preferredInterviewTimes}
+                          <p className="text-[11px] text-emerald-800 font-bold pt-1">
+                            Interview Availability: {cand.preferredInterviewTimes}
+                          </p>
+                        )}
+                        {cand.rejectionReason && (
+                          <p className="text-[11px] text-rose-700 font-bold pt-1">
+                            Reason: {cand.rejectionReason}
                           </p>
                         )}
                       </div>
                     )}
 
-                    {/* 1-Click Interactive Action Controls (CL-02) */}
+                    {/* 1-Click Interactive Action Controls (CF-02) */}
                     <div className="pt-2 flex flex-wrap items-center justify-end gap-2 border-t border-slate-100">
                       <button
                         type="button"
@@ -754,7 +776,7 @@ export default function ZeroLoginClientPortalPage() {
                       <button
                         type="button"
                         onClick={() => handleOpenDecision(cand, "SHORTLIST")}
-                        className="px-5 py-2 rounded-xl text-xs font-extrabold bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 shadow-sm transition-all flex items-center space-x-1.5 cursor-pointer"
+                        className="px-5 py-2.5 rounded-xl text-xs font-black bg-[#FFD400] hover:bg-[#E6BF00] text-slate-900 shadow-xs border border-[#e5bf00] transition-all flex items-center space-x-1.5 cursor-pointer"
                       >
                         <ThumbsUp className="h-3.5 w-3.5 text-slate-900" />
                         <span>Shortlist for Next Round</span>
@@ -1034,7 +1056,7 @@ export default function ZeroLoginClientPortalPage() {
                 <button
                   type="button"
                   onClick={() => handleOpenDecision(expandedCandidate, "SHORTLIST")}
-                  className="px-5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 rounded-xl text-xs font-extrabold shadow-sm cursor-pointer"
+                  className="px-5 py-2 bg-[#FFD400] hover:bg-[#E6BF00] text-slate-900 rounded-xl text-xs font-black shadow-xs border border-[#e5bf00] cursor-pointer"
                 >
                   Shortlist for Next Round
                 </button>
@@ -1044,34 +1066,34 @@ export default function ZeroLoginClientPortalPage() {
         </div>
       )}
 
-      {/* INTERACTIVE DECISION MODAL (CL-02) */}
+      {/* INTERACTIVE DECISION MODAL (CF-02 & CF-03) */}
       {selectedCandidate && actionType && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
             <div
               className={`px-6 py-4 border-b flex items-center justify-between ${
                 actionType === "SHORTLIST"
-                  ? "bg-emerald-50 border-emerald-200"
+                  ? "bg-amber-50/60 border-amber-200"
                   : actionType === "HOLD"
                   ? "bg-amber-50 border-amber-200"
                   : actionType === "REJECT"
                   ? "bg-rose-50 border-rose-200"
-                  : "bg-brand-surfaceLight border-brand-surface"
+                  : "bg-slate-50 border-slate-200"
               }`}
             >
-              <div className="flex items-center space-x-2">
-                {actionType === "SHORTLIST" && <ThumbsUp className="h-5 w-5 text-emerald-700" />}
+              <div className="flex items-center space-x-2.5">
+                {actionType === "SHORTLIST" && <ThumbsUp className="h-5 w-5 text-amber-600" />}
                 {actionType === "HOLD" && <PauseCircle className="h-5 w-5 text-amber-700" />}
                 {actionType === "REJECT" && <ThumbsDown className="h-5 w-5 text-rose-700" />}
                 {actionType === "QUESTION" && <MessageSquare className="h-5 w-5 text-slate-800" />}
                 <div>
-                  <h3 className="font-extrabold text-slate-900 text-sm">
-                    {actionType === "SHORTLIST" && "Shortlist Candidate for Next Round"}
+                  <h3 className="font-black text-slate-900 text-sm">
+                    {actionType === "SHORTLIST" && "Shortlist Candidate & Propose Interview Slots"}
                     {actionType === "HOLD" && "Put Candidate on Temporary Hold"}
-                    {actionType === "REJECT" && "Decline Profile & Provide Feedback"}
+                    {actionType === "REJECT" && "Decline Profile & Structured Feedback"}
                     {actionType === "QUESTION" && "Ask Search Lead a Question"}
                   </h3>
-                  <p className="text-[10px] text-slate-600">Candidate: {selectedCandidate.fullName}</p>
+                  <p className="text-[11px] text-slate-600 font-medium">Candidate: <strong className="text-slate-900">{selectedCandidate.fullName}</strong> • {portal.mandate.title}</p>
                 </div>
               </div>
               <button
@@ -1086,35 +1108,99 @@ export default function ZeroLoginClientPortalPage() {
             </div>
 
             <form onSubmit={handleDecisionSubmit} className="p-6 space-y-4">
-              {/* Shortlist Flow */}
+              {/* Shortlist Flow (CF-03 Calendar Slot Selector) */}
               {actionType === "SHORTLIST" && (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div>
-                    <label className="block font-bold text-slate-900 mb-1">
-                      Preferred Interview Availability / Timeframes *
+                    <label className="block font-black text-slate-900 mb-1 text-xs">
+                      Propose Available Interview Windows (CF-03) *
                     </label>
-                    <select
-                      value={interviewTimes}
-                      onChange={(e) => setInterviewTimes(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
-                    >
-                      <option value="Flexible — Next 48 hours">Flexible — Next 48 hours</option>
-                      <option value="Weekday mornings (10 AM – 1 PM)">Weekday mornings (10 AM – 1 PM)</option>
-                      <option value="Weekday afternoons (2 PM – 6 PM)">Weekday afternoons (2 PM – 6 PM)</option>
-                      <option value="This Friday / Weekend slot">This Friday / Weekend slot</option>
-                    </select>
+                    <p className="text-[11px] text-slate-500 mb-2.5">
+                      Select your availability block. The candidate receives an automated 1-click confirmation on WhatsApp.
+                    </p>
+
+                    <div className="grid grid-cols-1 gap-2">
+                      {[
+                        {
+                          id: "Flexible — Next 48 hours",
+                          title: "Flexible — Next 48 hours",
+                          desc: "Open business hours across the next 2 working days",
+                        },
+                        {
+                          id: "Weekday mornings (10 AM – 1 PM)",
+                          title: "Weekday Mornings (10:00 AM – 1:00 PM)",
+                          desc: "Preferred panel morning interview window",
+                        },
+                        {
+                          id: "Weekday afternoons (2 PM – 6 PM)",
+                          title: "Weekday Afternoons (2:00 PM – 6:00 PM)",
+                          desc: "Preferred panel afternoon evaluation window",
+                        },
+                        {
+                          id: "This Friday / Weekend slot",
+                          title: "Upcoming Friday / Weekend Slot",
+                          desc: "Concentrated hiring manager review block",
+                        },
+                      ].map((slot) => {
+                        const isSelected = interviewTimes === slot.id;
+                        return (
+                          <div
+                            key={slot.id}
+                            onClick={() => setInterviewTimes(slot.id)}
+                            className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
+                              isSelected
+                                ? "bg-amber-50/80 border-amber-400 ring-2 ring-amber-400/20 shadow-2xs"
+                                : "bg-slate-50/70 border-slate-200 hover:bg-slate-100 hover:border-slate-300"
+                            }`}
+                          >
+                            <div>
+                              <div className="font-extrabold text-slate-900 text-xs flex items-center space-x-1.5">
+                                <span>{slot.title}</span>
+                              </div>
+                              <div className="text-[11px] text-slate-500 font-medium mt-0.5">{slot.desc}</div>
+                            </div>
+                            <div
+                              className={`h-5 w-5 rounded-full flex items-center justify-center border transition-all ${
+                                isSelected
+                                  ? "bg-[#FFD400] border-[#e5bf00] text-slate-900"
+                                  : "border-slate-300 bg-white"
+                              }`}
+                            >
+                              {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      Panel Notes / Specific Focus Areas (Optional)
+                    <label className="block font-bold text-slate-800 mb-1 text-xs">
+                      Custom Time Proposal (Optional Override)
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Wednesday 15 Oct @ 3:00 PM, Thursday 16 Oct @ 11:00 AM"
+                      value={
+                        interviewTimes.startsWith("Custom: ")
+                          ? interviewTimes.replace("Custom: ", "")
+                          : ""
+                      }
+                      onChange={(e) => setInterviewTimes(`Custom: ${e.target.value}`)}
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-800 mb-1 text-xs">
+                      Panel Notes / Key Tech Evaluation Focus (Optional)
                     </label>
                     <textarea
                       rows={2}
                       value={decisionNotes}
                       onChange={(e) => setDecisionNotes(e.target.value)}
-                      placeholder="e.g. Please focus technical round on ROS2 navigation stack experience."
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                      placeholder="e.g. Please emphasize hands-on system architecture and team leadership in Round 1."
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
                     />
                   </div>
                 </div>
@@ -1122,25 +1208,70 @@ export default function ZeroLoginClientPortalPage() {
 
               {/* Hold Flow */}
               {actionType === "HOLD" && (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div>
-                    <label className="block font-bold text-slate-900 mb-1">
+                    <label className="block font-black text-slate-900 mb-1 text-xs">
                       Hold Reason *
                     </label>
-                    <select
-                      value={holdReason}
-                      onChange={(e) => setHoldReason(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
-                    >
-                      <option value="Comparing with incoming profiles">Comparing with incoming profiles</option>
-                      <option value="Hiring manager / interview panel traveling">Hiring manager / interview panel traveling</option>
-                      <option value="Requirement timeline adjusted">Requirement timeline adjusted</option>
-                      <option value="Reviewing internal budget / compensation">Reviewing internal budget / compensation</option>
-                    </select>
+                    <p className="text-[11px] text-slate-500 mb-2.5">
+                      Temporarily pause this profile while keeping candidate pipeline warm.
+                    </p>
+
+                    <div className="grid grid-cols-1 gap-2">
+                      {[
+                        {
+                          id: "Comparing with incoming profiles",
+                          title: "Comparing with Incoming Profiles",
+                          desc: "Evaluating parallel candidates before locking interview list",
+                        },
+                        {
+                          id: "Hiring manager / interview panel traveling",
+                          title: "Panel / Hiring Manager Traveling",
+                          desc: "Team availability constrained this week",
+                        },
+                        {
+                          id: "Requirement timeline adjusted",
+                          title: "Requirement Timeline Shifted",
+                          desc: "Role start date or urgency temporarily moved",
+                        },
+                        {
+                          id: "Reviewing internal budget / compensation",
+                          title: "Internal Budget / Level Review",
+                          desc: "Clarifying internal compensation bands for this opening",
+                        },
+                      ].map((item) => {
+                        const isSelected = holdReason === item.id;
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => setHoldReason(item.id)}
+                            className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
+                              isSelected
+                                ? "bg-amber-50/80 border-amber-400 ring-2 ring-amber-400/20 shadow-2xs"
+                                : "bg-slate-50/70 border-slate-200 hover:bg-slate-100 hover:border-slate-300"
+                            }`}
+                          >
+                            <div>
+                              <div className="font-extrabold text-slate-900 text-xs">{item.title}</div>
+                              <div className="text-[11px] text-slate-500 font-medium mt-0.5">{item.desc}</div>
+                            </div>
+                            <div
+                              className={`h-5 w-5 rounded-full flex items-center justify-center border transition-all ${
+                                isSelected
+                                  ? "bg-amber-500 border-amber-600 text-white"
+                                  : "border-slate-300 bg-white"
+                              }`}
+                            >
+                              {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
+                    <label className="block font-bold text-slate-800 mb-1 text-xs">
                       Additional Notes for Recruiter (Optional)
                     </label>
                     <textarea
@@ -1148,42 +1279,91 @@ export default function ZeroLoginClientPortalPage() {
                       value={decisionNotes}
                       onChange={(e) => setDecisionNotes(e.target.value)}
                       placeholder="e.g. Keep warm; we will revisit after interviewing the first 2 candidates."
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-200"
                     />
                   </div>
                 </div>
               )}
 
-              {/* Reject Flow */}
+              {/* Reject Flow (CF-02: Structured Rejection Matrix) */}
               {actionType === "REJECT" && (
-                <div className="space-y-3">
+                <div className="space-y-4">
                   <div>
-                    <label className="block font-bold text-slate-900 mb-1">
-                      Primary Decline Reason (Helps calibrate future profiles) *
+                    <label className="block font-black text-slate-900 mb-1 text-xs">
+                      Primary Decline Reason (CF-02 Structured Calibration) *
                     </label>
-                    <select
-                      value={rejectionReason}
-                      onChange={(e) => setRejectionReason(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
-                    >
-                      <option value="Lacks required depth in core tech stack">Lacks required depth in core tech stack</option>
-                      <option value="Compensation expectation is above budget">Compensation expectation is above budget</option>
-                      <option value="Notice period is too long for hiring timeline">Notice period is too long for hiring timeline</option>
-                      <option value="Domain / Industry mismatch">Domain / Industry mismatch</option>
-                      <option value="Seniority level mismatch (under/overqualified)">Seniority level mismatch (under/overqualified)</option>
-                    </select>
+                    <p className="text-[11px] text-slate-500 mb-2.5">
+                      Structured feedback helps your search team recalibrate pipeline candidates in real time.
+                    </p>
+
+                    <div className="grid grid-cols-1 gap-2">
+                      {[
+                        {
+                          id: "Compensation expectation is above budget",
+                          title: "Over Expected Salary / Compensation",
+                          desc: "Current or expected CTC exceeds client budget benchmark",
+                        },
+                        {
+                          id: "Lacks required depth in core tech stack",
+                          title: "Technical Skill / Depth Gap",
+                          desc: "Missing required core competency or hands-on framework depth",
+                        },
+                        {
+                          id: "Notice period is too long for hiring timeline",
+                          title: "Notice Period Too Long",
+                          desc: "Availability timeline does not match project kick-off date",
+                        },
+                        {
+                          id: "Domain / Industry mismatch",
+                          title: "Domain / Industry Mismatch",
+                          desc: "Requires specific niche background or sector familiarity",
+                        },
+                        {
+                          id: "Seniority level mismatch (under/overqualified)",
+                          title: "Seniority Mismatch (Over / Under)",
+                          desc: "Level of leadership or years does not match role requirements",
+                        },
+                      ].map((item) => {
+                        const isSelected = rejectionReason === item.id;
+                        return (
+                          <div
+                            key={item.id}
+                            onClick={() => setRejectionReason(item.id)}
+                            className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
+                              isSelected
+                                ? "bg-rose-50/80 border-rose-400 ring-2 ring-rose-400/20 shadow-2xs"
+                                : "bg-slate-50/70 border-slate-200 hover:bg-slate-100 hover:border-slate-300"
+                            }`}
+                          >
+                            <div>
+                              <div className="font-extrabold text-slate-900 text-xs">{item.title}</div>
+                              <div className="text-[11px] text-slate-500 font-medium mt-0.5">{item.desc}</div>
+                            </div>
+                            <div
+                              className={`h-5 w-5 rounded-full flex items-center justify-center border transition-all ${
+                                isSelected
+                                  ? "bg-rose-600 border-rose-700 text-white"
+                                  : "border-slate-300 bg-white"
+                              }`}
+                            >
+                              {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
 
                   <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      Additional Calibration Notes (Optional)
+                    <label className="block font-bold text-slate-800 mb-1 text-xs">
+                      Additional Calibration Notes for Recruiter (Optional)
                     </label>
                     <textarea
                       rows={2}
                       value={decisionNotes}
                       onChange={(e) => setDecisionNotes(e.target.value)}
-                      placeholder="e.g. Good profile, but we specifically need hands-on production experience."
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                      placeholder="e.g. Strong profile, but we need someone who has specifically managed Kubernetes clusters at scale."
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-200"
                     />
                   </div>
                 </div>
@@ -1193,7 +1373,7 @@ export default function ZeroLoginClientPortalPage() {
               {actionType === "QUESTION" && (
                 <div className="space-y-3">
                   <div>
-                    <label className="block font-bold text-slate-900 mb-1">
+                    <label className="block font-bold text-slate-900 mb-1 text-xs">
                       Question for Search Lead *
                     </label>
                     <textarea
@@ -1202,13 +1382,13 @@ export default function ZeroLoginClientPortalPage() {
                       value={decisionNotes}
                       onChange={(e) => setDecisionNotes(e.target.value)}
                       placeholder="e.g. Has this candidate led autonomous deployment in physical production environments?"
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300"
                     />
                   </div>
                 </div>
               )}
 
-              <div className="flex justify-end space-x-3 pt-3 border-t border-slate-100">
+              <div className="flex justify-end space-x-3 pt-4 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={() => {
@@ -1222,17 +1402,21 @@ export default function ZeroLoginClientPortalPage() {
                 <button
                   type="submit"
                   disabled={submittingDecision}
-                  className={`px-5 py-2 font-extrabold rounded-xl shadow-sm transition-all cursor-pointer disabled:opacity-50 ${
+                  className={`px-6 py-2.5 font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50 ${
                     actionType === "SHORTLIST"
-                      ? "bg-brand-yellow hover:bg-brand-yellowHover text-slate-900"
+                      ? "bg-[#FFD400] hover:bg-[#E6BF00] text-slate-900 border border-[#e5bf00]"
                       : actionType === "HOLD"
                       ? "bg-amber-500 hover:bg-amber-600 text-white"
                       : actionType === "REJECT"
-                      ? "bg-rose-600 hover:bg-rose-700 text-white"
+                      ? "bg-slate-900 hover:bg-slate-800 text-white"
                       : "bg-slate-900 hover:bg-slate-800 text-white"
                   }`}
                 >
-                  {submittingDecision ? "Submitting..." : "Confirm & Send Feedback"}
+                  {submittingDecision
+                    ? "Recording Decision..."
+                    : actionType === "SHORTLIST"
+                    ? "Confirm Shortlist & Propose Slots"
+                    : "Confirm & Send Feedback"}
                 </button>
               </div>
             </form>

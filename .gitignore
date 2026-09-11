@@ -37,3 +37,6 @@ next-env.d.ts
 # Local project memory
 PROJECT_MEMORY.md
 AGENTS.md
+
+# Local backup files
+*.backup
