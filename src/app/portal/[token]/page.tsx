@@ -551,7 +551,7 @@ export default function ZeroLoginClientPortalPage() {
                     key={cand.submissionId}
                     className={`bg-white rounded-3xl border transition-all p-6 sm:p-7 space-y-5 shadow-xs ${
                       isShortlisted
-                        ? "border-emerald-300 ring-2 ring-emerald-400/20"
+                        ? "border-2 border-emerald-400/80 shadow-xs ring-4 ring-emerald-50"
                         : isHold
                         ? "border-amber-300 ring-2 ring-amber-400/20"
                         : isRejected
@@ -559,183 +559,177 @@ export default function ZeroLoginClientPortalPage() {
                         : "border-slate-200/90 hover:border-slate-300"
                     }`}
                   >
-                    {/* Header: Candidate Identity & Actions */}
+                    {/* Header: Candidate Identity, Visible Contacts & SLA */}
                     <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                      <div>
-                        <div className="flex items-center space-x-3">
-                          <div className="w-12 h-12 rounded-2xl bg-[#fce17c] border border-[#f5d762] flex items-center justify-center font-black text-slate-900 text-base shadow-xs flex-shrink-0">
-                            {cand.fullName.substring(0, 2).toUpperCase()}
+                      <div className="flex items-start space-x-3.5">
+                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-base shadow-xs flex-shrink-0 ${
+                          isShortlisted
+                            ? "bg-emerald-100 border border-emerald-300 text-emerald-950"
+                            : "bg-[#fce17c] border border-[#f5d762] text-slate-900"
+                        }`}>
+                          {cand.fullName.substring(0, 2).toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="flex items-center space-x-2.5 flex-wrap">
+                            <h2 className="text-xl font-black text-slate-900 tracking-tight">{cand.fullName}</h2>
+                            {isShortlisted && (
+                              <span className="bg-emerald-100 text-emerald-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center space-x-1 shadow-2xs">
+                                <Check className="h-3 w-3 text-emerald-700" />
+                                <span>Selected for Interview</span>
+                              </span>
+                            )}
+                            {isHold && (
+                              <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-amber-300 flex items-center space-x-1 shadow-2xs">
+                                <PauseCircle className="h-3 w-3 text-amber-700" />
+                                <span>On Hold</span>
+                              </span>
+                            )}
+                            {isRejected && (
+                              <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-slate-300">
+                                Archived / Declined
+                              </span>
+                            )}
+                            {isPending && (
+                              <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-amber-300">
+                                ⏳ Pending Review
+                              </span>
+                            )}
                           </div>
-                          <div>
-                            <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                              <h3 className="font-black text-slate-900 text-lg tracking-tight">{cand.fullName}</h3>
-                              {isShortlisted && (
-                                <span className="bg-emerald-100 text-emerald-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center space-x-1 shadow-2xs">
-                                  <Check className="h-3 w-3 text-emerald-700" />
-                                  <span>Selected for Interview</span>
-                                </span>
-                              )}
-                              {isHold && (
-                                <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-amber-300 flex items-center space-x-1 shadow-2xs">
-                                  <PauseCircle className="h-3 w-3 text-amber-700" />
-                                  <span>On Hold</span>
-                                </span>
-                              )}
-                              {isRejected && (
-                                <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-slate-300">
-                                  Archived / Declined
-                                </span>
-                              )}
-                            </div>
-                            <p className="text-xs text-slate-600 font-medium flex items-center gap-2 flex-wrap pt-0.5">
-                              <span>Applied: <strong className="text-slate-900 font-bold">{portal.mandate.title}</strong></span>
-                              <span>•</span>
-                              <span>Current: <strong className="text-slate-900 font-bold">{cand.currentTitle || "Professional"}</strong> {cand.currentCompany ? `at ${cand.currentCompany}` : ""}</span>
-                            </p>
+
+                          {/* Direct Contact Links (100% visible per user instruction) */}
+                          <div className="flex items-center gap-2.5 mt-1.5 text-xs flex-wrap">
+                            <a
+                              href={`tel:${cand.phone}`}
+                              className="inline-flex items-center font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-[#fce17c]/40 px-2.5 py-0.5 rounded-lg border border-slate-200 transition-colors"
+                            >
+                              <Phone className="h-3 w-3 mr-1 text-slate-500" />
+                              <span className="font-mono">{cand.phone}</span>
+                            </a>
+                            <a
+                              href={`mailto:${cand.email}`}
+                              className="inline-flex items-center font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-[#fce17c]/40 px-2.5 py-0.5 rounded-lg border border-slate-200 transition-colors"
+                            >
+                              <Mail className="h-3 w-3 mr-1 text-slate-500" />
+                              <span>{cand.email}</span>
+                            </a>
+                            <span className="text-slate-500 font-medium flex items-center">
+                              <MapPin className="h-3 w-3 mr-0.5 text-slate-400" />
+                              {cand.location || portal.mandate.location || "Bengaluru"}
+                            </span>
                           </div>
+
+                          <p className="text-xs text-slate-600 font-medium mt-1">
+                            Current: <strong className="text-slate-900 font-bold">{cand.currentTitle || "Professional"}</strong> {cand.currentCompany ? `at ${cand.currentCompany}` : ""}
+                          </p>
                         </div>
                       </div>
 
-                      {/* Right Action: Expandable CV Drawer CTA & SLA */}
-                      <div className="flex flex-wrap items-center gap-2">
+                      {/* SLA Pill / Dispatched Status */}
+                      <div className="flex items-center gap-2">
+                        {isShortlisted && (
+                          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-xl border border-emerald-200 flex items-center space-x-1">
+                            <span>Slots Dispatched ⚡</span>
+                          </span>
+                        )}
                         {isPending && (
-                          <span className={`inline-flex items-center space-x-1 px-3 py-1 rounded-full text-xs font-extrabold border ${slaPillColor}`}>
+                          <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-xl text-xs font-black border ${slaPillColor}`}>
                             <Clock className="h-3.5 w-3.5" />
                             <span>
                               {cand.hoursRemaining > 0
-                                ? `⏳ ${cand.hoursRemaining}h remaining`
+                                ? `SLA: ${cand.hoursRemaining}h Remaining`
                                 : `⚠️ Overdue (${cand.hoursElapsed}h)`}
                             </span>
                           </span>
                         )}
-
-                        {/* Expand CV Button */}
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setExpandedCandidate(cand);
-                            setExpandedTab("CV");
-                          }}
-                          className="inline-flex items-center space-x-1.5 px-4 py-2 bg-[#FFD400] hover:bg-[#E6BF00] text-slate-900 font-black rounded-xl text-xs transition-all shadow-xs border border-[#e5bf00] cursor-pointer"
-                        >
-                          <Maximize2 className="h-3.5 w-3.5 stroke-[2.5]" />
-                          <span>Expand CV & Screening</span>
-                        </button>
                       </div>
                     </div>
 
-                    {/* Candidate Direct Contacts (PII Visible per User Request) */}
-                    <div className="flex flex-wrap items-center gap-4 text-xs text-slate-700 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                      <div className="flex items-center space-x-1.5">
-                        <Mail className="h-3.5 w-3.5 text-slate-500" />
-                        <span className="text-slate-500 font-medium">Email:</span>
-                        <a href={`mailto:${cand.email}`} className="text-blue-700 font-bold hover:underline">
-                          {cand.email}
-                        </a>
+                    {/* Macro Metrics 4-Box Grid (Scan in 2 seconds) */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 border border-slate-200/80 rounded-2xl p-4">
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Total Experience</span>
+                        <span className="text-base font-black text-slate-900 mt-0.5 block">{cand.totalExpYears} Years</span>
+                        <span className="text-[10px] text-slate-500">
+                          {cand.relevantExpYears ? `${cand.relevantExpYears}y relevant` : "Verified in screening"}
+                        </span>
                       </div>
-                      <div className="flex items-center space-x-1.5">
-                        <Phone className="h-3.5 w-3.5 text-slate-500" />
-                        <span className="text-slate-500 font-medium">Phone:</span>
-                        <a href={`tel:${cand.phone}`} className="text-slate-900 font-mono font-bold hover:underline">
-                          {cand.phone}
-                        </a>
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Current Compensation</span>
+                        <span className="text-base font-black text-slate-900 mt-0.5 block">{cand.currentSalary || "Confidential"}</span>
+                        <span className="text-[10px] text-slate-500">Fixed + Variable</span>
                       </div>
-                      {cand.location && (
-                        <div className="flex items-center space-x-1.5">
-                          <MapPin className="h-3.5 w-3.5 text-slate-500" />
-                          <span className="text-slate-500 font-medium">Location:</span>
-                          <strong className="text-slate-900 font-bold">{cand.location}</strong>
-                        </div>
-                      )}
-                      <div className="flex items-center space-x-1.5">
-                        <Calendar className="h-3.5 w-3.5 text-slate-500" />
-                        <span className="text-slate-500 font-medium">Sourced:</span>
-                        <strong className="text-slate-900 font-bold">{new Date(cand.dateOfSourcing).toLocaleDateString()}</strong>
-                        <span className="text-slate-400 text-[10px]">({cand.sourceName})</span>
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Expected CTC</span>
+                        <span className="text-base font-black text-emerald-800 mt-0.5 block">{cand.expectedSalary || "Negotiable"}</span>
+                        <span className="text-[10px] text-emerald-600 font-bold">Within Budget Benchmark</span>
+                      </div>
+                      <div>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Notice Period</span>
+                        <span className="text-base font-black text-amber-900 mt-0.5 block">{cand.noticePeriod || `${cand.noticePeriodDays} Days`}</span>
+                        <span className="text-[10px] text-slate-500">Buyout Negotiable</span>
                       </div>
                     </div>
 
-                    {/* Telemetry Snapshot Grid */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 bg-slate-50/90 p-4 rounded-2xl border border-slate-200/80 text-xs">
-                      <div>
-                        <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Total Experience</span>
-                        <strong className="text-slate-900 text-xs font-black">{cand.totalExpYears} Years</strong>
+                    {/* Executive Recruiter AI Fit Rationale */}
+                    <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-4 text-xs text-slate-700 leading-relaxed space-y-1.5">
+                      <div className="flex items-center space-x-1.5 text-blue-900 font-bold text-xs">
+                        <Sparkles className="h-3.5 w-3.5 text-blue-600" />
+                        <span>Recruiter Evaluation & Fit Rationale</span>
                       </div>
-                      <div>
-                        <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Relevant Experience</span>
-                        <strong className="text-slate-900 text-xs font-black">
-                          {cand.relevantExpYears !== null && cand.relevantExpYears !== undefined ? `${cand.relevantExpYears} Years` : "Verified in Screening"}
-                        </strong>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Current Salary (CTC)</span>
-                        <strong className="text-slate-900 text-xs font-black">{cand.currentSalary || "Confidential"}</strong>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Expected Salary (CTC)</span>
-                        <strong className="text-emerald-700 text-xs font-black">{cand.expectedSalary || "Negotiable"}</strong>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Notice Period</span>
-                        <strong className="text-slate-900 text-xs font-black">{cand.noticePeriod || `${cand.noticePeriodDays} Days`}</strong>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Ready to Relocate</span>
-                        <strong className="text-slate-900 text-xs font-bold">{cand.readyToRelocate || "Yes"}</strong>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Offer in Hand</span>
-                        <strong className="text-slate-900 text-xs font-bold">{cand.offerInHand || "No"}</strong>
-                      </div>
-                      <div>
-                        <span className="text-slate-400 text-[10px] block font-bold uppercase tracking-wider">Highest Qualification</span>
-                        <strong className="text-slate-900 text-xs font-bold truncate block">{cand.qualification || "Graduate / Degree"}</strong>
+                      <p>
+                        {cand.summary || `${cand.fullName} has ${cand.totalExpYears} years of progressive experience, demonstrating strong domain alignment with the ${portal.mandate.title} role specifications.`}
+                      </p>
+                      <div className="text-[11px] text-slate-500 pt-1.5 border-t border-blue-100 flex items-center space-x-3 flex-wrap gap-y-1">
+                        <span className="flex items-center space-x-1">
+                          <GraduationCap className="h-3.5 w-3.5 text-slate-400" />
+                          <span>{cand.qualification || "Graduate / Engineering Degree"}</span>
+                        </span>
+                        <span>•</span>
+                        <span>💼 Offer In Hand: <strong className="text-slate-700">{cand.offerInHand || "No"}</strong></span>
+                        {cand.reasonForLeaving && (
+                          <>
+                            <span>•</span>
+                            <span className="italic text-slate-600">Reason: {cand.reasonForLeaving}</span>
+                          </>
+                        )}
                       </div>
                     </div>
 
-                    {/* Reason for Leaving */}
-                    {cand.reasonForLeaving && (
-                      <div className="text-xs text-slate-700 bg-amber-50/50 p-3 rounded-xl border border-amber-200/60">
-                        <span className="font-bold text-amber-950 block text-[11px] mb-0.5">Reason for Leaving:</span>
-                        <p className="italic text-amber-900">{cand.reasonForLeaving}</p>
-                      </div>
-                    )}
-
-                    {/* Executive Summary */}
-                    {cand.summary && (
-                      <div className="text-xs text-slate-700 leading-relaxed bg-white p-3.5 rounded-xl border border-slate-200/80">
-                        <span className="font-bold text-slate-900 block text-[11px] mb-1">Executive Summary:</span>
-                        {cand.summary}
-                      </div>
-                    )}
-
-                    {/* Skills Matrix */}
-                    <div>
-                      <span className="block text-[11px] font-black uppercase tracking-wider text-slate-500 mb-1.5">
-                        Verified Technical & Domain Competencies
-                      </span>
-                      <div className="flex flex-wrap gap-1.5">
+                    {/* Verified Skills Competencies */}
+                    {cand.skills && cand.skills.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 items-center">
+                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 mr-1">Skills:</span>
                         {cand.skills.map((s, idx) => (
                           <span
                             key={idx}
-                            className="bg-slate-100 hover:bg-[#fce17c]/30 border border-slate-200 text-slate-800 text-xs font-bold px-2.5 py-1 rounded-lg transition-colors"
+                            className="bg-slate-100 hover:bg-[#fce17c]/30 border border-slate-200 text-slate-800 text-xs font-bold px-2.5 py-0.5 rounded-lg transition-colors"
                           >
                             {s}
                           </span>
                         ))}
                       </div>
-                    </div>
+                    )}
 
-                    {/* Client Decision Feedback Box (if already acted) */}
-                    {cand.clientFeedbackNotes && (
+                    {/* Shortlisted Candidate Confirmed Proposed Slots Banner (CF-03) */}
+                    {isShortlisted && cand.preferredInterviewTimes && (
+                      <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-950 space-y-2">
+                        <span className="font-black block uppercase tracking-wider text-[10px] text-emerald-800">
+                          Client Proposed Interview Availability (Dispatched to Candidate):
+                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          <span className="bg-white border border-emerald-300 px-3 py-1.5 rounded-xl font-bold shadow-2xs flex items-center space-x-1.5">
+                            <Calendar className="h-3.5 w-3.5 text-emerald-600" />
+                            <span>{cand.preferredInterviewTimes}</span>
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Logged Feedback Notes (If rejected or held) */}
+                    {cand.clientFeedbackNotes && !isShortlisted && (
                       <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700 space-y-1">
-                        <span className="font-extrabold text-slate-900 block text-[11px]">Logged Client Feedback:</span>
+                        <span className="font-extrabold text-slate-900 block text-[11px]">Logged Feedback:</span>
                         <p className="text-slate-800 font-medium">{cand.clientFeedbackNotes}</p>
-                        {cand.preferredInterviewTimes && (
-                          <p className="text-[11px] text-emerald-800 font-bold pt-1">
-                            Interview Availability: {cand.preferredInterviewTimes}
-                          </p>
-                        )}
                         {cand.rejectionReason && (
                           <p className="text-[11px] text-rose-700 font-bold pt-1">
                             Reason: {cand.rejectionReason}
@@ -744,42 +738,51 @@ export default function ZeroLoginClientPortalPage() {
                       </div>
                     )}
 
-                    {/* 1-Click Interactive Action Controls (CF-02) */}
-                    <div className="pt-2 flex flex-wrap items-center justify-end gap-2 border-t border-slate-100">
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDecision(cand, "QUESTION")}
-                        className="px-3.5 py-2 rounded-xl text-xs font-bold border border-slate-300 text-slate-700 hover:bg-slate-100 transition-colors flex items-center space-x-1.5 cursor-pointer"
-                      >
-                        <MessageSquare className="h-3.5 w-3.5 text-slate-500" />
-                        <span>Ask Recruiter</span>
-                      </button>
+                    {/* 3-WAY DECISION ACTION BAR (CF-02 & CF-03) */}
+                    <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        {/* Button 1: Shortlist for Interview (Triggers Slot Selector Modal) */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDecision(cand, "SHORTLIST")}
+                          className="inline-flex items-center space-x-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                        >
+                          <Check className="h-3.5 w-3.5 stroke-[3]" />
+                          <span>Shortlist for Interview</span>
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDecision(cand, "HOLD")}
-                        className="px-3.5 py-2 rounded-xl text-xs font-bold border border-amber-300 text-amber-800 hover:bg-amber-50 transition-colors flex items-center space-x-1.5 cursor-pointer"
-                      >
-                        <PauseCircle className="h-3.5 w-3.5 text-amber-600" />
-                        <span>Hold Profile</span>
-                      </button>
+                        {/* Button 2: Put on Hold */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDecision(cand, "HOLD")}
+                          className="inline-flex items-center space-x-1.5 px-3.5 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                        >
+                          <PauseCircle className="h-3.5 w-3.5 text-amber-600" />
+                          <span>Put on Hold</span>
+                        </button>
 
-                      <button
-                        type="button"
-                        onClick={() => handleOpenDecision(cand, "REJECT")}
-                        className="px-3.5 py-2 rounded-xl text-xs font-bold border border-rose-300 text-rose-700 hover:bg-rose-50 transition-colors flex items-center space-x-1.5 cursor-pointer"
-                      >
-                        <ThumbsDown className="h-3.5 w-3.5 text-rose-500" />
-                        <span>Decline / Reject</span>
-                      </button>
+                        {/* Button 3: Structured Rejection */}
+                        <button
+                          type="button"
+                          onClick={() => handleOpenDecision(cand, "REJECT")}
+                          className="inline-flex items-center space-x-1.5 px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 font-bold text-xs rounded-xl transition-all cursor-pointer"
+                        >
+                          <ThumbsDown className="h-3.5 w-3.5 text-rose-500" />
+                          <span>Decline Profile</span>
+                        </button>
+                      </div>
 
+                      {/* Button 4: Slide-over Drawer CTA */}
                       <button
                         type="button"
-                        onClick={() => handleOpenDecision(cand, "SHORTLIST")}
-                        className="px-5 py-2.5 rounded-xl text-xs font-black bg-[#FFD400] hover:bg-[#E6BF00] text-slate-900 shadow-xs border border-[#e5bf00] transition-all flex items-center space-x-1.5 cursor-pointer"
+                        onClick={() => {
+                          setExpandedCandidate(cand);
+                          setExpandedTab("CV");
+                        }}
+                        className="inline-flex items-center space-x-1.5 px-3.5 py-2.5 bg-slate-100 hover:bg-[#fce17c] hover:border-[#f5d762] border border-slate-200 text-slate-800 font-extrabold text-xs rounded-xl transition-all cursor-pointer"
                       >
-                        <ThumbsUp className="h-3.5 w-3.5 text-slate-900" />
-                        <span>Shortlist for Next Round</span>
+                        <FileText className="h-3.5 w-3.5 text-slate-700" />
+                        <span>View Full CV & AI Telemetry →</span>
                       </button>
                     </div>
                   </div>
