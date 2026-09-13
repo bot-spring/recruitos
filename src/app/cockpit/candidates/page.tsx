@@ -45,6 +45,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
+import { CockpitHeader } from "@/components/CockpitHeader";
 
 interface CandidateRecord {
   id: string;
@@ -366,7 +367,12 @@ export default function CandidateBankPage() {
     setNoticePeriod(cand.noticePeriodDays ? `${cand.noticePeriodDays} Days` : "30 Days");
     setReasonForLeaving(cand.reasonForLeaving || "");
     setOfferInHand(cand.offerInHand || "No");
-    setCallMandateId(cand.submissions.length > 0 ? cand.submissions[0].mandate.id : "");
+    const defaultMandateId = cand.submissions && cand.submissions.length > 0
+      ? cand.submissions[0].mandate.id
+      : cand.callLogs && cand.callLogs.length > 0 && cand.callLogs[0].mandate?.id
+      ? cand.callLogs[0].mandate.id
+      : "";
+    setCallMandateId(defaultMandateId);
 
     if (cand.nextCallbackAt) {
       try {
@@ -446,6 +452,15 @@ export default function CandidateBankPage() {
         mandate: callMandateId ? mandates.find((m) => m.id === callMandateId) || null : null,
       };
 
+      // Build updated submissions array if a mandate was aligned
+      let updatedSubmissions = selectedCandidate.submissions || [];
+      if (data.submission) {
+        updatedSubmissions = [
+          data.submission,
+          ...updatedSubmissions.filter((s: any) => s.id !== data.submission.id),
+        ];
+      }
+
       const updatedCandidateObj: CandidateRecord = {
         ...selectedCandidate,
         lastCallDisposition: callDisposition,
@@ -456,6 +471,7 @@ export default function CandidateBankPage() {
         relevantExpYears: relevantExpYears ? parseFloat(relevantExpYears) : null,
         reasonForLeaving,
         offerInHand,
+        submissions: updatedSubmissions,
         callLogs: [newLog, ...(selectedCandidate.callLogs || [])],
       };
 
@@ -465,6 +481,9 @@ export default function CandidateBankPage() {
       setCandidates((prev) =>
         prev.map((c) => (c.id === selectedCandidate.id ? updatedCandidateObj : c))
       );
+
+      // Trigger background refresh to synchronize mandate counters and cross-job references
+      fetchCandidates();
     } catch (err: any) {
       console.error("Error logging call:", err);
       setCallValidationError(err.message || "Failed to save call outcome");
@@ -1064,59 +1083,8 @@ export default function CandidateBankPage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <UserSandboxBanner />
-      {/* Cockpit Navigation Bar */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-6">
-              <div className="flex items-center space-x-3">
-                <div className="h-9 w-9 rounded-xl bg-[#fce17c] border border-[#f5d762] flex items-center justify-center font-black text-slate-900 text-base shadow-xs">
-                  R
-                </div>
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-extrabold text-slate-900 text-lg tracking-tight">RecruitOS</span>
-                    <span className="bg-[#fce17c]/30 text-slate-900 text-[10px] font-extrabold px-2 py-0.5 rounded border border-[#f5d762]/60 uppercase">
-                      {session?.user?.agencyName || "Agency Cockpit"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Navigation Tabs */}
-              <nav className="hidden md:flex space-x-2">
-                <Link
-                  href="/cockpit"
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors"
-                >
-                  Mandates & SLA Radar
-                </Link>
-                <Link
-                  href="/cockpit/candidates"
-                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#fce17c] text-slate-900 border border-[#f5d762] shadow-xs"
-                >
-                  Candidate Bank & Placements (PL-01, PL-02)
-                </Link>
-              </nav>
-            </div>
-
-            <div className="flex items-center space-x-3">
-              <UserSandboxToggle />
-
-              <div className="hidden sm:flex items-center space-x-2 bg-amber-50/80 px-3 py-1.5 rounded-lg border border-amber-200/80 text-xs font-semibold text-slate-800">
-                <span>{session?.user?.name}</span>
-              </div>
-              <button
-                onClick={() => signOut({ callbackUrl: "/login" })}
-                className="flex items-center space-x-1 text-xs font-bold text-slate-600 hover:text-slate-900 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-              >
-                <LogOut className="h-4 w-4" />
-                <span>Sign Out</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
+      {/* Cockpit Unified Navigation Bar */}
+      <CockpitHeader activeTab="candidates" />
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">

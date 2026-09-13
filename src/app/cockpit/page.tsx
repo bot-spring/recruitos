@@ -49,8 +49,13 @@ import {
   Upload,
   Loader2,
   Target,
+  Bell,
+  AlertTriangle,
+  Video,
+  ChevronDown,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
+import { CockpitHeader } from "@/components/CockpitHeader";
 
 interface InboundMandate {
   id: string;
@@ -160,6 +165,80 @@ interface MatchingSilverCandidate {
   matchScore: number;
 }
 
+interface PipelineInterview {
+  id: string;
+  candidate: {
+    id: string;
+    fullName: string;
+    email: string;
+    phone: string;
+    currentTitle: string | null;
+    currentCompany: string | null;
+  };
+  mandate: {
+    id: string;
+    title: string;
+    client: { id: string; name: string };
+  };
+  submission: {
+    id: string;
+    stage: string;
+    clientDecision: string;
+  };
+  scheduledAt: string;
+  durationMinutes: number;
+  interviewType: string;
+  status: string;
+  meetingLink: string | null;
+  location: string | null;
+  panelistNames: string[];
+}
+
+interface PipelineCandidate {
+  id: string;
+  stage: string;
+  createdAt: string;
+  submittedToClientAt?: string | null;
+  clientDecision?: string;
+  hoursWaiting?: number;
+  slaStatus?: "HEALTHY" | "WARNING" | "BREACHED";
+  candidate: {
+    id: string;
+    fullName: string;
+    email: string;
+    phone: string;
+    currentTitle: string | null;
+    currentCompany: string | null;
+    totalExpYears: number;
+    expectedCtc: number | null;
+    currency: string;
+    noticePeriodDays: number;
+    skills: string[];
+  };
+  mandate: {
+    id: string;
+    title: string;
+    client: { id: string; name: string };
+  };
+  interviews?: Array<{
+    id: string;
+    scheduledAt: string;
+    durationMinutes: number;
+    interviewType: string;
+    status: string;
+    meetingLink: string | null;
+  }>;
+}
+
+interface NotificationItem {
+  id: string;
+  type: "DECISION_SHORTLIST" | "DECISION_REJECT" | "SLOT_CONFIRMED" | "AUDIT" | "INFO";
+  title: string;
+  message: string;
+  timestamp: string;
+  read: boolean;
+}
+
 interface FunnelMetrics {
   ingested: number;
   shortlisted: number;
@@ -242,8 +321,57 @@ export default function CockpitPage() {
   const userRole = session?.user?.role;
   const isManagement = userRole === "AGENCY_OWNER" || userRole === "TEAM_LEAD";
 
-  // Navigation State (Solo Owner 3-Tab Architecture)
-  const [currentTab, setCurrentTab] = useState<"dashboard" | "mandates">("dashboard");
+  // Navigation State (Solo Owner Micro-Nav Architecture)
+  const [currentTab, setCurrentTab] = useState<"dashboard" | "pipeline" | "mandates">("dashboard");
+
+  // Pipeline State (Tab: ⚡ Pipeline)
+  const [pipelineData, setPipelineData] = useState<{
+    interviewsToday: PipelineInterview[];
+    columns: {
+      screened: PipelineCandidate[];
+      submitted: PipelineCandidate[];
+      interviewing: PipelineCandidate[];
+    };
+    stats: {
+      totalScreened: number;
+      totalSubmitted: number;
+      totalInterviewing: number;
+      totalInterviewsToday: number;
+      slaComplianceRate: number;
+      breachedCount: number;
+      warningCount: number;
+    };
+  } | null>(null);
+  const [pipelineLoading, setPipelineLoading] = useState(false);
+  const [selectedPipelineMandateId, setSelectedPipelineMandateId] = useState<string>("all");
+  const [copiedInterviewId, setCopiedInterviewId] = useState<string | null>(null);
+
+  // Meeting Link Modal State (Scenario B)
+  const [meetingLinkModal, setMeetingLinkModal] = useState<{
+    isOpen: boolean;
+    interviewId: string;
+    candidateName: string;
+    mandateTitle: string;
+    currentLink: string;
+  }>({
+    isOpen: false,
+    interviewId: "",
+    candidateName: "",
+    mandateTitle: "",
+    currentLink: "",
+  });
+  const [meetingLinkInput, setMeetingLinkInput] = useState("");
+  const [savingMeetingLink, setSavingMeetingLink] = useState(false);
+
+  // Notifications State (Activity Bell)
+  const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [unreadNotifCount, setUnreadNotifCount] = useState(0);
+  const [isNotifOpen, setIsNotifOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+
+  // 1-Click Chase Client State
+  const [chasingMandateId, setChasingMandateId] = useState<string | null>(null);
+  const [chaseSuccessMessage, setChaseSuccessMessage] = useState<string | null>(null);
 
   // Funnel Analytics State (Tab 1: Dashboard)
   const [macroFunnel, setMacroFunnel] = useState<FunnelMetrics | null>(null);
@@ -384,10 +512,106 @@ export default function CockpitPage() {
     }
   };
 
+  // Fetch Pipeline Data (⚡ Pipeline)
+  const fetchPipelineData = async (mandateId?: string) => {
+    setPipelineLoading(true);
+    try {
+      const url = mandateId && mandateId !== "all"
+        ? `/api/pipeline?mandateId=${mandateId}`
+        : "/api/pipeline";
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setPipelineData(data);
+      }
+    } catch (err) {
+      console.error("Failed to load pipeline data:", err);
+    } finally {
+      setPipelineLoading(false);
+    }
+  };
+
+  // Fetch Activity Notifications (Activity Bell)
+  const fetchNotifications = async () => {
+    try {
+      const res = await fetch("/api/notifications");
+      if (res.ok) {
+        const data = await res.json();
+        setNotifications(data.notifications || []);
+        setUnreadNotifCount(data.unreadCount || 0);
+      }
+    } catch (err) {
+      console.error("Failed to load notifications:", err);
+    }
+  };
+
+  // 1-Click Client Chase (SLA Breach / 48h Reminder)
+  const handleChaseClient = async (mandateId: string, candidateName?: string) => {
+    setChasingMandateId(mandateId);
+    try {
+      const res = await fetch(`/api/mandates/${mandateId}/chase-client`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setChaseSuccessMessage(`1-Click SLA reminder sent to client${candidateName ? ` regarding ${candidateName}` : ""}!`);
+        setTimeout(() => setChaseSuccessMessage(null), 5000);
+        fetchPipelineData(selectedPipelineMandateId);
+      } else {
+        alert(data.error || "Failed to dispatch client reminder.");
+      }
+    } catch (err: any) {
+      alert(err?.message || "Failed to dispatch client reminder.");
+    } finally {
+      setChasingMandateId(null);
+    }
+  };
+
+  // Save Custom Meeting Link (Scenario B)
+  const handleSaveMeetingLink = async () => {
+    if (!meetingLinkModal.interviewId) return;
+    setSavingMeetingLink(true);
+    try {
+      const res = await fetch(`/api/interviews/${meetingLinkModal.interviewId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingLink: meetingLinkInput }),
+      });
+      if (res.ok) {
+        setMeetingLinkModal({ isOpen: false, interviewId: "", candidateName: "", mandateTitle: "", currentLink: "" });
+        setMeetingLinkInput("");
+        fetchPipelineData(selectedPipelineMandateId);
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to save meeting link.");
+      }
+    } catch (e: any) {
+      alert(e?.message || "Failed to save meeting link.");
+    } finally {
+      setSavingMeetingLink(false);
+    }
+  };
+
   useEffect(() => {
     fetchFunnelData();
     fetchMandatesData();
+    fetchNotifications();
+    fetchPipelineData();
+
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get("tab");
+      if (tab === "pipeline" || tab === "mandates" || tab === "dashboard") {
+        setCurrentTab(tab);
+      }
+    }
   }, [scopeFilter]);
+
+  useEffect(() => {
+    if (currentTab === "pipeline") {
+      fetchPipelineData(selectedPipelineMandateId);
+    }
+  }, [currentTab, selectedPipelineMandateId]);
 
   // Handle Approve Mandate
   const handleApproveSubmit = async (e: React.FormEvent) => {
@@ -751,86 +975,18 @@ export default function CockpitPage() {
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <UserSandboxBanner />
-      {/* Top Header */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-6">
-              <div className="flex items-center space-x-3">
-                <div className="h-9 w-9 rounded-xl bg-brand-surface border border-brand-surfaceDark flex items-center justify-center font-extrabold text-slate-800 text-base shadow-sm">
-                  R
-                </div>
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <span className="font-extrabold text-slate-900 text-lg tracking-tight">RecruitOS</span>
-                    <span className="bg-brand-surfaceLight text-slate-800 text-[10px] font-extrabold px-2 py-0.5 rounded border border-brand-surface uppercase tracking-wide">
-                      {session?.user?.agencyName || "Agency Cockpit"}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* SOLO OWNER 3-TAB NAVIGATION */}
-              <nav className="hidden md:flex items-center space-x-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
-                <button
-                  onClick={() => setCurrentTab("dashboard")}
-                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    currentTab === "dashboard"
-                      ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  <LayoutDashboard className="h-3.5 w-3.5 text-slate-700" />
-                  <span>Dashboard (Funnel Radar)</span>
-                </button>
-
-                <button
-                  onClick={() => setCurrentTab("mandates")}
-                  className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                    currentTab === "mandates"
-                      ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                      : "text-slate-600 hover:text-slate-900"
-                  }`}
-                >
-                  <Briefcase className="h-3.5 w-3.5 text-slate-700" />
-                  <span>Mandates & SLA Radar</span>
-                  {inboundMandates.length > 0 && (
-                    <span className="ml-1 bg-amber-500 text-slate-900 text-[9px] font-black px-1.5 py-0.2 rounded-full">
-                      {inboundMandates.length}
-                    </span>
-                  )}
-                </button>
-
-                <Link
-                  href="/cockpit/candidates"
-                  className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900 hover:bg-slate-200/60 transition-colors"
-                >
-                  <Users className="h-3.5 w-3.5 text-slate-700" />
-                  <span>Candidate Bank & Talent Pool</span>
-                </Link>
-              </nav>
-            </div>
-
-            <div className="flex items-center space-x-3">
-              <UserSandboxToggle />
-
-              <div className="hidden sm:flex items-center space-x-2 bg-brand-surfaceLight px-3 py-1.5 rounded-lg border border-brand-surface text-xs font-semibold text-slate-800">
-                <span className="font-bold">{session?.user?.name}</span>
-                <span className="text-[10px] bg-white px-1.5 py-0.5 rounded border border-brand-surfaceDark text-slate-600 uppercase">
-                  {userRole}
-                </span>
-              </div>
-              <button
-                onClick={() => signOut({ callbackUrl: "/login" })}
-                className="flex items-center space-x-1 text-xs font-bold text-slate-600 hover:text-slate-900 px-3 py-2 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
-              >
-                <LogOut className="h-4 w-4" />
-                <span>Sign Out</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </header>
+      {/* Cockpit Unified Navigation Bar */}
+      <CockpitHeader
+        activeTab={currentTab}
+        onTabChange={(tab) => setCurrentTab(tab)}
+        inboundCount={inboundMandates.length}
+        pipelineAlertCount={
+          (pipelineData?.stats?.breachedCount || 0) > 0
+            ? pipelineData!.stats.breachedCount
+            : (pipelineData?.stats?.totalInterviewsToday || 0)
+        }
+        isBreachedAlert={(pipelineData?.stats?.breachedCount || 0) > 0}
+      />
 
       {/* Main Container */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
@@ -1247,6 +1403,461 @@ export default function CockpitPage() {
                   </table>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* ========================================================================= */}
+        {/* TAB: PIPELINE (DAILY LINEUP & 3-COLUMN TACTICAL SLA KANBAN)               */}
+        {/* ========================================================================= */}
+        {currentTab === "pipeline" && (
+          <div className="space-y-6 animate-in fade-in duration-150">
+            {/* 1-Click Chase Notification Alert */}
+            {chaseSuccessMessage && (
+              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center justify-between shadow-sm animate-in fade-in duration-150">
+                <div className="flex items-center space-x-2.5">
+                  <Zap className="h-5 w-5 text-amber-600 flex-shrink-0 animate-bounce" />
+                  <span className="text-xs sm:text-sm font-bold">{chaseSuccessMessage}</span>
+                </div>
+                <button
+                  onClick={() => setChaseSuccessMessage(null)}
+                  className="text-xs text-amber-700 font-bold hover:underline cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* Pipeline Header Bar */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div className="flex items-start sm:items-center space-x-3.5">
+                <div className="h-10 w-10 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-700 shadow-xs flex-shrink-0">
+                  <Zap className="h-5 w-5" />
+                </div>
+                <div>
+                  <div className="flex items-center space-x-2">
+                    <h1 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">Tactical SLA Pipeline</h1>
+                    <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2 py-0.5 rounded-md border border-amber-200">
+                      LIVE EXECUTION
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 font-medium mt-0.5">
+                    Today's interview lineup and 3-stage candidate throughput with strict 48h client feedback SLA enforcement.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2.5 self-stretch sm:self-auto">
+                {/* Mandate Filter */}
+                <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700">
+                  <Filter className="h-3.5 w-3.5 text-slate-500" />
+                  <select
+                    value={selectedPipelineMandateId}
+                    onChange={(e) => setSelectedPipelineMandateId(e.target.value)}
+                    className="bg-transparent text-xs font-bold text-slate-800 border-none outline-none cursor-pointer pr-2"
+                  >
+                    <option value="all">All Mandates ({activeMandates.length})</option>
+                    {activeMandates.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.title} ({m.client.name})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* SLA Compliance Pill */}
+                <div className="flex items-center space-x-2 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-800">
+                  <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                  <span>{pipelineData?.stats?.slaComplianceRate ?? 100}% SLA Healthy</span>
+                </div>
+
+                {/* Today Date Pill */}
+                <div className="hidden sm:flex items-center space-x-1.5 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600">
+                  <Calendar className="h-3.5 w-3.5 text-slate-500" />
+                  <span>{new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Section 1: Today's Interview Lineup */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                <div className="flex items-center space-x-2">
+                  <Calendar className="h-4 w-4 text-slate-700" />
+                  <h2 className="text-sm font-black text-slate-900">Today's Interview Lineup</h2>
+                  <span className="bg-slate-100 text-slate-700 text-[10px] font-black px-2 py-0.5 rounded-full border border-slate-200">
+                    {pipelineData?.interviewsToday?.length || 0} Scheduled
+                  </span>
+                </div>
+                <span className="text-[11px] text-slate-400 font-medium">Scenario B: Custom Meeting Links Enabled</span>
+              </div>
+
+              {pipelineLoading ? (
+                <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs font-semibold">
+                  <Loader2 className="h-4 w-4 animate-spin text-slate-600" />
+                  <span>Loading today's schedule...</span>
+                </div>
+              ) : !pipelineData?.interviewsToday || pipelineData.interviewsToday.length === 0 ? (
+                <div className="py-8 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
+                  <Calendar className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+                  <p className="text-xs font-bold text-slate-600">No interviews scheduled for today</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">When candidates confirm interview slots via WhatsApp, they appear here.</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {pipelineData.interviewsToday.map((iv) => {
+                    const timeStr = new Date(iv.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    const hasLink = !!iv.meetingLink;
+                    return (
+                      <div key={iv.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between space-y-3">
+                        <div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-black text-slate-900">{timeStr}</span>
+                            <span className="text-[10px] bg-white border border-slate-200 text-slate-700 font-bold px-1.5 py-0.5 rounded">
+                              {iv.durationMinutes} mins
+                            </span>
+                          </div>
+                          <h3 className="text-sm font-extrabold text-slate-900 mt-1">{iv.candidate.fullName}</h3>
+                          <p className="text-xs text-slate-600 font-medium">{iv.candidate.currentTitle || "Candidate"}</p>
+                          <div className="mt-1 flex items-center space-x-1 text-[11px] text-slate-500">
+                            <Briefcase className="h-3 w-3 text-slate-400" />
+                            <span className="font-semibold text-slate-700">{iv.mandate.title}</span>
+                            <span>• {iv.mandate.client.name}</span>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between gap-2">
+                          {hasLink ? (
+                            <div className="flex items-center space-x-1.5">
+                              <a
+                                href={iv.meetingLink!}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                              >
+                                <Video className="h-3.5 w-3.5 text-emerald-600" />
+                                <span>Join</span>
+                                <ExternalLink className="h-2.5 w-2.5 ml-0.5 text-emerald-500" />
+                              </a>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(iv.meetingLink!);
+                                  setCopiedInterviewId(iv.id);
+                                  setTimeout(() => setCopiedInterviewId(null), 2000);
+                                }}
+                                className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-md transition-colors cursor-pointer"
+                                title="Copy Meeting Link"
+                              >
+                                {copiedInterviewId === iv.id ? (
+                                  <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                ) : (
+                                  <Copy className="h-3.5 w-3.5" />
+                                )}
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="inline-flex items-center space-x-1 text-[11px] font-extrabold text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-md">
+                              <AlertTriangle className="h-3 w-3 text-amber-600" />
+                              <span>⚠️ Link Needed</span>
+                            </span>
+                          )}
+
+                          <div className="flex items-center space-x-1.5">
+                            <button
+                              onClick={() => {
+                                setMeetingLinkModal({
+                                  isOpen: true,
+                                  interviewId: iv.id,
+                                  candidateName: iv.candidate.fullName,
+                                  mandateTitle: iv.mandate.title,
+                                  currentLink: iv.meetingLink || "",
+                                });
+                                setMeetingLinkInput(iv.meetingLink || "");
+                              }}
+                              className="text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-200 px-2 py-1 rounded-md transition-colors cursor-pointer"
+                            >
+                              {hasLink ? "Edit Link" : "+ Attach Link"}
+                            </button>
+                            <button
+                              onClick={() => router.push(`/cockpit/mandates/${iv.mandate.id}`)}
+                              className="text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 px-2 py-1 rounded-md transition-colors cursor-pointer"
+                              title="View Mandate Workspace"
+                            >
+                              Debrief
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Section 2: 3-Column Tactical SLA Kanban */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+              {/* Column 1: Screened (<24h) */}
+              <div className="bg-slate-50/80 rounded-2xl border border-slate-200 p-4 flex flex-col space-y-3 min-h-[500px]">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                  <div className="flex items-center space-x-2">
+                    <div className="h-2 w-2 rounded-full bg-slate-400"></div>
+                    <h3 className="text-xs font-black uppercase tracking-wide text-slate-700">Screened</h3>
+                    <span className="text-[10px] text-slate-400 font-bold">&lt;24h</span>
+                  </div>
+                  <span className="text-xs font-black bg-white px-2 py-0.5 rounded-full border border-slate-200 text-slate-700">
+                    {pipelineData?.columns.screened?.length || 0}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-medium">Vetted candidates ready for client presentation.</p>
+
+                <div className="space-y-2.5 overflow-y-auto flex-1 max-h-[600px] pr-1">
+                  {!pipelineData?.columns.screened || pipelineData.columns.screened.length === 0 ? (
+                    <div className="text-center py-12 text-xs text-slate-400 font-medium">
+                      No screened candidates awaiting submission.
+                    </div>
+                  ) : (
+                    pipelineData.columns.screened.map((c) => (
+                      <div key={c.id} className="p-3.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs hover:shadow-xs transition-all space-y-2">
+                        <div className="flex items-start justify-between">
+                          <div>
+                            <h4 className="text-xs font-black text-slate-900">{c.candidate.fullName}</h4>
+                            <p className="text-[11px] text-slate-600 font-medium">{c.candidate.currentTitle || "Profile"}</p>
+                          </div>
+                          <span className="text-[9px] bg-slate-100 text-slate-600 font-bold px-1.5 py-0.5 rounded border border-slate-200">
+                            {c.candidate.totalExpYears}y exp
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-slate-500 font-medium truncate">
+                          Mandate: <span className="font-bold text-slate-700">{c.mandate.title}</span> ({c.mandate.client.name})
+                        </div>
+                        <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1 border-t border-slate-100">
+                          <span>{c.candidate.expectedCtc ? `${c.candidate.currency} ${c.candidate.expectedCtc.toLocaleString()}` : "CTC not set"}</span>
+                          <span className="font-semibold text-slate-500">{c.candidate.noticePeriodDays}d Notice</span>
+                        </div>
+                        {c.candidate.skills && c.candidate.skills.length > 0 && (
+                          <div className="flex flex-wrap gap-1 pt-1">
+                            {c.candidate.skills.slice(0, 3).map((s, idx) => (
+                              <span key={idx} className="text-[9px] bg-slate-50 text-slate-600 px-1.5 py-0.2 rounded border border-slate-200 font-medium">
+                                {s}
+                              </span>
+                            ))}
+                            {c.candidate.skills.length > 3 && (
+                              <span className="text-[9px] text-slate-400 font-semibold">+{c.candidate.skills.length - 3}</span>
+                            )}
+                          </div>
+                        )}
+                        <div className="pt-1.5 flex justify-end">
+                          <button
+                            onClick={() => router.push(`/cockpit/mandates/${c.mandate.id}`)}
+                            className="text-[11px] font-bold text-slate-700 hover:text-slate-900 hover:underline cursor-pointer"
+                          >
+                            View in Mandate →
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Column 2: Submitted to Client (<48h SLA) */}
+              <div className="bg-slate-50/80 rounded-2xl border border-slate-200 p-4 flex flex-col space-y-3 min-h-[500px]">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                  <div className="flex items-center space-x-2">
+                    <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></div>
+                    <h3 className="text-xs font-black uppercase tracking-wide text-slate-700">Submitted to Client</h3>
+                    <span className="text-[10px] text-amber-700 font-bold">&lt;48h SLA</span>
+                  </div>
+                  <span className="text-xs font-black bg-white px-2 py-0.5 rounded-full border border-slate-200 text-slate-700">
+                    {pipelineData?.columns.submitted?.length || 0}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-medium">Awaiting client review with automated 48h SLA tracking.</p>
+
+                <div className="space-y-2.5 overflow-y-auto flex-1 max-h-[600px] pr-1">
+                  {!pipelineData?.columns.submitted || pipelineData.columns.submitted.length === 0 ? (
+                    <div className="text-center py-12 text-xs text-slate-400 font-medium">
+                      No candidates currently in client review.
+                    </div>
+                  ) : (
+                    pipelineData.columns.submitted.map((c) => {
+                      const isBreached = c.slaStatus === "BREACHED";
+                      const isWarning = c.slaStatus === "WARNING";
+                      return (
+                        <div
+                          key={c.id}
+                          className={`p-3.5 rounded-xl border transition-all space-y-2 ${
+                            isBreached
+                              ? "bg-rose-50/50 border-rose-400 ring-2 ring-rose-200 shadow-xs"
+                              : isWarning
+                              ? "bg-amber-50/40 border-amber-300 shadow-2xs"
+                              : "bg-white border-slate-200/90 shadow-2xs"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <h4 className="text-xs font-black text-slate-900">{c.candidate.fullName}</h4>
+                              <p className="text-[11px] text-slate-600 font-medium">{c.candidate.currentTitle || "Profile"}</p>
+                            </div>
+                            {/* SLA Status Pill */}
+                            <span
+                              className={`text-[9px] font-black px-2 py-0.5 rounded-md border flex items-center space-x-1 ${
+                                isBreached
+                                  ? "bg-rose-500 text-white border-rose-600 animate-pulse"
+                                  : isWarning
+                                  ? "bg-amber-100 text-amber-900 border-amber-300"
+                                  : "bg-emerald-100 text-emerald-900 border-emerald-200"
+                              }`}
+                            >
+                              <Clock className="h-2.5 w-2.5" />
+                              <span>
+                                {isBreached
+                                  ? `BREACHED (${c.hoursWaiting}h)`
+                                  : isWarning
+                                  ? `48h Warning (${c.hoursWaiting}h)`
+                                  : `SLA OK (${c.hoursWaiting}h)`}
+                              </span>
+                            </span>
+                          </div>
+
+                          <div className="text-[11px] text-slate-500 font-medium truncate">
+                            Client: <span className="font-bold text-slate-700">{c.mandate.client.name}</span> • {c.mandate.title}
+                          </div>
+
+                          <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1 border-t border-slate-100">
+                            <span>{c.candidate.noticePeriodDays}d Notice</span>
+                            <span className="text-[10px] text-slate-400">
+                              Submitted {c.submittedToClientAt ? new Date(c.submittedToClientAt).toLocaleDateString() : "recently"}
+                            </span>
+                          </div>
+
+                          {/* Action Bar */}
+                          <div className="pt-1.5 flex items-center justify-between">
+                            <button
+                              onClick={() => router.push(`/cockpit/mandates/${c.mandate.id}`)}
+                              className="text-[11px] font-bold text-slate-600 hover:text-slate-900 hover:underline cursor-pointer"
+                            >
+                              View Mandate
+                            </button>
+
+                            {(isBreached || isWarning) && (
+                              <button
+                                onClick={() => handleChaseClient(c.mandate.id, c.candidate.fullName)}
+                                disabled={chasingMandateId === c.mandate.id}
+                                className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs font-black transition-all cursor-pointer shadow-2xs ${
+                                  isBreached
+                                    ? "bg-rose-600 hover:bg-rose-700 text-white"
+                                    : "bg-amber-500 hover:bg-amber-600 text-slate-900"
+                                }`}
+                              >
+                                {chasingMandateId === c.mandate.id ? (
+                                  <Loader2 className="h-3 w-3 animate-spin" />
+                                ) : (
+                                  <Zap className="h-3 w-3" />
+                                )}
+                                <span>{isBreached ? "⚡ Chase Client Now" : "⚡ Remind Client"}</span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Column 3: Interviewing (<24h debrief) */}
+              <div className="bg-slate-50/80 rounded-2xl border border-slate-200 p-4 flex flex-col space-y-3 min-h-[500px]">
+                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                  <div className="flex items-center space-x-2">
+                    <div className="h-2 w-2 rounded-full bg-blue-500"></div>
+                    <h3 className="text-xs font-black uppercase tracking-wide text-slate-700">Interviewing</h3>
+                    <span className="text-[10px] text-blue-700 font-bold">&lt;24h Debrief</span>
+                  </div>
+                  <span className="text-xs font-black bg-white px-2 py-0.5 rounded-full border border-slate-200 text-slate-700">
+                    {pipelineData?.columns.interviewing?.length || 0}
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400 font-medium">Candidate interviews in progress and debrief tracking.</p>
+
+                <div className="space-y-2.5 overflow-y-auto flex-1 max-h-[600px] pr-1">
+                  {!pipelineData?.columns.interviewing || pipelineData.columns.interviewing.length === 0 ? (
+                    <div className="text-center py-12 text-xs text-slate-400 font-medium">
+                      No active interviews currently running.
+                    </div>
+                  ) : (
+                    pipelineData.columns.interviewing.map((c) => {
+                      const latestIv = c.interviews && c.interviews.length > 0 ? c.interviews[0] : null;
+                      const isScheduled = latestIv?.status === "SCHEDULED";
+                      const isCompleted = latestIv?.status === "COMPLETED";
+                      return (
+                        <div key={c.id} className="p-3.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs hover:shadow-xs transition-all space-y-2">
+                          <div className="flex items-start justify-between">
+                            <div>
+                              <h4 className="text-xs font-black text-slate-900">{c.candidate.fullName}</h4>
+                              <p className="text-[11px] text-slate-600 font-medium">{c.candidate.currentTitle || "Profile"}</p>
+                            </div>
+                            <span
+                              className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${
+                                isCompleted
+                                  ? "bg-purple-100 text-purple-900 border-purple-200"
+                                  : isScheduled
+                                  ? "bg-blue-100 text-blue-900 border-blue-200"
+                                  : "bg-emerald-100 text-emerald-900 border-emerald-200"
+                              }`}
+                            >
+                              {isCompleted ? "Debrief Pending" : isScheduled ? "Slot Locked" : "Shortlisted"}
+                            </span>
+                          </div>
+
+                          <div className="text-[11px] text-slate-500 font-medium truncate">
+                            Mandate: <span className="font-bold text-slate-700">{c.mandate.title}</span> ({c.mandate.client.name})
+                          </div>
+
+                          {latestIv && (
+                            <div className="p-2 rounded-lg bg-slate-50 border border-slate-100 text-[11px] space-y-1">
+                              <div className="flex items-center justify-between font-bold text-slate-700">
+                                <span>{latestIv.interviewType.replace(/_/g, " ")}</span>
+                                <span>{new Date(latestIv.scheduledAt).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-slate-500 text-[10px]">
+                                <span>Time: {new Date(latestIv.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                <span>{latestIv.meetingLink ? "Link Attached ✓" : "⚠️ Link Needed"}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="pt-1.5 flex items-center justify-between">
+                            <button
+                              onClick={() => router.push(`/cockpit/mandates/${c.mandate.id}`)}
+                              className="text-[11px] font-bold text-slate-700 hover:text-slate-900 hover:underline cursor-pointer"
+                            >
+                              Open Workspace →
+                            </button>
+                            {latestIv && !latestIv.meetingLink && (
+                              <button
+                                onClick={() => {
+                                  setMeetingLinkModal({
+                                    isOpen: true,
+                                    interviewId: latestIv.id,
+                                    candidateName: c.candidate.fullName,
+                                    mandateTitle: c.mandate.title,
+                                    currentLink: "",
+                                  });
+                                  setMeetingLinkInput("");
+                                }}
+                                className="text-[11px] font-bold text-amber-700 hover:underline cursor-pointer"
+                              >
+                                + Attach Link
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -2132,6 +2743,86 @@ export default function CockpitPage() {
                   Close
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 6: ATTACH MEETING LINK MODAL (Scenario B) */}
+      {meetingLinkModal.isOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 border border-slate-200 space-y-4 text-xs">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+              <div className="flex items-center space-x-2">
+                <Video className="h-5 w-5 text-slate-800" />
+                <h3 className="text-sm font-extrabold text-slate-900">Attach Custom Meeting Link</h3>
+              </div>
+              <button
+                onClick={() =>
+                  setMeetingLinkModal({
+                    isOpen: false,
+                    interviewId: "",
+                    candidateName: "",
+                    mandateTitle: "",
+                    currentLink: "",
+                  })
+                }
+                className="text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div>
+              <p className="text-xs text-slate-600 font-medium">
+                Candidate: <span className="font-bold text-slate-900">{meetingLinkModal.candidateName}</span>
+              </p>
+              <p className="text-xs text-slate-500 font-medium mt-0.5">
+                Mandate: <span className="font-bold text-slate-800">{meetingLinkModal.mandateTitle}</span>
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-700 mb-1">
+                Meeting URL (Google Meet / Zoom / Microsoft Teams)
+              </label>
+              <input
+                type="url"
+                value={meetingLinkInput}
+                onChange={(e) => setMeetingLinkInput(e.target.value)}
+                placeholder="https://meet.google.com/xyz-abcd-efg"
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-slate-900 focus:outline-none"
+              />
+              <p className="text-[11px] text-slate-400 mt-1">
+                Paste the custom video meeting link provided by the client or generated by your desk.
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end space-x-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() =>
+                  setMeetingLinkModal({
+                    isOpen: false,
+                    interviewId: "",
+                    candidateName: "",
+                    mandateTitle: "",
+                    currentLink: "",
+                  })
+                }
+                className="px-3.5 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveMeetingLink}
+                disabled={savingMeetingLink || !meetingLinkInput.trim()}
+                className="inline-flex items-center space-x-1.5 px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
+              >
+                {savingMeetingLink && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                <span>Save Meeting Link</span>
+              </button>
             </div>
           </div>
         </div>

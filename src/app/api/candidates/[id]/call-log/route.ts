@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { CallDisposition } from "@prisma/client";
+import { CallDisposition, SubmissionStage, CandidateJobStatus } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -121,23 +121,104 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const parsedExpectedCtc = parseSalaryNumber(expectedSalary);
     const parsedNoticeDays = parseNoticeDays(noticePeriod);
 
-    // Target submission if matching mandateId or explicitly provided
-    let targetSubmissionId = submissionId || null;
-    if (!targetSubmissionId && mandateId) {
-      const match = candidate.submissions.find((s) => s.mandateId === mandateId);
-      if (match) targetSubmissionId = match.id;
-    } else if (!targetSubmissionId && candidate.submissions.length > 0) {
-      targetSubmissionId = candidate.submissions[0].id;
-    }
-
-    // Execute in transaction: Create CallLog, Update Candidate, and optionally sync Submission
+    // Execute in transaction: Create CallLog, Update Candidate, and upsert/sync Submission
     const result = await prisma.$transaction(async (tx) => {
+      let targetSubmission: any = null;
+
+      // 1. If mandateId is selected, upsert candidate submission to formally align candidate with this mandate
+      if (mandateId && mandateId.trim() !== "") {
+        const initialStage = disposition === "CONNECTED_INTERESTED"
+          ? SubmissionStage.SCREENED_QUALIFIED
+          : SubmissionStage.PARSED_RAW;
+
+        targetSubmission = await tx.candidateSubmission.upsert({
+          where: {
+            candidateId_mandateId: {
+              candidateId: candidate.id,
+              mandateId: mandateId.trim(),
+            },
+          },
+          create: {
+            agencyId,
+            candidateId: candidate.id,
+            mandateId: mandateId.trim(),
+            submittedByUserId: session.user.id,
+            stage: initialStage,
+            candidateJobStatus: CandidateJobStatus.NOT_SHARED,
+            lastCallDisposition: disposition as CallDisposition,
+            lastCallNotes: notes?.trim() || null,
+            lastCallAt: new Date(),
+            nextCallbackAt: disposition === "CONNECTED_CALLBACK" ? callbackDate : null,
+            readyToRelocate: readyToRelocate !== undefined ? readyToRelocate : candidate.readyToRelocate,
+            relevantExpYears: parsedRelExp !== undefined ? parsedRelExp : candidate.relevantExpYears,
+            currentSalary: currentSalary !== undefined ? String(currentSalary) : (candidate.currentCtc ? `${candidate.currentCtc}` : undefined),
+            expectedSalary: expectedSalary !== undefined ? String(expectedSalary) : (candidate.expectedCtc ? `${candidate.expectedCtc}` : undefined),
+            noticePeriod: noticePeriod !== undefined ? String(noticePeriod) : (candidate.noticePeriodDays ? `${candidate.noticePeriodDays} Days` : undefined),
+            reasonForLeaving: reasonForLeaving !== undefined ? reasonForLeaving : candidate.reasonForLeaving,
+            offerInHand: offerInHand !== undefined ? offerInHand : candidate.offerInHand,
+          },
+          update: {
+            lastCallDisposition: disposition as CallDisposition,
+            lastCallNotes: notes?.trim() || null,
+            lastCallAt: new Date(),
+            nextCallbackAt: disposition === "CONNECTED_CALLBACK" ? callbackDate : null,
+            readyToRelocate: readyToRelocate !== undefined ? readyToRelocate : undefined,
+            relevantExpYears: parsedRelExp !== undefined ? parsedRelExp : undefined,
+            currentSalary: currentSalary !== undefined ? String(currentSalary) : undefined,
+            expectedSalary: expectedSalary !== undefined ? String(expectedSalary) : undefined,
+            noticePeriod: noticePeriod !== undefined ? String(noticePeriod) : undefined,
+            reasonForLeaving: reasonForLeaving !== undefined ? reasonForLeaving : undefined,
+            offerInHand: offerInHand !== undefined ? offerInHand : undefined,
+            ...(disposition === "CONNECTED_INTERESTED" ? { stage: SubmissionStage.SCREENED_QUALIFIED } : {}),
+            updatedAt: new Date(),
+          },
+          include: {
+            mandate: {
+              select: {
+                id: true,
+                title: true,
+                client: { select: { name: true } },
+              },
+            },
+          },
+        });
+      } else if (submissionId) {
+        targetSubmission = await tx.candidateSubmission.update({
+          where: { id: submissionId },
+          data: {
+            lastCallDisposition: disposition as CallDisposition,
+            lastCallNotes: notes?.trim() || null,
+            lastCallAt: new Date(),
+            nextCallbackAt: disposition === "CONNECTED_CALLBACK" ? callbackDate : null,
+            readyToRelocate: readyToRelocate !== undefined ? readyToRelocate : undefined,
+            relevantExpYears: parsedRelExp !== undefined ? parsedRelExp : undefined,
+            currentSalary: currentSalary !== undefined ? String(currentSalary) : undefined,
+            expectedSalary: expectedSalary !== undefined ? String(expectedSalary) : undefined,
+            noticePeriod: noticePeriod !== undefined ? String(noticePeriod) : undefined,
+            reasonForLeaving: reasonForLeaving !== undefined ? reasonForLeaving : undefined,
+            offerInHand: offerInHand !== undefined ? offerInHand : undefined,
+            ...(disposition === "CONNECTED_INTERESTED" ? { stage: SubmissionStage.SCREENED_QUALIFIED } : {}),
+            updatedAt: new Date(),
+          },
+          include: {
+            mandate: {
+              select: {
+                id: true,
+                title: true,
+                client: { select: { name: true } },
+              },
+            },
+          },
+        });
+      }
+
+      // 2. Create the call log linked to candidate, mandate, and submission
       const callLog = await tx.callLog.create({
         data: {
           agencyId,
           candidateId: candidate.id,
-          mandateId: mandateId || (targetSubmissionId ? candidate.submissions.find(s => s.id === targetSubmissionId)?.mandateId : null),
-          submissionId: targetSubmissionId || null,
+          mandateId: mandateId || targetSubmission?.mandateId || null,
+          submissionId: targetSubmission?.id || null,
           recruiterId: session.user.id,
           disposition: disposition as CallDisposition,
           notes: notes?.trim() || null,
@@ -150,7 +231,21 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         },
       });
 
-      // Update Candidate Profile with latest call outcomes and screening parameters
+      // 3. Retroactively link any past call logs for this candidate & mandate that missed submissionId
+      if (targetSubmission) {
+        await tx.callLog.updateMany({
+          where: {
+            candidateId: candidate.id,
+            mandateId: targetSubmission.mandateId,
+            submissionId: null,
+          },
+          data: {
+            submissionId: targetSubmission.id,
+          },
+        });
+      }
+
+      // 4. Update Candidate Profile with latest call outcomes and screening parameters
       const updatedCandidate = await tx.candidate.update({
         where: { id: candidate.id },
         data: {
@@ -169,28 +264,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
         },
       });
 
-      // If there is an active submission, synchronize screening parameters there as well
-      if (targetSubmissionId) {
-        await tx.candidateSubmission.update({
-          where: { id: targetSubmissionId },
-          data: {
-            lastCallDisposition: disposition as CallDisposition,
-            lastCallNotes: notes?.trim() || null,
-            lastCallAt: new Date(),
-            nextCallbackAt: disposition === "CONNECTED_CALLBACK" ? callbackDate : null,
-            readyToRelocate: readyToRelocate !== undefined ? readyToRelocate : undefined,
-            relevantExpYears: parsedRelExp !== undefined ? parsedRelExp : undefined,
-            currentSalary: currentSalary !== undefined ? String(currentSalary) : undefined,
-            expectedSalary: expectedSalary !== undefined ? String(expectedSalary) : undefined,
-            noticePeriod: noticePeriod !== undefined ? String(noticePeriod) : undefined,
-            reasonForLeaving: reasonForLeaving !== undefined ? reasonForLeaving : undefined,
-            offerInHand: offerInHand !== undefined ? offerInHand : undefined,
-            updatedAt: new Date(),
-          },
-        });
-      }
-
-      // Log Audit Trail
+      // 5. Log Audit Trail
       await tx.auditLog.create({
         data: {
           agencyId,
@@ -201,20 +275,22 @@ export async function POST(req: Request, { params }: { params: { id: string } })
           metadata: {
             candidateName: candidate.fullName,
             disposition,
-            mandateId: mandateId || null,
+            mandateId: mandateId || targetSubmission?.mandateId || null,
+            mandateTitle: targetSubmission?.mandate?.title || null,
             notes: notes?.trim() || "",
             callbackAt: callbackDate ? callbackDate.toISOString() : null,
           },
         },
       });
 
-      return { callLog, candidate: updatedCandidate };
+      return { callLog, candidate: updatedCandidate, submission: targetSubmission };
     });
 
     return NextResponse.json({
       message: `Call outcome logged: '${disposition.replace(/_/g, " ")}' for ${candidate.fullName}.`,
       callLog: result.callLog,
       candidate: result.candidate,
+      submission: result.submission,
     });
   } catch (error: any) {
     console.error("Error logging candidate call outcome:", error);
