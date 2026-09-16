@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CandidateDetailModal, CALL_DISPOSITIONS } from "@/components/CandidateDetailModal";
+import { ScheduleInterviewModal } from "@/components/ScheduleInterviewModal";
 
 interface MandateDetails {
   id: string;
@@ -214,6 +215,7 @@ export default function MandateWorkspacePage() {
       const cbDate = new Date(callbackAtStr);
       const now = new Date();
       const isOverdue = cbDate.getTime() < now.getTime();
+      const isToday = cbDate.toDateString() === now.toDateString();
       const timeStr = cbDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 
       if (isOverdue) {
@@ -1170,7 +1172,7 @@ export default function MandateWorkspacePage() {
         candidate={scheduleCandidate}
         submissionId={scheduleCandidate?.submissionId || null}
         mandateTitle={mandate.title}
-        onSuccess={(data) => {
+        onSuccess={(data: any) => {
           setSuccessMessage(
             `⚡ Interview locked for ${scheduleCandidate?.fullName}! ${
               data.dispatched?.whatsApp ? "WhatsApp candidate brief sent." : ""
