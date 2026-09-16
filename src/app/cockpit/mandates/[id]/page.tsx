@@ -44,6 +44,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
+import { CandidateDetailModal, CALL_DISPOSITIONS } from "@/components/CandidateDetailModal";
 
 interface MandateDetails {
   id: string;
@@ -176,15 +177,6 @@ interface PoolCandidate {
   matchedSkills: string[];
 }
 
-const CALL_DISPOSITIONS = [
-  { value: "CONNECTED_INTERESTED", label: "🟢 Connected — Interested & Profile Matched", badge: "bg-emerald-100 text-emerald-900 border-emerald-300" },
-  { value: "CONNECTED_CALLBACK", label: "🟡 Connected — Call Back Requested", badge: "bg-amber-100 text-amber-900 border-amber-300" },
-  { value: "CONNECTED_CTC_MISMATCH", label: "🟠 Connected — CTC / Budget Mismatch", badge: "bg-orange-100 text-orange-900 border-orange-300" },
-  { value: "CONNECTED_NOTICE_MISMATCH", label: "🟠 Connected — Notice Period Too Long", badge: "bg-orange-100 text-orange-900 border-orange-300" },
-  { value: "CONNECTED_NOT_INTERESTED", label: "🔴 Connected — Not Interested / Declined", badge: "bg-rose-100 text-rose-900 border-rose-300" },
-  { value: "RINGING_NO_ANSWER", label: "⚪ Ringing / No Answer", badge: "bg-slate-100 text-slate-800 border-slate-300" },
-  { value: "UNREACHABLE_BUSY", label: "⚪ Switched Off / Busy / Out of Coverage", badge: "bg-slate-100 text-slate-800 border-slate-300" },
-];
 
 const CANDIDATE_STATUSES = [
   { value: "NOT_SHARED", label: "Not Shared with Company", badge: "bg-slate-100 text-slate-800 border-slate-300" },
@@ -211,21 +203,9 @@ export default function MandateWorkspacePage() {
   const [activeQuickTab, setActiveQuickTab] = useState<"ALL" | "CALLBACKS_TODAY" | "READY_TO_SHARE">("ALL");
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  // Centered Call Screening Modal State (with 7 Call-Screening Metrics)
+  // Centered Call Screening Modal State
   const [selectedCandidate, setSelectedCandidate] = useState<AttachedCandidate | null>(null);
-  const [callDisposition, setCallDisposition] = useState<string>("");
-  const [callbackDate, setCallbackDate] = useState<string>("");
-  const [callbackTime, setCallbackTime] = useState<string>("12:00");
-  const [callNotes, setCallNotes] = useState<string>("");
-  const [readyToRelocate, setReadyToRelocate] = useState<string>("Yes");
-  const [relevantExpYears, setRelevantExpYears] = useState<string>("");
-  const [currentSalary, setCurrentSalary] = useState<string>("");
-  const [expectedSalary, setExpectedSalary] = useState<string>("");
-  const [noticePeriod, setNoticePeriod] = useState<string>("");
-  const [reasonForLeaving, setReasonForLeaving] = useState<string>("");
-  const [offerInHand, setOfferInHand] = useState<string>("No");
-  const [callValidationError, setCallValidationError] = useState<string | null>(null);
-  const [loggingCall, setLoggingCall] = useState(false);
+  const [scheduleCandidate, setScheduleCandidate] = useState<AttachedCandidate | null>(null);
 
   // Helper to format scheduled callback badge
   const getCallbackBadge = (callbackAtStr: string | null) => {
@@ -234,7 +214,6 @@ export default function MandateWorkspacePage() {
       const cbDate = new Date(callbackAtStr);
       const now = new Date();
       const isOverdue = cbDate.getTime() < now.getTime();
-      const isToday = cbDate.toDateString() === now.toDateString();
       const timeStr = cbDate.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
 
       if (isOverdue) {
@@ -375,118 +354,8 @@ export default function MandateWorkspacePage() {
   // Open Centered Candidate Call Screening Modal
   const handleOpenCandidateModal = (cand: AttachedCandidate) => {
     setSelectedCandidate(cand);
-    setCallDisposition(cand.lastCallOutcome || ""); // Pre-populate saved disposition!
-    setCallNotes("");
-    setCallValidationError(null);
-    setReadyToRelocate(cand.readyToRelocate || "Yes");
-    setRelevantExpYears(cand.relevantExpYears !== null && cand.relevantExpYears !== undefined ? String(cand.relevantExpYears) : "");
-    setCurrentSalary(cand.currentSalary || (cand.currentCtc ? `${cand.currentCtc} LPA` : ""));
-    setExpectedSalary(cand.expectedSalary || (cand.expectedCtc ? `${cand.expectedCtc} LPA` : ""));
-    setNoticePeriod(cand.noticePeriod || (cand.noticePeriodDays ? `${cand.noticePeriodDays} Days` : ""));
-    setReasonForLeaving(cand.reasonForLeaving || "");
-    setOfferInHand(cand.offerInHand || "No");
-
-    if (cand.nextCallbackAt) {
-      try {
-        const d = new Date(cand.nextCallbackAt);
-        setCallbackDate(d.toISOString().split("T")[0]);
-        const hh = String(d.getHours()).padStart(2, "0");
-        const mm = String(d.getMinutes()).padStart(2, "0");
-        setCallbackTime(`${hh}:${mm}`);
-      } catch (_) {
-        setCallbackDate(new Date().toISOString().split("T")[0]);
-        setCallbackTime("12:00");
-      }
-    } else {
-      setCallbackDate(new Date().toISOString().split("T")[0]);
-      setCallbackTime("12:00");
-    }
   };
 
-  // Log Call Outcome & Screening Metrics
-  const handleLogCall = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCandidate) return;
-
-    if (!callDisposition || callDisposition.trim() === "") {
-      setCallValidationError("Please select a Call Outcome Disposition before saving.");
-      return;
-    }
-
-    let callbackAtPayload: string | null = null;
-    if (callDisposition === "CONNECTED_CALLBACK") {
-      if (!callbackDate || !callbackTime) {
-        setCallValidationError("Please specify both a Date and Time for the scheduled call back.");
-        return;
-      }
-      callbackAtPayload = new Date(`${callbackDate}T${callbackTime}:00`).toISOString();
-    }
-
-    setLoggingCall(true);
-    setCallValidationError(null);
-
-    try {
-      const res = await fetch(`/api/mandates/${mandateId}/call-log`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          submissionId: selectedCandidate.submissionId,
-          disposition: callDisposition,
-          notes: callNotes,
-          callbackAt: callbackAtPayload,
-          readyToRelocate,
-          relevantExpYears,
-          currentSalary,
-          expectedSalary,
-          noticePeriod,
-          reasonForLeaving,
-          offerInHand,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to log call outcome");
-      }
-
-      setSuccessMessage(`Call outcome logged: ${callDisposition.replace(/_/g, " ")}`);
-      setCallNotes("");
-      // Keep callDisposition selected so recruiter sees the saved outcome:
-      setCallDisposition(callDisposition);
-      fetchWorkspace();
-
-      // Update selectedCandidate state in modal
-      if (selectedCandidate) {
-        const newLog = {
-          id: data.callLog.id,
-          disposition: callDisposition,
-          notes: callNotes,
-          callbackAt: callbackAtPayload,
-          calledAt: new Date().toISOString(),
-          recruiterName: session?.user?.name || "You",
-        };
-        setSelectedCandidate({
-          ...selectedCandidate,
-          lastCallOutcome: callDisposition,
-          lastCallNotes: callNotes,
-          lastCallAt: new Date().toISOString(),
-          nextCallbackAt: callbackAtPayload,
-          readyToRelocate,
-          relevantExpYears: relevantExpYears ? parseFloat(relevantExpYears) : null,
-          currentSalary,
-          expectedSalary,
-          noticePeriod,
-          reasonForLeaving,
-          offerInHand,
-          thisJobCallLogs: [newLog, ...selectedCandidate.thisJobCallLogs],
-        });
-      }
-    } catch (err: any) {
-      setCallValidationError(err.message || "Failed to log call outcome");
-    } finally {
-      setLoggingCall(false);
-    }
-  };
 
   // Update Candidate Status
   const handleUpdateStatus = async (submissionId: string, newStatus: string) => {
@@ -1258,504 +1127,58 @@ export default function MandateWorkspacePage() {
       {/* ========================================================================= */}
       {/* CENTERED CANDIDATE DETAIL & CALL SCREENING MODAL                          */}
       {/* ========================================================================= */}
-      {selectedCandidate && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/90 flex items-center justify-between flex-shrink-0">
-              <div className="space-y-1">
-                <div className="flex items-center space-x-2">
-                  <span className="text-[10px] font-black uppercase tracking-wider bg-slate-200 text-slate-700 px-2 py-0.5 rounded">
-                    Candidate Screening & Call Record
-                  </span>
-                  <span className="text-[10px] text-slate-500 font-mono">Source: {selectedCandidate.source}</span>
-                  {selectedCandidate.qualification && (
-                    <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded">
-                      {selectedCandidate.qualification}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center space-x-3">
-                  <h2 className="text-lg font-extrabold text-slate-900">{selectedCandidate.fullName}</h2>
-                  <span className="text-xs text-slate-500 font-medium">
-                    {selectedCandidate.currentTitle || "Professional"} {selectedCandidate.currentCompany ? `at ${selectedCandidate.currentCompany}` : ""}
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2">
-                {selectedCandidate.resumeUrl && (
-                  <a
-                    href={selectedCandidate.resumeUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center space-x-1 px-3 py-1.5 bg-brand-surfaceLight hover:bg-brand-surface text-slate-800 text-xs font-bold rounded-xl border border-brand-surfaceDark transition-colors"
-                  >
-                    <FileText className="h-3.5 w-3.5 text-blue-600" />
-                    <span>View Original CV</span>
-                  </a>
-                )}
-                <button
-                  onClick={() => setSelectedCandidate(null)}
-                  className="h-8 w-8 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center text-xl leading-none cursor-pointer transition-colors"
-                >
-                  &times;
-                </button>
-              </div>
-            </div>
+      <CandidateDetailModal
+        isOpen={!!selectedCandidate}
+        onClose={() => setSelectedCandidate(null)}
+        candidate={selectedCandidate}
+        mandateContext={{
+          id: mandate.id,
+          title: mandate.title,
+          clientName: mandate.client.name,
+        }}
+        onCallLogged={(data) => {
+          if (selectedCandidate) {
+            const newLog = {
+              id: data.callLog.id,
+              calledAt: data.callLog.calledAt,
+              disposition: data.callLog.disposition,
+              notes: data.callLog.notes,
+              callbackAt: data.callLog.callbackAt,
+              recruiterName: "You",
+            };
+            setSelectedCandidate({
+              ...selectedCandidate,
+              lastCallOutcome: data.callLog.disposition,
+              lastCallNotes: data.callLog.notes,
+              lastCallAt: data.callLog.calledAt,
+              nextCallbackAt: data.callLog.callbackAt,
+              thisJobCallLogs: [newLog, ...selectedCandidate.thisJobCallLogs],
+            });
+          }
+          fetchWorkspace();
+        }}
+        onOpenSchedule={(cand) => {
+          setSelectedCandidate(null);
+          setScheduleCandidate(cand);
+        }}
+      />
 
-            {/* Modal Scrollable Body */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6 text-xs">
-              {/* Quick Candidate Snapshot Card */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <span className="text-slate-400 block text-[10px]">Mobile (Resume)</span>
-                  <strong className="text-slate-900 text-xs block font-mono">{selectedCandidate.phone || "N/A"}</strong>
-                </div>
-
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <span className="text-slate-400 block text-[10px]">Email Address</span>
-                  <strong className="text-slate-900 text-xs block truncate">{selectedCandidate.email}</strong>
-                </div>
-
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <span className="text-slate-400 block text-[10px]">Total Experience</span>
-                  <strong className="text-slate-900 text-xs block">{selectedCandidate.totalExpYears} Years</strong>
-                </div>
-
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <span className="text-slate-400 block text-[10px]">Qualification</span>
-                  <strong className="text-slate-900 text-xs block">{selectedCandidate.qualification || "N/A"}</strong>
-                </div>
-              </div>
-
-              {/* STRUCTURED CALL LOGGING & SCREENING FORM */}
-              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center space-x-1.5">
-                    <PhoneCall className="h-4 w-4 text-blue-600" />
-                    <span>Log Recruiter Call & Screened Qualification</span>
-                  </h3>
-                  <span className="text-[11px] text-slate-500 font-medium">Fields with * are required to qualify candidate</span>
-                </div>
-
-                {callValidationError && (
-                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-center space-x-2 text-xs font-bold">
-                    <AlertCircle className="h-4 w-4 flex-shrink-0 text-rose-600" />
-                    <span>{callValidationError}</span>
-                  </div>
-                )}
-
-                <form onSubmit={handleLogCall} className="space-y-4">
-                  {/* Call Disposition (Required) */}
-                  <div>
-                    <label className="block font-bold text-slate-800 mb-1">
-                      Call Outcome Disposition <span className="text-rose-600">*</span>
-                    </label>
-                    <select
-                      value={callDisposition}
-                      onChange={(e) => {
-                        setCallDisposition(e.target.value);
-                        setCallValidationError(null);
-                      }}
-                      className={`w-full px-3 py-2 border rounded-xl text-xs font-bold bg-white text-slate-900 ${
-                        !callDisposition ? "border-rose-300 ring-1 ring-rose-100" : "border-slate-300"
-                      }`}
-                    >
-                      <option value="">-- Select Call Disposition * --</option>
-                      {CALL_DISPOSITIONS.map((d) => (
-                        <option key={d.value} value={d.value}>
-                          {d.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Scheduled Callback Date & Time (revealed when CONNECTED_CALLBACK is selected) */}
-                  {callDisposition === "CONNECTED_CALLBACK" && (
-                    <div className="p-3.5 bg-amber-50/90 border border-amber-300 rounded-xl space-y-2 animate-in fade-in duration-200 shadow-2xs">
-                      <div className="flex items-center space-x-1.5 text-amber-950 font-extrabold text-xs">
-                        <Clock className="h-4 w-4 text-amber-700" />
-                        <span>Schedule Follow-Up Call Back</span>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[11px] font-bold text-amber-900 mb-1">
-                            Call Back Date <span className="text-rose-600">*</span>
-                          </label>
-                          <input
-                            type="date"
-                            value={callbackDate}
-                            onChange={(e) => setCallbackDate(e.target.value)}
-                            className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-amber-500"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-bold text-amber-900 mb-1">
-                            Call Back Time <span className="text-rose-600">*</span>
-                          </label>
-                          <input
-                            type="time"
-                            value={callbackTime}
-                            onChange={(e) => setCallbackTime(e.target.value)}
-                            className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-amber-500"
-                            required
-                          />
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-amber-800 font-medium">
-                        RecruitOS will display overdue alerts and prioritize this candidate on today's callback queue when this time arrives.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* 7 Recruiter Screening Items */}
-                  <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
-                    <p className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider text-blue-700">
-                      Recruiter Call Screening & Presentation Parameters (Shared with Client)
-                    </p>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                      {/* 1. Ready to Relocate */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">1. Ready to Relocate</label>
-                        <select
-                          value={readyToRelocate}
-                          onChange={(e) => setReadyToRelocate(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
-                        >
-                          <option value="Yes">Yes</option>
-                          <option value="No">No</option>
-                          <option value="Hybrid Only">Hybrid Only</option>
-                          <option value="Remote Only">Remote Only</option>
-                          <option value="Already in Target City">Already in Target City</option>
-                        </select>
-                      </div>
-
-                      {/* 2. Relevant Exp: in Years */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">2. Relevant Exp (Years)</label>
-                        <input
-                          type="number"
-                          step="0.5"
-                          placeholder="e.g. 5"
-                          value={relevantExpYears}
-                          onChange={(e) => setRelevantExpYears(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      {/* 3. Current Salary */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">3. Current Salary</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. 12 LPA"
-                          value={currentSalary}
-                          onChange={(e) => setCurrentSalary(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
-                        />
-                      </div>
-
-                      {/* 4. Expectation */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">4. Expected Salary</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. 16 LPA"
-                          value={expectedSalary}
-                          onChange={(e) => setExpectedSalary(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
-                        />
-                      </div>
-
-                      {/* 5. Notice Period */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">5. Notice Period</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. 30 Days / Serving Notice"
-                          value={noticePeriod}
-                          onChange={(e) => setNoticePeriod(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      {/* 6. Reason of Leaving */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">6. Reason for Leaving</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Looking for growth & leadership"
-                          value={reasonForLeaving}
-                          onChange={(e) => setReasonForLeaving(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      {/* 7. Offer in Hand */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">7. Offer in Hand?</label>
-                        <select
-                          value={offerInHand}
-                          onChange={(e) => setOfferInHand(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
-                        >
-                          <option value="No">No</option>
-                          <option value="Yes (1 Offer)">Yes (1 Offer)</option>
-                          <option value="Yes (Multiple Offers)">Yes (Multiple Offers)</option>
-                          <option value="In Final Stages">In Final Stages</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Notes */}
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Call Notes / Conversation Summary</label>
-                    <textarea
-                      rows={2}
-                      value={callNotes}
-                      onChange={(e) => setCallNotes(e.target.value)}
-                      placeholder="e.g. Candidate confirmed notice period is negotiable to 30 days, interested in robotics tech stack..."
-                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                    />
-                  </div>
-
-                  <div className="flex justify-end space-x-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCandidate(null)}
-                      className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer text-xs"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={loggingCall}
-                      className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer text-xs disabled:opacity-50 flex items-center space-x-1.5"
-                    >
-                      {loggingCall ? (
-                        <>
-                          <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                          <span>Saving Call...</span>
-                        </>
-                      ) : (
-                        <span>Save Call Outcome & Screening</span>
-                      )}
-                    </button>
-                  </div>
-                </form>
-              </div>
-
-              {/* CALL & ACTIVITY HISTORY FOR THIS JOB */}
-              <div className="space-y-3">
-                <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center justify-between">
-                  <span>Call & Activity History (This Job)</span>
-                  <span className="text-[10px] text-slate-400 font-mono">
-                    {selectedCandidate.thisJobCallLogs.length} interactions logged
-                  </span>
-                </h3>
-
-                {/* 1. Client Review Portal Feedback Event */}
-                {(selectedCandidate.clientDecision || selectedCandidate.submittedToClientAt) && (
-                  <div className="p-3.5 bg-gradient-to-r from-blue-50/80 to-indigo-50/80 border border-blue-200 rounded-xl space-y-2.5">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center space-x-1.5">
-                        <Building2 className="h-4 w-4 text-blue-700" />
-                        <strong className="text-slate-900 text-xs font-bold">Client Review Portal Telemetry</strong>
-                      </div>
-                      {selectedCandidate.clientFeedbackAt && (
-                        <span className="text-[10px] text-slate-500 font-mono">
-                          Decision logged: {new Date(selectedCandidate.clientFeedbackAt).toLocaleString()}
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Decision Badge */}
-                    <div className="flex flex-wrap items-center gap-2">
-                      {selectedCandidate.clientDecision === "SHORTLISTED_FOR_INTERVIEW" && (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300">
-                          <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700 mr-1" />
-                          Shortlisted for Interview by Client
-                        </span>
-                      )}
-                      {selectedCandidate.clientDecision === "REJECTED_WITH_FEEDBACK" && (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-extrabold bg-rose-100 text-rose-900 border border-rose-300">
-                          <AlertCircle className="h-3.5 w-3.5 text-rose-700 mr-1" />
-                          Rejected by Client: {selectedCandidate.rejectionReason || "Feedback Provided"}
-                        </span>
-                      )}
-                      {selectedCandidate.clientDecision === "INFO_REQUESTED" && (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
-                          <AlertTriangle className="h-3.5 w-3.5 text-amber-700 mr-1" />
-                          Information Requested / On Hold by Client
-                        </span>
-                      )}
-                      {(!selectedCandidate.clientDecision || selectedCandidate.clientDecision === "PENDING_REVIEW") && selectedCandidate.submittedToClientAt && (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-blue-100 text-blue-900 border border-blue-300">
-                          <Clock className="h-3.5 w-3.5 text-blue-700 mr-1" />
-                          Shared with Client — Awaiting Feedback
-                        </span>
-                      )}
-                      {selectedCandidate.submittedToClientAt && (
-                        <span className="text-[11px] text-slate-500">
-                          (Shared: {new Date(selectedCandidate.submittedToClientAt).toLocaleDateString()})
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Proposed Interview Times */}
-                    {selectedCandidate.preferredInterviewTimes && (
-                      <div className="bg-white p-2.5 rounded-lg border border-emerald-200 text-xs text-slate-800 space-y-1">
-                        <span className="text-[11px] font-extrabold text-emerald-800 flex items-center">
-                          <Calendar className="h-3 w-3 text-emerald-700 mr-1" />
-                          <span>Client Proposed Interview Availability:</span>
-                        </span>
-                        <p className="font-semibold text-slate-900 pl-4">
-                          {selectedCandidate.preferredInterviewTimes}
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Client Feedback Comments */}
-                    {selectedCandidate.clientFeedbackNotes && (
-                      <div className="bg-white p-2.5 rounded-lg border border-slate-200 text-xs text-slate-800 space-y-1">
-                        <span className="text-[11px] font-extrabold text-slate-700 flex items-center">
-                          <MessageSquare className="h-3 w-3 text-slate-500 mr-1" />
-                          <span>Client Comments / Notes:</span>
-                        </span>
-                        <p className="italic text-slate-700 pl-4">
-                          "{selectedCandidate.clientFeedbackNotes}"
-                        </p>
-                      </div>
-                    )}
-
-                    {/* Client Question Text */}
-                    {selectedCandidate.clientQuestionText && (
-                      <div className="bg-white p-2.5 rounded-lg border border-amber-200 text-xs text-slate-800 space-y-1">
-                        <span className="text-[11px] font-extrabold text-amber-800 flex items-center">
-                          <AlertTriangle className="h-3 w-3 text-amber-600 mr-1" />
-                          <span>Client Question / Clarification Requested:</span>
-                        </span>
-                        <p className="italic text-slate-800 pl-4">
-                          "{selectedCandidate.clientQuestionText}"
-                        </p>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {selectedCandidate.thisJobCallLogs.length === 0 ? (
-                  <div className="p-4 bg-slate-50 rounded-xl text-center text-slate-400 text-xs">
-                    No calls logged for this role yet.
-                  </div>
-                ) : (
-                  <div className="divide-y divide-slate-100 bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    {selectedCandidate.thisJobCallLogs.map((log) => {
-                      const disp = CALL_DISPOSITIONS.find((d) => d.value === log.disposition);
-                      return (
-                        <div key={log.id} className="p-3 space-y-1 hover:bg-slate-50 transition-colors">
-                          <div className="flex items-center justify-between">
-                            <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${disp?.badge || "bg-slate-100 text-slate-800"}`}>
-                              {disp?.label || log.disposition}
-                            </span>
-                            <span className="text-[10px] text-slate-400">
-                              {new Date(log.calledAt).toLocaleString()} by <strong>{log.recruiterName}</strong>
-                            </span>
-                          </div>
-                          {log.notes && (
-                            <p className="text-xs text-slate-700 font-medium pl-1">{log.notes}</p>
-                          )}
-                          {log.callbackAt && (
-                            <div className="text-[10px] text-amber-800 font-bold flex items-center space-x-1 mt-1 pl-1">
-                              <Clock className="h-3 w-3 text-amber-600 mr-0.5" />
-                              <span>Scheduled Call Back: {new Date(log.callbackAt).toLocaleString()}</span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* HISTORY FROM OTHER JOBS IN THE AGENCY */}
-              <div className="space-y-2">
-                <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center justify-between">
-                  <span>History From Other Agency Jobs ({selectedCandidate.otherJobsHistory.length})</span>
-                  <span className="text-[10px] text-purple-700 font-bold">Cross-Role Intelligence</span>
-                </h3>
-
-                {selectedCandidate.otherJobsHistory.length === 0 ? (
-                  <div className="p-4 bg-slate-50 rounded-xl text-center text-slate-400 text-xs">
-                    This candidate has not been considered for other jobs in your agency yet.
-                  </div>
-                ) : (
-                  <div className="space-y-2.5">
-                    {selectedCandidate.otherJobsHistory.map((otherJob, idx) => (
-                      <div key={idx} className="p-3.5 bg-purple-50/40 border border-purple-200/70 rounded-xl space-y-2">
-                        <div className="flex items-center justify-between">
-                          <div>
-                            <strong className="text-slate-900 text-xs">{otherJob.mandateTitle}</strong>
-                            <span className="text-[11px] text-slate-500 block">{otherJob.clientName}</span>
-                          </div>
-                          <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300">
-                            Stage: {otherJob.stage.replace(/_/g, " ")}
-                          </span>
-                        </div>
-
-                        {otherJob.callLogs.length > 0 && (
-                          <div className="text-[11px] text-slate-600 bg-white p-2.5 rounded-lg border border-purple-100 space-y-1">
-                            <span className="text-[10px] font-bold text-slate-400 block uppercase">Past Call Outcome:</span>
-                            <div className="font-semibold text-slate-800">
-                              {otherJob.callLogs[0].disposition.replace(/_/g, " ")}
-                            </div>
-                            {otherJob.callLogs[0].notes && <p className="italic">"{otherJob.callLogs[0].notes}"</p>}
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {/* RESUME PREVIEW & SKILLS */}
-              <div className="space-y-2">
-                <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center space-x-1.5">
-                  <FileText className="h-3.5 w-3.5 text-slate-600" />
-                  <span>Resume Summary & Skills</span>
-                </h3>
-                {selectedCandidate.summary && (
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-slate-700 leading-relaxed text-xs">
-                    {selectedCandidate.summary}
-                  </div>
-                )}
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  {selectedCandidate.skills.map((skill, idx) => (
-                    <span key={idx} className="bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-medium px-2 py-0.5 rounded">
-                      {skill}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between flex-shrink-0">
-              <span className="text-[11px] text-slate-500 font-medium">
-                Mandate: <strong>{mandate.title}</strong> • Client: <strong>{mandate.client.name}</strong>
-              </span>
-              <button
-                onClick={() => setSelectedCandidate(null)}
-                className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer text-xs"
-              >
-                Close Window
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* SCHEDULE INTERVIEW MODAL (RC-04) */}
+      <ScheduleInterviewModal
+        isOpen={!!scheduleCandidate}
+        onClose={() => setScheduleCandidate(null)}
+        candidate={scheduleCandidate}
+        submissionId={scheduleCandidate?.submissionId || null}
+        mandateTitle={mandate.title}
+        onSuccess={(data) => {
+          setSuccessMessage(
+            `⚡ Interview locked for ${scheduleCandidate?.fullName}! ${
+              data.dispatched?.whatsApp ? "WhatsApp candidate brief sent." : ""
+            } ${data.dispatched?.email ? "Calendar invite dispatched." : ""}`
+          );
+          fetchWorkspace();
+        }}
+      />
 
       {/* ========================================================================= */}
       {/* MODAL 1: BROWSE MATCHING CANDIDATES IN POOL (HIGH TO LOW SKILL MATCH)     */}

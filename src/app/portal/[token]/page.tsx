@@ -130,11 +130,35 @@ export default function ZeroLoginClientPortalPage() {
   const [selectedCandidate, setSelectedCandidate] = useState<PortalCandidate | null>(null);
   const [actionType, setActionType] = useState<"SHORTLIST" | "HOLD" | "REJECT" | "QUESTION" | null>(null);
   const [decisionNotes, setDecisionNotes] = useState("");
-  const [interviewTimes, setInterviewTimes] = useState("Flexible — Next 48 hours");
+  const [slot1Date, setSlot1Date] = useState("");
+  const [slot1Time, setSlot1Time] = useState("11:00");
+  const [slot2Date, setSlot2Date] = useState("");
+  const [slot2Time, setSlot2Time] = useState("");
+  const [slot3Date, setSlot3Date] = useState("");
+  const [slot3Time, setSlot3Time] = useState("");
+  const [slotValidationError, setSlotValidationError] = useState<string | null>(null);
   const [rejectionReason, setRejectionReason] = useState("Lacks required depth in core tech stack");
   const [holdReason, setHoldReason] = useState("Comparing with incoming profiles");
   const [submittingDecision, setSubmittingDecision] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  function formatSlotDisplay(dateStr: string, timeStr: string): string {
+    try {
+      const [year, month, day] = dateStr.split("-").map(Number);
+      const [hours, minutes] = timeStr.split(":").map(Number);
+      const d = new Date(year, month - 1, day, hours, minutes);
+      return d.toLocaleDateString("en-US", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+      });
+    } catch (_) {
+      return `${dateStr} @ ${timeStr}`;
+    }
+  }
 
   const loadPortalData = async () => {
     try {
@@ -172,7 +196,17 @@ export default function ZeroLoginClientPortalPage() {
     setSelectedCandidate(cand);
     setActionType(type);
     setDecisionNotes("");
-    if (type === "SHORTLIST") setInterviewTimes("Flexible — Next 48 hours");
+    setSlotValidationError(null);
+    if (type === "SHORTLIST") {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      setSlot1Date(tomorrow.toISOString().split("T")[0]);
+      setSlot1Time("11:00");
+      setSlot2Date("");
+      setSlot2Time("");
+      setSlot3Date("");
+      setSlot3Time("");
+    }
     if (type === "HOLD") setHoldReason("Comparing with incoming profiles");
     if (type === "REJECT") setRejectionReason("Lacks required depth in core tech stack");
   };
@@ -180,9 +214,39 @@ export default function ZeroLoginClientPortalPage() {
   const handleDecisionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCandidate || !actionType) return;
+
+    if (actionType === "SHORTLIST") {
+      if (!slot1Date || !slot1Time) {
+        setSlotValidationError("Please provide both Date and Time for Slot Option 1 (Mandatory).");
+        return;
+      }
+      if ((slot2Date && !slot2Time) || (!slot2Date && slot2Time)) {
+        setSlotValidationError("Please provide both Date and Time for Slot Option 2, or leave both empty.");
+        return;
+      }
+      if ((slot3Date && !slot3Time) || (!slot3Date && slot3Time)) {
+        setSlotValidationError("Please provide both Date and Time for Slot Option 3, or leave both empty.");
+        return;
+      }
+    }
+
     setSubmittingDecision(true);
+    setSlotValidationError(null);
 
     try {
+      const validSlots: Array<{ date: string; time: string; formatted: string }> = [];
+      if (slot1Date && slot1Time) {
+        validSlots.push({ date: slot1Date, time: slot1Time, formatted: formatSlotDisplay(slot1Date, slot1Time) });
+      }
+      if (slot2Date && slot2Time) {
+        validSlots.push({ date: slot2Date, time: slot2Time, formatted: formatSlotDisplay(slot2Date, slot2Time) });
+      }
+      if (slot3Date && slot3Time) {
+        validSlots.push({ date: slot3Date, time: slot3Time, formatted: formatSlotDisplay(slot3Date, slot3Time) });
+      }
+
+      const formattedSlotsString = validSlots.map((s, i) => `Slot ${i + 1}: ${s.formatted}`).join(" | ");
+
       const res = await fetch(`/api/portal/${token}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -190,7 +254,8 @@ export default function ZeroLoginClientPortalPage() {
           submissionId: selectedCandidate.submissionId,
           decision: actionType,
           notes: decisionNotes,
-          preferredInterviewTimes: actionType === "SHORTLIST" ? interviewTimes : undefined,
+          preferredInterviewTimes: actionType === "SHORTLIST" ? formattedSlotsString : undefined,
+          proposedSlots: actionType === "SHORTLIST" ? validSlots : undefined,
           rejectionReason: actionType === "REJECT" ? rejectionReason : actionType === "HOLD" ? holdReason : undefined,
         }),
       });
@@ -221,6 +286,7 @@ export default function ZeroLoginClientPortalPage() {
               ? "REJECTED_WITH_FEEDBACK"
               : "INFO_REQUESTED",
           clientFeedbackNotes: decisionNotes || expandedCandidate.clientFeedbackNotes,
+          preferredInterviewTimes: actionType === "SHORTLIST" ? formattedSlotsString : expandedCandidate.preferredInterviewTimes,
         });
       }
 
@@ -1111,87 +1177,180 @@ export default function ZeroLoginClientPortalPage() {
             </div>
 
             <form onSubmit={handleDecisionSubmit} className="p-6 space-y-4">
-              {/* Shortlist Flow (CF-03 Calendar Slot Selector) */}
+              {/* Shortlist Flow (Concrete Date & Time Slot Pickers) */}
               {actionType === "SHORTLIST" && (
                 <div className="space-y-4">
                   <div>
-                    <label className="block font-black text-slate-900 mb-1 text-xs">
-                      Propose Available Interview Windows (CF-03) *
-                    </label>
-                    <p className="text-[11px] text-slate-500 mb-2.5">
-                      Select your availability block. The candidate receives an automated 1-click confirmation on WhatsApp.
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="block font-black text-slate-900 text-xs">
+                        Propose Interview Slots (Max 3 Options)
+                      </label>
+                      <span className="text-[10px] font-semibold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full">
+                        Slot 1 Required
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mb-3">
+                      Select specific date and time options. The candidate will receive these options on WhatsApp to confirm with 1 click.
                     </p>
 
-                    <div className="grid grid-cols-1 gap-2">
-                      {[
-                        {
-                          id: "Flexible — Next 48 hours",
-                          title: "Flexible — Next 48 hours",
-                          desc: "Open business hours across the next 2 working days",
-                        },
-                        {
-                          id: "Weekday mornings (10 AM – 1 PM)",
-                          title: "Weekday Mornings (10:00 AM – 1:00 PM)",
-                          desc: "Preferred panel morning interview window",
-                        },
-                        {
-                          id: "Weekday afternoons (2 PM – 6 PM)",
-                          title: "Weekday Afternoons (2:00 PM – 6:00 PM)",
-                          desc: "Preferred panel afternoon evaluation window",
-                        },
-                        {
-                          id: "This Friday / Weekend slot",
-                          title: "Upcoming Friday / Weekend Slot",
-                          desc: "Concentrated hiring manager review block",
-                        },
-                      ].map((slot) => {
-                        const isSelected = interviewTimes === slot.id;
-                        return (
-                          <div
-                            key={slot.id}
-                            onClick={() => setInterviewTimes(slot.id)}
-                            className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
-                              isSelected
-                                ? "bg-amber-50/80 border-amber-400 ring-2 ring-amber-400/20 shadow-2xs"
-                                : "bg-slate-50/70 border-slate-200 hover:bg-slate-100 hover:border-slate-300"
-                            }`}
-                          >
-                            <div>
-                              <div className="font-extrabold text-slate-900 text-xs flex items-center space-x-1.5">
-                                <span>{slot.title}</span>
-                              </div>
-                              <div className="text-[11px] text-slate-500 font-medium mt-0.5">{slot.desc}</div>
-                            </div>
-                            <div
-                              className={`h-5 w-5 rounded-full flex items-center justify-center border transition-all ${
-                                isSelected
-                                  ? "bg-[#FFD400] border-[#e5bf00] text-slate-900"
-                                  : "border-slate-300 bg-white"
-                              }`}
-                            >
-                              {isSelected && <Check className="h-3 w-3 stroke-[3]" />}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
+                    {slotValidationError && (
+                      <div className="mb-3 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-medium flex items-center space-x-2">
+                        <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+                        <span>{slotValidationError}</span>
+                      </div>
+                    )}
 
-                  <div>
-                    <label className="block font-bold text-slate-800 mb-1 text-xs">
-                      Custom Time Proposal (Optional Override)
-                    </label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Wednesday 15 Oct @ 3:00 PM, Thursday 16 Oct @ 11:00 AM"
-                      value={
-                        interviewTimes.startsWith("Custom: ")
-                          ? interviewTimes.replace("Custom: ", "")
-                          : ""
-                      }
-                      onChange={(e) => setInterviewTimes(`Custom: ${e.target.value}`)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
-                    />
+                    <div className="space-y-2.5">
+                      {/* Slot 1 - Mandatory */}
+                      <div className="p-3 rounded-2xl border border-amber-300/80 bg-amber-50/40 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-900 flex items-center space-x-1.5">
+                            <span className="h-5 w-5 rounded-full bg-[#FFD400] text-slate-900 flex items-center justify-center text-[10px] font-black">1</span>
+                            <span>Option 1 (Primary Slot) *</span>
+                          </span>
+                          {slot1Date && slot1Time && (
+                            <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                              {formatSlotDisplay(slot1Date, slot1Time)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Date *</label>
+                            <input
+                              type="date"
+                              required
+                              value={slot1Date}
+                              min={new Date().toISOString().split("T")[0]}
+                              onChange={(e) => {
+                                setSlot1Date(e.target.value);
+                                setSlotValidationError(null);
+                              }}
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Time *</label>
+                            <input
+                              type="time"
+                              required
+                              value={slot1Time}
+                              onChange={(e) => {
+                                setSlot1Time(e.target.value);
+                                setSlotValidationError(null);
+                              }}
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Slot 2 - Optional */}
+                      <div className="p-3 rounded-2xl border border-slate-200 bg-slate-50/70 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
+                            <span className="h-5 w-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] font-black">2</span>
+                            <span>Option 2 (Alternative)</span>
+                            <span className="text-[10px] font-normal text-slate-400">Optional</span>
+                          </span>
+                          {slot2Date && slot2Time ? (
+                            <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                              {formatSlotDisplay(slot2Date, slot2Time)}
+                            </span>
+                          ) : (
+                            slot2Date || slot2Time ? (
+                              <button
+                                type="button"
+                                onClick={() => { setSlot2Date(""); setSlot2Time(""); }}
+                                className="text-[10px] text-slate-400 hover:text-rose-600 underline cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            ) : null
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Date</label>
+                            <input
+                              type="date"
+                              value={slot2Date}
+                              min={new Date().toISOString().split("T")[0]}
+                              onChange={(e) => {
+                                setSlot2Date(e.target.value);
+                                setSlotValidationError(null);
+                              }}
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Time</label>
+                            <input
+                              type="time"
+                              value={slot2Time}
+                              onChange={(e) => {
+                                setSlot2Time(e.target.value);
+                                setSlotValidationError(null);
+                              }}
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Slot 3 - Optional */}
+                      <div className="p-3 rounded-2xl border border-slate-200 bg-slate-50/70 space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
+                            <span className="h-5 w-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] font-black">3</span>
+                            <span>Option 3 (Alternative)</span>
+                            <span className="text-[10px] font-normal text-slate-400">Optional</span>
+                          </span>
+                          {slot3Date && slot3Time ? (
+                            <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                              {formatSlotDisplay(slot3Date, slot3Time)}
+                            </span>
+                          ) : (
+                            slot3Date || slot3Time ? (
+                              <button
+                                type="button"
+                                onClick={() => { setSlot3Date(""); setSlot3Time(""); }}
+                                className="text-[10px] text-slate-400 hover:text-rose-600 underline cursor-pointer"
+                              >
+                                Clear
+                              </button>
+                            ) : null
+                          )}
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Date</label>
+                            <input
+                              type="date"
+                              value={slot3Date}
+                              min={new Date().toISOString().split("T")[0]}
+                              onChange={(e) => {
+                                setSlot3Date(e.target.value);
+                                setSlotValidationError(null);
+                              }}
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Time</label>
+                            <input
+                              type="time"
+                              value={slot3Time}
+                              onChange={(e) => {
+                                setSlot3Time(e.target.value);
+                                setSlotValidationError(null);
+                              }}
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
 
                   <div>

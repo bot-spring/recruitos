@@ -46,6 +46,8 @@ import {
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CockpitHeader } from "@/components/CockpitHeader";
+import { CandidateDetailModal, CALL_DISPOSITIONS } from "@/components/CandidateDetailModal";
+import { ScheduleInterviewModal } from "@/components/ScheduleInterviewModal";
 
 interface CandidateRecord {
   id: string;
@@ -68,6 +70,7 @@ interface CandidateRecord {
   isSilverMedalist: boolean;
   silverMedalistReason: string | null;
   lastCallDisposition?: string | null;
+  lastCallOutcome?: string | null;
   lastCallNotes?: string | null;
   lastCallAt?: string | null;
   nextCallbackAt?: string | null;
@@ -119,15 +122,6 @@ interface CandidateRecord {
   }>;
 }
 
-const CALL_DISPOSITIONS = [
-  { value: "CONNECTED_INTERESTED", label: "🟢 Connected — Interested & Profile Matched", badge: "bg-emerald-100 text-emerald-900 border-emerald-300" },
-  { value: "CONNECTED_CALLBACK", label: "🟡 Connected — Call Back Requested", badge: "bg-amber-100 text-amber-900 border-amber-300" },
-  { value: "CONNECTED_CTC_MISMATCH", label: "🟠 Connected — CTC / Budget Mismatch", badge: "bg-orange-100 text-orange-900 border-orange-300" },
-  { value: "CONNECTED_NOTICE_MISMATCH", label: "🟠 Connected — Notice Period Too Long", badge: "bg-orange-100 text-orange-900 border-orange-300" },
-  { value: "CONNECTED_NOT_INTERESTED", label: "🔴 Connected — Not Interested / Declined", badge: "bg-rose-100 text-rose-900 border-rose-300" },
-  { value: "RINGING_NO_ANSWER", label: "⚪ Ringing / No Answer", badge: "bg-slate-100 text-slate-800 border-slate-300" },
-  { value: "UNREACHABLE_BUSY", label: "⚪ Switched Off / Busy / Out of Coverage", badge: "bg-slate-100 text-slate-800 border-slate-300" },
-];
 
 const getCallbackBadge = (callbackAtStr?: string | null) => {
   if (!callbackAtStr) return null;
@@ -331,166 +325,14 @@ export default function CandidateBankPage() {
 
   // Candidate Detail & Call Screening Modal State
   const [selectedCandidate, setSelectedCandidate] = useState<CandidateRecord | null>(null);
-  const [callDisposition, setCallDisposition] = useState<string>("");
-  const [callbackDate, setCallbackDate] = useState<string>("");
-  const [callbackTime, setCallbackTime] = useState<string>("12:00");
-  const [callMandateId, setCallMandateId] = useState<string>("");
-  const [callNotes, setCallNotes] = useState<string>("");
-  const [readyToRelocate, setReadyToRelocate] = useState<string>("Yes");
-  const [relevantExpYears, setRelevantExpYears] = useState<string>("");
-  const [currentSalary, setCurrentSalary] = useState<string>("");
-  const [expectedSalary, setExpectedSalary] = useState<string>("");
-  const [noticePeriod, setNoticePeriod] = useState<string>("");
-  const [reasonForLeaving, setReasonForLeaving] = useState<string>("");
-  const [offerInHand, setOfferInHand] = useState<string>("No");
-  const [callValidationError, setCallValidationError] = useState<string | null>(null);
-  const [loggingCall, setLoggingCall] = useState(false);
 
   // Backward compatibility previewCandidate state
   const [previewCandidate, setPreviewCandidate] = useState<CandidateRecord | null>(null);
 
   const handleOpenCandidateModal = (cand: CandidateRecord) => {
     setSelectedCandidate(cand);
-    setCallDisposition(cand.lastCallDisposition || "");
-    setCallNotes("");
-    setCallValidationError(null);
-    setReadyToRelocate(cand.readyToRelocate || "Yes");
-    setRelevantExpYears(
-      cand.relevantExpYears !== undefined && cand.relevantExpYears !== null
-        ? String(cand.relevantExpYears)
-        : cand.totalExpYears
-        ? String(cand.totalExpYears)
-        : ""
-    );
-    setCurrentSalary(cand.currentCtc ? `${(cand.currentCtc / 100000).toFixed(1)} LPA` : "");
-    setExpectedSalary(cand.expectedCtc ? `${(cand.expectedCtc / 100000).toFixed(1)} LPA` : "");
-    setNoticePeriod(cand.noticePeriodDays ? `${cand.noticePeriodDays} Days` : "30 Days");
-    setReasonForLeaving(cand.reasonForLeaving || "");
-    setOfferInHand(cand.offerInHand || "No");
-    const defaultMandateId = cand.submissions && cand.submissions.length > 0
-      ? cand.submissions[0].mandate.id
-      : cand.callLogs && cand.callLogs.length > 0 && cand.callLogs[0].mandate?.id
-      ? cand.callLogs[0].mandate.id
-      : "";
-    setCallMandateId(defaultMandateId);
-
-    if (cand.nextCallbackAt) {
-      try {
-        const d = new Date(cand.nextCallbackAt);
-        setCallbackDate(d.toISOString().split("T")[0]);
-        setCallbackTime(d.toTimeString().slice(0, 5));
-      } catch (_) {
-        setCallbackDate(new Date().toISOString().split("T")[0]);
-        setCallbackTime("12:00");
-      }
-    } else {
-      setCallbackDate(new Date().toISOString().split("T")[0]);
-      setCallbackTime("12:00");
-    }
   };
 
-  const handleLogCall = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCandidate) return;
-
-    if (!callDisposition || callDisposition.trim() === "") {
-      setCallValidationError("Please select a Call Outcome Disposition before saving.");
-      return;
-    }
-
-    let callbackAtPayload: string | null = null;
-    if (callDisposition === "CONNECTED_CALLBACK") {
-      if (!callbackDate || !callbackTime) {
-        setCallValidationError("Please specify both a Date and Time for the scheduled call back.");
-        return;
-      }
-      callbackAtPayload = new Date(`${callbackDate}T${callbackTime}:00`).toISOString();
-    }
-
-    setLoggingCall(true);
-    setCallValidationError(null);
-
-    try {
-      const res = await fetch(`/api/candidates/${selectedCandidate.id}/call-log`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          disposition: callDisposition,
-          notes: callNotes,
-          callbackAt: callbackAtPayload,
-          mandateId: callMandateId || undefined,
-          readyToRelocate,
-          relevantExpYears,
-          currentSalary,
-          expectedSalary,
-          noticePeriod,
-          reasonForLeaving,
-          offerInHand,
-        }),
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to log call outcome");
-      }
-
-      setSuccessMessage(`Call outcome logged: ${callDisposition.replace(/_/g, " ")}`);
-      setCallNotes("");
-      setCallDisposition(callDisposition);
-
-      const newLog = {
-        id: data.callLog.id,
-        disposition: callDisposition,
-        notes: callNotes,
-        callbackAt: callbackAtPayload,
-        calledAt: new Date().toISOString(),
-        recruiter: {
-          id: session?.user?.id || "",
-          name: session?.user?.name || "You",
-          email: session?.user?.email || "",
-        },
-        mandate: callMandateId ? mandates.find((m) => m.id === callMandateId) || null : null,
-      };
-
-      // Build updated submissions array if a mandate was aligned
-      let updatedSubmissions = selectedCandidate.submissions || [];
-      if (data.submission) {
-        updatedSubmissions = [
-          data.submission,
-          ...updatedSubmissions.filter((s: any) => s.id !== data.submission.id),
-        ];
-      }
-
-      const updatedCandidateObj: CandidateRecord = {
-        ...selectedCandidate,
-        lastCallDisposition: callDisposition,
-        lastCallNotes: callNotes,
-        lastCallAt: new Date().toISOString(),
-        nextCallbackAt: callbackAtPayload,
-        readyToRelocate,
-        relevantExpYears: relevantExpYears ? parseFloat(relevantExpYears) : null,
-        reasonForLeaving,
-        offerInHand,
-        submissions: updatedSubmissions,
-        callLogs: [newLog, ...(selectedCandidate.callLogs || [])],
-      };
-
-      setSelectedCandidate(updatedCandidateObj);
-
-      // Update candidate in local state list
-      setCandidates((prev) =>
-        prev.map((c) => (c.id === selectedCandidate.id ? updatedCandidateObj : c))
-      );
-
-      // Trigger background refresh to synchronize mandate counters and cross-job references
-      fetchCandidates();
-    } catch (err: any) {
-      console.error("Error logging call:", err);
-      setCallValidationError(err.message || "Failed to save call outcome");
-    } finally {
-      setLoggingCall(false);
-    }
-  };
 
   const fetchCandidates = async () => {
     try {
@@ -2096,146 +1938,21 @@ export default function CandidateBankPage() {
       )}
 
       {/* MODAL: MULTI-CHANNEL INTERVIEW SCHEDULING (RC-04) */}
-      {scheduleModalCandidate && scheduleModalCandidate.submissions.length > 0 && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
-            <div className="bg-purple-50 px-6 py-4 border-b border-purple-200 flex items-center justify-between">
-              <div className="flex items-center space-x-2">
-                <Calendar className="h-5 w-5 text-purple-700" />
-                <div>
-                  <h3 className="font-extrabold text-slate-900 text-sm">Schedule Interview & Multi-Channel Dispatch (RC-04)</h3>
-                  <p className="text-[10px] text-purple-800">
-                    Candidate: <strong>{scheduleModalCandidate.fullName}</strong> • {scheduleModalCandidate.submissions[0].mandate.title}
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={() => setScheduleModalCandidate(null)}
-                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
-              >
-                &times;
-              </button>
-            </div>
-
-            <form onSubmit={handleScheduleSubmit} className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-3">
-                <div className="col-span-2">
-                  <label className="block font-bold text-slate-900 mb-1">Date & Time *</label>
-                  <input
-                    type="datetime-local"
-                    required
-                    value={scheduleForm.scheduledAt}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, scheduledAt: e.target.value })}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-bold"
-                  />
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Interview Round</label>
-                  <select
-                    value={scheduleForm.interviewType}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, interviewType: e.target.value })}
-                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
-                  >
-                    <option value="TECHNICAL_ROUND">Technical Round</option>
-                    <option value="LEADERSHIP_SYSTEMS">Leadership / System Design</option>
-                    <option value="HR_CULTURE_FIT">Culture Fit & HR</option>
-                    <option value="CLIENT_FINAL_ROUND">Client Final Round</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-slate-700 mb-1">Duration (Mins)</label>
-                  <select
-                    value={scheduleForm.durationMinutes}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, durationMinutes: parseInt(e.target.value, 10) || 60 })}
-                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
-                  >
-                    <option value={30}>30 Minutes</option>
-                    <option value={45}>45 Minutes</option>
-                    <option value={60}>60 Minutes</option>
-                    <option value={90}>90 Minutes</option>
-                  </select>
-                </div>
-
-                <div className="col-span-2">
-                  <label className="block font-bold text-slate-900 mb-1">Video Meeting Link (Google Meet / Zoom) *</label>
-                  <input
-                    type="url"
-                    required
-                    value={scheduleForm.meetingLink}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, meetingLink: e.target.value })}
-                    placeholder="https://meet.google.com/xyz-abc-def"
-                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                  />
-                </div>
-
-                <div className="col-span-2">
-                  <label className="block font-semibold text-slate-700 mb-1">Client Panelists (Comma-separated)</label>
-                  <input
-                    type="text"
-                    value={scheduleForm.panelistNames}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, panelistNames: e.target.value })}
-                    placeholder="Dr. Arvind Subramanian (VP Engineering), Priya Nair"
-                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                  />
-                </div>
-              </div>
-
-              {/* Multi-Channel Dispatch Toggles */}
-              <div className="p-3.5 bg-slate-50 rounded-2xl border border-slate-200 space-y-2.5">
-                <span className="block font-bold text-slate-900 text-xs">Automated Candidate Logistics Dispatch</span>
-                <label className="flex items-center space-x-2 text-slate-700 font-medium cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={scheduleForm.sendWhatsApp}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, sendWhatsApp: e.target.checked })}
-                    className="rounded text-purple-600 h-4 w-4"
-                  />
-                  <span>
-                    📱 <strong>WhatsApp Candidate Briefing</strong> to {scheduleModalCandidate.phone || "Candidate Phone"} (Instant Prep Guidance)
-                  </span>
-                </label>
-                <label className="flex items-center space-x-2 text-slate-700 font-medium cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={scheduleForm.sendEmail}
-                    onChange={(e) => setScheduleForm({ ...scheduleForm, sendEmail: e.target.checked })}
-                    className="rounded text-purple-600 h-4 w-4"
-                  />
-                  <span>
-                    ✉️ <strong>Calendar Email Invite</strong> to {scheduleModalCandidate.email}
-                  </span>
-                </label>
-              </div>
-
-              <div className="flex justify-end space-x-3 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setScheduleModalCandidate(null)}
-                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={scheduling}
-                  className="px-5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-xl shadow-sm transition-all cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
-                >
-                  {scheduling ? (
-                    <span>Dispatching Logistics...</span>
-                  ) : (
-                    <>
-                      <Send className="h-3.5 w-3.5" />
-                      <span>Lock Slot & Dispatch (WhatsApp + Email)</span>
-                    </>
-                  )}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+      <ScheduleInterviewModal
+        isOpen={!!scheduleModalCandidate && scheduleModalCandidate.submissions.length > 0}
+        onClose={() => setScheduleModalCandidate(null)}
+        candidate={scheduleModalCandidate}
+        submissionId={scheduleModalCandidate?.submissions[0]?.id || null}
+        mandateTitle={scheduleModalCandidate?.submissions[0]?.mandate?.title || ""}
+        onSuccess={(data) => {
+          setSuccessMessage(
+            `⚡ Interview locked for ${scheduleModalCandidate?.fullName}! ${
+              data.dispatched?.whatsApp ? "WhatsApp candidate brief sent." : ""
+            } ${data.dispatched?.email ? "Calendar invite dispatched." : ""}`
+          );
+          fetchCandidates();
+        }}
+      />
 
       {/* MODAL: POST-INTERVIEW DEBRIEF (RC-05) */}
       {debriefCandidate && (
@@ -3028,439 +2745,43 @@ export default function CandidateBankPage() {
       {/* ========================================================================= */}
       {/* CENTERED CANDIDATE DETAIL & CALL SCREENING MODAL (RC-01, RC-02, RC-04)     */}
       {/* ========================================================================= */}
-      {selectedCandidate && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-          <div className="w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150">
-            {/* Modal Header */}
-            <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/90 flex items-center justify-between flex-shrink-0">
-              <div className="space-y-1">
-                <div className="flex items-center space-x-2">
-                  <span className="text-[10px] font-black uppercase tracking-wider bg-slate-200 text-slate-700 px-2 py-0.5 rounded">
-                    Candidate Screening & Call Record
-                  </span>
-                  <span className="text-[10px] text-slate-500 font-mono">Source: {selectedCandidate.source.replace(/_/g, " ")}</span>
-                  {selectedCandidate.qualification && (
-                    <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded">
-                      {selectedCandidate.qualification}
-                    </span>
-                  )}
-                  {selectedCandidate.isSilverMedalist && (
-                    <span className="text-[10px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded flex items-center space-x-1">
-                      <Award className="h-3 w-3 text-amber-700" />
-                      <span>Silver Medalist</span>
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center space-x-3">
-                  <h2 className="text-lg font-extrabold text-slate-900">{selectedCandidate.fullName}</h2>
-                  <span className="text-xs text-slate-500 font-medium">
-                    {selectedCandidate.currentTitle || "Professional"} {selectedCandidate.currentCompany ? `at ${selectedCandidate.currentCompany}` : ""}
-                  </span>
-                </div>
-              </div>
-              <div className="flex items-center space-x-2">
-                {selectedCandidate.submissions.length > 0 && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const cand = selectedCandidate;
-                      setSelectedCandidate(null);
-                      handleOpenScheduleModal(cand);
-                    }}
-                    className="inline-flex items-center space-x-1 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer"
-                  >
-                    <Calendar className="h-3.5 w-3.5" />
-                    <span>⚡ Schedule Interview</span>
-                  </button>
-                )}
-                {selectedCandidate.resumeUrl && (
-                  <a
-                    href={selectedCandidate.resumeUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center space-x-1 px-3 py-1.5 bg-brand-surfaceLight hover:bg-brand-surface text-slate-800 text-xs font-bold rounded-xl border border-brand-surfaceDark transition-colors"
-                  >
-                    <FileText className="h-3.5 w-3.5 text-blue-600" />
-                    <span>View Original CV</span>
-                  </a>
-                )}
-                <button
-                  onClick={() => setSelectedCandidate(null)}
-                  className="h-8 w-8 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center text-xl leading-none cursor-pointer transition-colors"
-                >
-                  &times;
-                </button>
-              </div>
-            </div>
+      <CandidateDetailModal
+        isOpen={!!selectedCandidate}
+        onClose={() => setSelectedCandidate(null)}
+        candidate={selectedCandidate}
+        availableMandates={mandates}
+        onCallLogged={(data) => {
+          if (selectedCandidate) {
+            const newLog = {
+              id: data.callLog.id,
+              calledAt: data.callLog.calledAt,
+              disposition: data.callLog.disposition,
+              notes: data.callLog.notes,
+              callbackAt: data.callLog.callbackAt,
+              recruiter: data.callLog.recruiter || { name: "You" },
+              mandate: data.mandate,
+            };
 
-            {/* Modal Scrollable Body */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-6 text-xs">
-              {/* Quick Candidate Snapshot Card */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <span className="text-slate-400 block text-[10px]">Mobile (Resume)</span>
-                  <strong className="text-slate-900 text-xs block font-mono">{selectedCandidate.phone || "N/A"}</strong>
-                </div>
+            const updatedSubmissions = data.submission
+              ? [data.submission, ...(selectedCandidate.submissions || []).filter((s: any) => s.id !== data.submission.id)]
+              : selectedCandidate.submissions;
 
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <span className="text-slate-400 block text-[10px]">Email Address</span>
-                  <strong className="text-slate-900 text-xs block truncate">{selectedCandidate.email}</strong>
-                </div>
-
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <span className="text-slate-400 block text-[10px]">Total Experience</span>
-                  <strong className="text-slate-900 text-xs block">{selectedCandidate.totalExpYears} Years</strong>
-                </div>
-
-                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-                  <span className="text-slate-400 block text-[10px]">Compensation (CTC)</span>
-                  <strong className="text-slate-900 text-xs block">
-                    {selectedCandidate.currentCtc ? `${(selectedCandidate.currentCtc / 100000).toFixed(1)}L` : "N/A"} →{" "}
-                    <span className="text-emerald-700">{selectedCandidate.expectedCtc ? `${(selectedCandidate.expectedCtc / 100000).toFixed(1)}L ${selectedCandidate.currency}` : "N/A"}</span>
-                  </strong>
-                </div>
-              </div>
-
-              {/* STRUCTURED CALL LOGGING & SCREENING FORM */}
-              <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center space-x-1.5">
-                    <PhoneCall className="h-4 w-4 text-blue-600" />
-                    <span>Log Recruiter Call & Screened Qualification</span>
-                  </h3>
-                  <span className="text-[11px] text-slate-500 font-medium">Fields with * are required to qualify candidate</span>
-                </div>
-
-                {callValidationError && (
-                  <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-center space-x-2 text-xs font-bold">
-                    <AlertCircle className="h-4 w-4 flex-shrink-0 text-rose-600" />
-                    <span>{callValidationError}</span>
-                  </div>
-                )}
-
-                <form onSubmit={handleLogCall} className="space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {/* Call Disposition (Required) */}
-                    <div>
-                      <label className="block font-bold text-slate-800 mb-1">
-                        Call Outcome Disposition <span className="text-rose-600">*</span>
-                      </label>
-                      <select
-                        value={callDisposition}
-                        onChange={(e) => {
-                          setCallDisposition(e.target.value);
-                          setCallValidationError(null);
-                        }}
-                        className={`w-full px-3 py-2 border rounded-xl text-xs font-bold bg-white text-slate-900 ${
-                          !callDisposition ? "border-rose-300 ring-1 ring-rose-100" : "border-slate-300"
-                        }`}
-                      >
-                        <option value="">-- Select Call Disposition * --</option>
-                        {CALL_DISPOSITIONS.map((d) => (
-                          <option key={d.value} value={d.value}>
-                            {d.label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Associated Job Mandate (Optional) */}
-                    <div>
-                      <label className="block font-bold text-slate-800 mb-1">
-                        Align to Job Mandate (Optional)
-                      </label>
-                      <select
-                        value={callMandateId}
-                        onChange={(e) => setCallMandateId(e.target.value)}
-                        className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-semibold bg-white text-slate-900"
-                      >
-                        <option value="">Talent Bank (General Screening / Unassigned)</option>
-                        {mandates.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {m.title} — {m.client.name}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  {/* Scheduled Callback Date & Time (revealed when CONNECTED_CALLBACK is selected) */}
-                  {callDisposition === "CONNECTED_CALLBACK" && (
-                    <div className="p-3.5 bg-amber-50/90 border border-amber-300 rounded-xl space-y-2 animate-in fade-in duration-200 shadow-2xs">
-                      <div className="flex items-center space-x-1.5 text-amber-950 font-extrabold text-xs">
-                        <Clock className="h-4 w-4 text-amber-700" />
-                        <span>Schedule Follow-Up Call Back</span>
-                      </div>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div>
-                          <label className="block text-[11px] font-bold text-amber-900 mb-1">
-                            Call Back Date <span className="text-rose-600">*</span>
-                          </label>
-                          <input
-                            type="date"
-                            value={callbackDate}
-                            onChange={(e) => setCallbackDate(e.target.value)}
-                            className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-amber-500"
-                            required
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[11px] font-bold text-amber-900 mb-1">
-                            Call Back Time <span className="text-rose-600">*</span>
-                          </label>
-                          <input
-                            type="time"
-                            value={callbackTime}
-                            onChange={(e) => setCallbackTime(e.target.value)}
-                            className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-amber-500"
-                            required
-                          />
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-amber-800 font-medium">
-                        RecruitOS will display overdue alerts and prioritize this candidate on today's callback queue when this time arrives.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* 7 Recruiter Screening Items */}
-                  <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
-                    <p className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider text-blue-700">
-                      Recruiter Call Screening & Presentation Parameters (Shared with Client)
-                    </p>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                      {/* 1. Ready to Relocate */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">1. Ready to Relocate</label>
-                        <select
-                          value={readyToRelocate}
-                          onChange={(e) => setReadyToRelocate(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
-                        >
-                          <option value="Yes">Yes</option>
-                          <option value="No">No</option>
-                          <option value="Hybrid Only">Hybrid Only</option>
-                          <option value="Remote Only">Remote Only</option>
-                          <option value="Already in Target City">Already in Target City</option>
-                        </select>
-                      </div>
-
-                      {/* 2. Relevant Exp: in Years */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">2. Relevant Exp (Years)</label>
-                        <input
-                          type="number"
-                          step="0.5"
-                          placeholder="e.g. 5"
-                          value={relevantExpYears}
-                          onChange={(e) => setRelevantExpYears(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      {/* 3. Current Salary */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">3. Current Salary</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. 12 LPA"
-                          value={currentSalary}
-                          onChange={(e) => setCurrentSalary(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
-                        />
-                      </div>
-
-                      {/* 4. Expectation */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">4. Expected Salary</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. 16 LPA"
-                          value={expectedSalary}
-                          onChange={(e) => setExpectedSalary(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
-                        />
-                      </div>
-
-                      {/* 5. Notice Period */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">5. Notice Period</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. 30 Days / Serving Notice"
-                          value={noticePeriod}
-                          onChange={(e) => setNoticePeriod(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      {/* 6. Reason of Leaving */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">6. Reason for Leaving</label>
-                        <input
-                          type="text"
-                          placeholder="e.g. Looking for growth & leadership"
-                          value={reasonForLeaving}
-                          onChange={(e) => setReasonForLeaving(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                        />
-                      </div>
-
-                      {/* 7. Offer in Hand */}
-                      <div>
-                        <label className="block font-bold text-slate-700 mb-1 text-[11px]">7. Offer in Hand?</label>
-                        <select
-                          value={offerInHand}
-                          onChange={(e) => setOfferInHand(e.target.value)}
-                          className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
-                        >
-                          <option value="No">No</option>
-                          <option value="Yes (1 Offer)">Yes (1 Offer)</option>
-                          <option value="Yes (Multiple Offers)">Yes (Multiple Offers)</option>
-                          <option value="In Final Stages">In Final Stages</option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Notes */}
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">Call Notes / Conversation Summary</label>
-                    <textarea
-                      rows={2}
-                      value={callNotes}
-                      onChange={(e) => setCallNotes(e.target.value)}
-                      placeholder="e.g. Candidate confirmed notice period is negotiable to 30 days, interested in backend engineering stack..."
-                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                    />
-                  </div>
-
-                  <div className="flex justify-end space-x-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCandidate(null)}
-                      className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer text-xs"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={loggingCall}
-                      className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer text-xs disabled:opacity-50 flex items-center space-x-1.5"
-                    >
-                      {loggingCall ? (
-                        <>
-                          <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                          <span>Saving Call...</span>
-                        </>
-                      ) : (
-                        <span>Save Call Outcome & Screening</span>
-                      )}
-                    </button>
-                  </div>
-                </form>
-              </div>
-
-              {/* CALL & ACTIVITY HISTORY */}
-              <div className="space-y-3">
-                <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center justify-between">
-                  <span>Call & Activity History</span>
-                  <span className="text-[10px] text-slate-400 font-mono">
-                    {(selectedCandidate.callLogs || []).length} interaction(s) logged
-                  </span>
-                </h3>
-
-                {(!selectedCandidate.callLogs || selectedCandidate.callLogs.length === 0) ? (
-                  <div className="p-4 bg-slate-50 rounded-xl text-center text-slate-400 text-xs">
-                    No calls logged for this candidate yet. Use the form above to record your conversation.
-                  </div>
-                ) : (
-                  <div className="divide-y divide-slate-100 bg-white border border-slate-200 rounded-xl overflow-hidden">
-                    {selectedCandidate.callLogs.map((log) => {
-                      const disp = CALL_DISPOSITIONS.find((d) => d.value === log.disposition);
-                      return (
-                        <div key={log.id} className="p-3 space-y-1 hover:bg-slate-50 transition-colors">
-                          <div className="flex items-center justify-between">
-                            <div className="flex items-center space-x-2">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${disp?.badge || "bg-slate-100 text-slate-800"}`}>
-                                {disp?.label || log.disposition}
-                              </span>
-                              {log.mandate && (
-                                <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.2 rounded font-semibold">
-                                  {log.mandate.title} ({log.mandate.client.name})
-                                </span>
-                              )}
-                            </div>
-                            <span className="text-[10px] text-slate-400">
-                              {new Date(log.calledAt).toLocaleString()} by <strong>{log.recruiter?.name || "Recruiter"}</strong>
-                            </span>
-                          </div>
-                          {log.notes && (
-                            <p className="text-xs text-slate-700 font-medium pl-1">{log.notes}</p>
-                          )}
-                          {log.callbackAt && (
-                            <div className="text-[10px] text-amber-800 font-bold flex items-center space-x-1 mt-1 pl-1">
-                              <Clock className="h-3 w-3 text-amber-600 mr-0.5" />
-                              <span>Scheduled Call Back: {new Date(log.callbackAt).toLocaleString()}</span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {/* CLIENT REVIEW & TELEMETRY (If attached to any mandate) */}
-              {selectedCandidate.submissions.length > 0 && selectedCandidate.submissions[0].clientQuestionText && (
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 space-y-1">
-                  <div className="font-bold flex items-center space-x-1.5 text-blue-800">
-                    <MessageSquare className="h-4 w-4 text-blue-600" />
-                    <span>Inquiry from Client Hiring Manager:</span>
-                  </div>
-                  <p className="italic bg-white p-2.5 rounded-lg border border-blue-200 text-slate-800">
-                    "{selectedCandidate.submissions[0].clientQuestionText}"
-                  </p>
-                </div>
-              )}
-
-              {/* RESUME PREVIEW & SKILLS */}
-              <div className="space-y-2">
-                <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center space-x-1.5">
-                  <FileText className="h-3.5 w-3.5 text-slate-600" />
-                  <span>Resume Summary & Skills</span>
-                </h3>
-                {selectedCandidate.summary && (
-                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-slate-700 leading-relaxed text-xs">
-                    {selectedCandidate.summary}
-                  </div>
-                )}
-                <div className="flex flex-wrap gap-1.5 pt-1">
-                  {selectedCandidate.skills.map((skill, idx) => (
-                    <span key={idx} className="bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-medium px-2 py-0.5 rounded">
-                      {skill}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Footer */}
-            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between flex-shrink-0">
-              <span className="text-[11px] text-slate-500 font-medium">
-                Talent Bank • {selectedCandidate.submissions.length > 0 ? `Active on ${selectedCandidate.submissions[0].mandate.title}` : "General Pool"}
-              </span>
-              <button
-                onClick={() => setSelectedCandidate(null)}
-                className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer text-xs"
-              >
-                Close Window
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+            setSelectedCandidate({
+              ...selectedCandidate,
+              lastCallDisposition: data.callLog.disposition,
+              lastCallOutcome: data.callLog.disposition,
+              nextCallbackAt: data.callLog.callbackAt,
+              callLogs: [newLog, ...(selectedCandidate.callLogs || [])],
+              submissions: updatedSubmissions,
+            });
+          }
+          fetchCandidates();
+        }}
+        onOpenSchedule={(cand) => {
+          setSelectedCandidate(null);
+          handleOpenScheduleModal(cand);
+        }}
+      />
     </div>
   );
 }
