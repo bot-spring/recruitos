@@ -766,6 +766,37 @@ export function CandidateDetailModal({
                     <p className="font-semibold text-slate-900 pl-5">
                       {candidate.preferredInterviewTimes}
                     </p>
+
+                    {/* Confirmed Slot Banner if candidate replied via WhatsApp */}
+                    {candidate.clientFeedbackNotes?.includes("Confirmed Slot ->") && (
+                      <div className="ml-5 p-2 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-950 flex items-center space-x-2 shadow-2xs">
+                        <span className="text-base">🎉</span>
+                        <div>
+                          <span className="text-[10px] uppercase tracking-wider font-extrabold text-emerald-800 block">
+                            WhatsApp Slot Confirmed by Candidate:
+                          </span>
+                          <span className="text-xs font-black text-emerald-900">
+                            {candidate.clientFeedbackNotes.split('Confirmed Slot -> "')[1]?.split('"')[0] || "Slot Confirmed"}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Reschedule Request Banner if candidate requested another time */}
+                    {candidate.clientFeedbackNotes?.includes("Requested alternative slot ->") && (
+                      <div className="ml-5 p-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-950 flex items-center space-x-2 shadow-2xs">
+                        <span className="text-base">🔄</span>
+                        <div>
+                          <span className="text-[10px] uppercase tracking-wider font-extrabold text-amber-800 block">
+                            Candidate Requested Alternative Time Window:
+                          </span>
+                          <span className="text-xs font-bold text-amber-900">
+                            Check WhatsApp conversation for candidate availability.
+                          </span>
+                        </div>
+                      </div>
+                    )}
+
                     {slotInviteSuccess && (
                       <div className="ml-5 p-1.5 rounded-md bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-emerald-800 flex items-center space-x-1.5">
                         <span>✅</span>
@@ -786,9 +817,9 @@ export function CandidateDetailModal({
                   <div className="bg-white p-2.5 rounded-lg border border-slate-200 text-xs text-slate-800 space-y-1">
                     <span className="text-[11px] font-extrabold text-slate-700 flex items-center">
                       <MessageSquare className="h-3 w-3 text-slate-500 mr-1" />
-                      <span>Client Comments / Notes:</span>
+                      <span>Client Comments & WhatsApp Timeline:</span>
                     </span>
-                    <p className="italic text-slate-700 pl-4">
+                    <p className="italic text-slate-700 pl-4 whitespace-pre-line">
                       "{candidate.clientFeedbackNotes}"
                     </p>
                   </div>

@@ -89,20 +89,92 @@ export async function POST(req: NextRequest) {
 
           if (!senderPhone) continue;
 
-          // Normalize sender phone (last 10 digits for matching candidate in DB)
-          const cleanDigits = senderPhone.replace(/[^0-9]/g, "");
-          const last10Digits = cleanDigits.slice(-10);
+          // 1. Extract submission ID directly from chosenSlotId if present (e.g. "SLOT_1:sub_uuid")
+          let targetSubmissionId: string | null = null;
+          if (chosenSlotId && chosenSlotId.includes(":")) {
+            const parts = chosenSlotId.split(":");
+            if (parts.length >= 2 && parts[1].length > 5) {
+              targetSubmissionId = parts[1].trim();
+            }
+          }
 
-          // Find candidate by phone number
-          const candidate = await prisma.candidate.findFirst({
-            where: {
-              phone: {
-                contains: last10Digits,
+          let submission: any = null;
+          let candidate: any = null;
+
+          // Strategy A: Direct match by embedded submissionId in interactive response (100% reliable)
+          if (targetSubmissionId) {
+            submission = await prisma.candidateSubmission.findUnique({
+              where: { id: targetSubmissionId },
+              include: {
+                candidate: true,
+                mandate: {
+                  include: {
+                    client: true,
+                  },
+                },
               },
-            },
-            include: {
-              submissions: {
+            });
+            if (submission) {
+              candidate = submission.candidate;
+              console.log(
+                `🎯 [WHATSAPP WEBHOOK] Successfully matched submission ${submission.id} via slot selection ID for candidate ${candidate.fullName}`
+              );
+            }
+          }
+
+          // Strategy B: If not matched by submission ID (e.g. plain text message), match candidate by phone number
+          if (!submission) {
+            const cleanDigits = senderPhone.replace(/[^0-9]/g, "");
+            const last10Digits = cleanDigits.slice(-10);
+
+            const candidateRecord = await prisma.candidate.findFirst({
+              where: {
+                phone: {
+                  contains: last10Digits,
+                },
+              },
+              include: {
+                submissions: {
+                  include: {
+                    mandate: {
+                      include: {
+                        client: true,
+                      },
+                    },
+                  },
+                  orderBy: {
+                    updatedAt: "desc",
+                  },
+                  take: 1,
+                },
+              },
+            });
+
+            if (candidateRecord && candidateRecord.submissions.length > 0) {
+              candidate = candidateRecord;
+              submission = candidateRecord.submissions[0];
+              console.log(
+                `📱 [WHATSAPP WEBHOOK] Matched candidate by phone: ${candidate.fullName}`
+              );
+            }
+          }
+
+          // Strategy C: QA Sandbox / Demo fallback: If message arrived from the dev override phone,
+          // match the most recently active submission that has proposed slots
+          if (!submission) {
+            const setting = await prisma.platformSetting.findUnique({ where: { id: "global" } });
+            const devPhone = setting?.whatsappDevOverridePhone?.replace(/[^0-9]/g, "") || "919818352440";
+            const cleanDigits = senderPhone.replace(/[^0-9]/g, "");
+            if (cleanDigits.endsWith(devPhone.slice(-10))) {
+              submission = await prisma.candidateSubmission.findFirst({
+                where: {
+                  OR: [
+                    { preferredInterviewTimes: { not: null } },
+                    { clientDecision: "SHORTLISTED_FOR_INTERVIEW" },
+                  ],
+                },
                 include: {
+                  candidate: true,
                   mandate: {
                     include: {
                       client: true,
@@ -112,19 +184,23 @@ export async function POST(req: NextRequest) {
                 orderBy: {
                   updatedAt: "desc",
                 },
-                take: 1,
-              },
-            },
-          });
+              });
+              if (submission) {
+                candidate = submission.candidate;
+                console.log(
+                  `⚙️ [WHATSAPP WEBHOOK QA DEMO] Matched candidate ${candidate.fullName} via demo phone fallback (${devPhone})`
+                );
+              }
+            }
+          }
 
-          if (!candidate || candidate.submissions.length === 0) {
+          if (!submission || !candidate) {
             console.log(
               `ℹ️ [WHATSAPP WEBHOOK] Message received from ${senderPhone}, but no matching candidate submission found.`
             );
             continue;
           }
 
-          const submission = candidate.submissions[0];
           const mandate = submission.mandate;
           const agencyId = submission.agencyId;
 
@@ -178,12 +254,22 @@ export async function POST(req: NextRequest) {
             : `[Candidate WhatsApp ${nowStr}]: Reply -> "${userResponseText}"`;
 
           const existingNotes = submission.clientFeedbackNotes || "";
+          
+          let updatedPreferredTimes = submission.preferredInterviewTimes;
+          if (isSlotConfirmed && userResponseText) {
+            const existingTimes = submission.preferredInterviewTimes || "";
+            if (!existingTimes.includes("🎯 Confirmed:")) {
+              updatedPreferredTimes = sanitizeUtf8(`🎯 Confirmed: ${userResponseText}${existingTimes ? ` | ${existingTimes}` : ""}`);
+            }
+          }
+
           await prisma.candidateSubmission.update({
             where: { id: submission.id },
             data: {
               clientFeedbackNotes: sanitizeUtf8(
                 existingNotes ? `${existingNotes}\n${notePrefix}` : notePrefix
               ),
+              preferredInterviewTimes: updatedPreferredTimes,
             },
           });
 
