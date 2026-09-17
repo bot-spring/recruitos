@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { SubmissionStage, ClientDecision, CandidateJobStatus } from "@prisma/client";
 import { sendClientDecisionRecruiterEmail } from "@/lib/email";
+import { sendWhatsAppInterviewSlotSelection } from "@/lib/whatsapp";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +39,7 @@ export async function POST(req: Request, { params }: { params: { token: string }
     }
 
     const body = await req.json();
-    const { submissionId, decision, notes, preferredInterviewTimes, rejectionReason } = body;
+    const { submissionId, decision, notes, preferredInterviewTimes, proposedSlots, rejectionReason } = body;
 
     if (!submissionId || !decision) {
       return NextResponse.json(
@@ -157,6 +158,45 @@ export async function POST(req: Request, { params }: { params: { token: string }
       });
     } catch (notifyErr) {
       console.warn("⚠️ Non-fatal: Failed to send recruiter decision notification email:", notifyErr);
+    }
+
+    // 7. Dispatch Automated Candidate WhatsApp Interactive Slot Selection (CE-01)
+    if (decision === "SHORTLIST" && submission.candidate.phone) {
+      try {
+        let slotOptions: Array<{ id: string; title: string; description?: string }> = [];
+
+        if (Array.isArray(proposedSlots) && proposedSlots.length > 0) {
+          slotOptions = proposedSlots.slice(0, 3).map((s: any, idx: number) => ({
+            id: `SLOT_${idx + 1}`,
+            title: s.formatted ? String(s.formatted).slice(0, 24) : `Option ${idx + 1}`,
+            description: s.date && s.time ? `${s.date} @ ${s.time}`.slice(0, 72) : `Option ${idx + 1}`,
+          }));
+        } else if (preferredInterviewTimes) {
+          const parts = String(preferredInterviewTimes).split("|").map((p: string) => p.trim()).filter(Boolean);
+          slotOptions = parts.slice(0, 3).map((p: string, idx: number) => {
+            const cleanTitle = p.replace(/^Slot \d+:\s*/i, "").trim();
+            return {
+              id: `SLOT_${idx + 1}`,
+              title: cleanTitle.slice(0, 24),
+              description: `Proposed Option ${idx + 1}`,
+            };
+          });
+        }
+
+        if (slotOptions.length > 0) {
+          await sendWhatsAppInterviewSlotSelection({
+            candidateName: submission.candidate.fullName,
+            candidatePhone: submission.candidate.phone,
+            roleTitle: portalShare.mandate.title,
+            clientOrgName: portalShare.clientOrgName,
+            agencyName: portalShare.agency.name,
+            submissionId: submission.id,
+            slots: slotOptions,
+          });
+        }
+      } catch (waErr) {
+        console.warn("⚠️ Non-fatal: Failed to dispatch candidate WhatsApp slot selection:", waErr);
+      }
     }
 
     return NextResponse.json({
