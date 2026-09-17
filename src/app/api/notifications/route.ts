@@ -54,6 +54,7 @@ export async function GET() {
       title: string;
       message: string;
       timestamp: string;
+      scheduledAt?: string;
       read: boolean;
     }> = [];
 
@@ -76,7 +77,8 @@ export async function GET() {
         id: `interview-${iv.id}`,
         type: "SLOT_CONFIRMED",
         title: !iv.meetingLink ? "Meeting Link Needed" : "Interview Slot Confirmed",
-        message: `${iv.candidate.fullName} (${iv.mandate.title}) scheduled for ${new Date(iv.scheduledAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}.`,
+        message: `${iv.candidate.fullName} (${iv.mandate.title}) scheduled for interview.`,
+        scheduledAt: iv.scheduledAt.toISOString(),
         timestamp: iv.createdAt.toISOString(),
         read: false,
       });
