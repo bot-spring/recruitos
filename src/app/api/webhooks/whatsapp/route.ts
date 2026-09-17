@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sanitizeUtf8 } from "@/lib/resume-parser";
 import { sendWhatsAppTextMessage } from "@/lib/whatsapp";
+import { SubmissionStage, CandidateJobStatus, InterviewStatus, InterviewType } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -273,7 +274,68 @@ export async function POST(req: NextRequest) {
             },
           });
 
-          // 3. Send automated WhatsApp acknowledgement back to the candidate
+          // 3. Auto-book InterviewSchedule if slot is confirmed so it appears on Today's Interview Lineup
+          if (isSlotConfirmed && userResponseText) {
+            try {
+              let parsedScheduledAt: Date = new Date();
+              const currentYear = new Date().getFullYear();
+              let clean = userResponseText
+                .replace(/^Option \d+:\s*/i, "")
+                .replace(/^Slot \d+:\s*/i, "")
+                .replace(/\bat\b/i, "")
+                .trim();
+              if (!clean.includes(String(currentYear))) {
+                clean = clean.replace(/(\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d+)/i, `$1, ${currentYear}`);
+              }
+              const d = new Date(clean);
+              if (!isNaN(d.getTime())) {
+                parsedScheduledAt = d;
+              }
+
+              const existingInterview = await prisma.interviewSchedule.findFirst({
+                where: { submissionId: submission.id },
+              });
+
+              if (existingInterview) {
+                await prisma.interviewSchedule.update({
+                  where: { id: existingInterview.id },
+                  data: {
+                    scheduledAt: parsedScheduledAt,
+                    status: InterviewStatus.SCHEDULED,
+                    whatsAppBriefingSentAt: new Date(),
+                  },
+                });
+              } else {
+                await prisma.interviewSchedule.create({
+                  data: {
+                    agencyId: submission.agencyId,
+                    submissionId: submission.id,
+                    mandateId: submission.mandateId,
+                    candidateId: submission.candidateId,
+                    scheduledAt: parsedScheduledAt,
+                    durationMinutes: 45,
+                    interviewType: InterviewType.TECHNICAL_ROUND,
+                    status: InterviewStatus.SCHEDULED,
+                    meetingLink: "https://meet.google.com/new",
+                    panelistNames: [mandate.client.name + " Hiring Panel"],
+                    whatsAppBriefingSentAt: new Date(),
+                  },
+                });
+              }
+
+              await prisma.candidateSubmission.update({
+                where: { id: submission.id },
+                data: {
+                  stage: SubmissionStage.INTERVIEW_SCHEDULED,
+                  candidateJobStatus: CandidateJobStatus.SELECTED_FOR_NEXT_ROUND,
+                },
+              });
+            } catch (autoBookErr) {
+              console.error("Non-fatal: Failed to auto-create InterviewSchedule:", autoBookErr);
+            }
+          }
+
+          // 4. Send automated WhatsApp acknowledgement back to the candidate
           try {
             if (isSlotConfirmed) {
               const confirmMsg = `✅ *Interview Slot Confirmed!*\n\nHi ${candidate.fullName},\n\nWe have locked in your selected slot (*${userResponseText}*) for the *${mandate.title}* interview with *${mandate.client.name}*.\n\nOur team is finalizing the meeting link and calendar invite, which will be sent to your email shortly.\n\nBest regards,\n*Botspring Recruitment Advisory*`;
