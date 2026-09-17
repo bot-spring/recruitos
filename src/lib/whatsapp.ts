@@ -175,3 +175,175 @@ Best of luck!
   };
 }
 
+/**
+ * Send a plain WhatsApp text message to any recipient
+ */
+export async function sendWhatsAppTextMessage(
+  toPhone: string,
+  messageText: string,
+  sandboxContext?: WhatsAppSandboxContext
+) {
+  const config = await getWhatsAppConfig();
+  const token = config.token;
+  const phoneNumberId = config.phoneNumberId;
+
+  const isSandbox = Boolean(sandboxContext?.isSandbox);
+  const sanitizedTo = toPhone.replace(/[^0-9]/g, "");
+
+  let recipientPhone = sanitizedTo;
+  if (isSandbox) {
+    const userTargetPhone = sandboxContext?.userPhone ? sandboxContext.userPhone.replace(/[^0-9]/g, "") : "";
+    recipientPhone = userTargetPhone || config.devOverridePhone.replace(/[^0-9]/g, "") || "919818352440";
+  }
+
+  if (token && phoneNumberId && token.trim().length > 10) {
+    try {
+      const response = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: recipientPhone,
+          type: "text",
+          text: { preview_url: false, body: messageText },
+        }),
+      });
+
+      const json = await response.json();
+      if (response.ok) {
+        return { success: true, messageId: json.messages?.[0]?.id || `wa_live_${Date.now()}` };
+      } else {
+        console.warn("sendWhatsAppTextMessage API error:", json);
+      }
+    } catch (err) {
+      console.error("sendWhatsAppTextMessage dispatch failed:", err);
+    }
+  }
+
+  console.log(`📱 [WHATSAPP TEXT SIMULATION] Sent to ${recipientPhone}: ${messageText}`);
+  return { success: true, simulated: true };
+}
+
+export interface WhatsAppSlotOption {
+  id: string; // e.g. "SLOT_1"
+  title: string; // max 24 chars, e.g. "Thu 15 Oct @ 11:00 AM"
+  description?: string; // max 72 chars, e.g. "Primary client proposed slot"
+}
+
+export interface WhatsAppCandidateSlotPayload {
+  candidateName: string;
+  candidatePhone: string;
+  roleTitle: string;
+  clientOrgName: string;
+  agencyName: string;
+  submissionId: string;
+  slots: WhatsAppSlotOption[];
+}
+
+/**
+ * Dispatches an Interactive List Picker message (CE-01)
+ * Allows candidate to pick from up to 3 client slots or suggest another time
+ */
+export async function sendWhatsAppInterviewSlotSelection(
+  payload: WhatsAppCandidateSlotPayload,
+  sandboxContext?: WhatsAppSandboxContext
+) {
+  const config = await getWhatsAppConfig();
+  const token = config.token;
+  const phoneNumberId = config.phoneNumberId;
+
+  const isSandbox = Boolean(sandboxContext?.isSandbox);
+  const sanitizedCandidatePhone = payload.candidatePhone.replace(/[^0-9]/g, "");
+
+  let recipientPhone = sanitizedCandidatePhone;
+  let devNotice = "";
+
+  if (isSandbox) {
+    const userTargetPhone = sandboxContext?.userPhone ? sandboxContext.userPhone.replace(/[^0-9]/g, "") : "";
+    const devPhone = userTargetPhone || config.devOverridePhone.replace(/[^0-9]/g, "") || "919818352440";
+    recipientPhone = devPhone;
+    devNotice = `\n\n⚙️ *[QA DEMO SANDBOX]:* Intended candidate: ${payload.candidateName} (+${sanitizedCandidatePhone}). Delivered to demo device (+${devPhone}).`;
+  }
+
+  // Build rows: up to 3 slots + 1 "Suggest another time"
+  const rows = payload.slots.slice(0, 3).map((slot, idx) => ({
+    id: `SLOT_${idx + 1}:${payload.submissionId}`,
+    title: slot.title.slice(0, 24),
+    description: (slot.description || `Proposed Option ${idx + 1}`).slice(0, 72),
+  }));
+
+  // Append 4th option: Suggest another time
+  rows.push({
+    id: `SLOT_OTHER:${payload.submissionId}`,
+    title: "Suggest another time".slice(0, 24),
+    description: "Request alternative days or times".slice(0, 72),
+  });
+
+  const bodyText = `Hi ${payload.candidateName},\n\nGreat news! *${payload.clientOrgName}* has reviewed your profile for *${payload.roleTitle}* and would like to invite you for an interview.\n\nPlease select your preferred slot below with 1 click:${devNotice}`;
+
+  // Try live Meta Interactive List Message
+  if (token && phoneNumberId && token.trim().length > 10) {
+    try {
+      const response = await fetch(`https://graph.facebook.com/v21.0/${phoneNumberId}/messages`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          messaging_product: "whatsapp",
+          recipient_type: "individual",
+          to: recipientPhone,
+          type: "interactive",
+          interactive: {
+            type: "list",
+            header: {
+              type: "text",
+              text: "Interview Invitation",
+            },
+            body: {
+              text: bodyText,
+            },
+            footer: {
+              text: `${payload.agencyName} Talent Advisory`,
+            },
+            action: {
+              button: "Choose Slot",
+              sections: [
+                {
+                  title: "Available Slots",
+                  rows,
+                },
+              ],
+            },
+          },
+        }),
+      });
+
+      const json = await response.json();
+      if (response.ok) {
+        return {
+          success: true,
+          messageId: json.messages?.[0]?.id || `wa_live_${Date.now()}`,
+        };
+      } else {
+        console.warn("WhatsApp Interactive List API failed, falling back to text:", json);
+      }
+    } catch (err) {
+      console.error("WhatsApp Interactive List dispatch error:", err);
+    }
+  }
+
+  // Fallback to text message if interactive list is not permitted in initial session window
+  const textFallback = `${bodyText}\n\n${rows
+    .map((r, i) => `${i + 1}. *${r.title}* - ${r.description}`)
+    .join("\n")}\n\nReply with your option number (1-${rows.length}) to confirm!`;
+
+  return sendWhatsAppTextMessage(recipientPhone, textFallback);
+}
+
+
