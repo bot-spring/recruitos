@@ -104,15 +104,22 @@ export async function POST(
       ];
     }
 
-    const result = await sendWhatsAppInterviewSlotSelection({
-      candidateName: candidate.fullName,
-      candidatePhone: candidate.phone,
-      roleTitle: submission.mandate.title,
-      clientOrgName: submission.mandate.client.name,
-      agencyName: submission.agency.name,
-      submissionId: submission.id,
-      slots: slotOptions,
-    });
+    const result = await sendWhatsAppInterviewSlotSelection(
+      {
+        candidateName: candidate.fullName,
+        candidatePhone: candidate.phone,
+        roleTitle: submission.mandate.title,
+        clientOrgName: submission.mandate.client.name,
+        agencyName: submission.agency.name,
+        submissionId: submission.id,
+        slots: slotOptions,
+      },
+      {
+        isSandbox: session.user?.isSandboxMode ?? true,
+        userPhone: session.user?.phone,
+        userName: session.user?.name,
+      }
+    );
 
     return NextResponse.json({
       success: true,

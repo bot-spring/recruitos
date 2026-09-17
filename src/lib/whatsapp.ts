@@ -256,7 +256,7 @@ export async function sendWhatsAppInterviewSlotSelection(
   const token = config.token;
   const phoneNumberId = config.phoneNumberId;
 
-  const isSandbox = Boolean(sandboxContext?.isSandbox);
+  const isSandbox = sandboxContext?.isSandbox !== undefined ? sandboxContext.isSandbox : !config.isProductionMode;
   const sanitizedCandidatePhone = payload.candidatePhone.replace(/[^0-9]/g, "");
 
   let recipientPhone = sanitizedCandidatePhone;
