@@ -74,19 +74,22 @@ export async function GET(req: Request) {
         },
         _count: {
           select: {
-            submissions: {
-              where: {
-                stage: {
-                  in: [
-                    SubmissionStage.SUBMITTED_TO_CLIENT,
-                    SubmissionStage.CLIENT_SHORTLISTED,
-                    SubmissionStage.INTERVIEW_SCHEDULED,
-                    SubmissionStage.INTERVIEW_COMPLETED,
-                  ],
-                },
-              },
+            submissions: true,
+          },
+        },
+        submissions: {
+          where: {
+            stage: {
+              in: [
+                SubmissionStage.SUBMITTED_TO_CLIENT,
+                SubmissionStage.CLIENT_SHORTLISTED,
+                SubmissionStage.INTERVIEW_SCHEDULED,
+                SubmissionStage.INTERVIEW_COMPLETED,
+              ],
             },
           },
+          select: { id: true },
+          take: 1,
         },
       },
       orderBy: { updatedAt: "desc" },
@@ -102,7 +105,7 @@ export async function GET(req: Request) {
 
       const latestPortalShare = m.clientPortalShares?.[0];
       const hasShortlistSubmitted = Boolean(
-        m.firstShortlistSubmittedAt || (m._count?.submissions && m._count.submissions > 0) || latestPortalShare
+        m.firstShortlistSubmittedAt || (m.submissions && m.submissions.length > 0) || latestPortalShare
       );
 
       if (hasShortlistSubmitted) {

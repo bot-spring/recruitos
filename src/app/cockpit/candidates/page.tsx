@@ -48,6 +48,7 @@ import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxTo
 import { CockpitHeader } from "@/components/CockpitHeader";
 import { CandidateDetailModal, CALL_DISPOSITIONS } from "@/components/CandidateDetailModal";
 import { ScheduleInterviewModal } from "@/components/ScheduleInterviewModal";
+import { CandidateCard } from "@/components/CandidateCard";
 
 interface CandidateRecord {
   id: string;
@@ -325,6 +326,7 @@ export default function CandidateBankPage() {
 
   // Candidate Detail & Call Screening Modal State
   const [selectedCandidate, setSelectedCandidate] = useState<CandidateRecord | null>(null);
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
 
   // Backward compatibility previewCandidate state
   const [previewCandidate, setPreviewCandidate] = useState<CandidateRecord | null>(null);
@@ -946,27 +948,17 @@ export default function CandidateBankPage() {
           </div>
         )}
 
-        {/* Candidate Bank Header & Actions */}
-        {/* Candidate Bank Header & Actions */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-5 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4">
-          <div className="flex items-center space-x-3.5">
-            <div className="w-10 h-10 rounded-xl bg-[#fce17c] border border-[#f5d762] flex items-center justify-center text-slate-900 font-black shadow-2xs flex-shrink-0">
-              <Users className="h-5 w-5 text-slate-900" />
+        {/* Sleek 2-Row Command Bar (Linear / Resdex Pattern) */}
+        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-2xs p-4 sm:p-5 space-y-3.5">
+          {/* Row 1: Title (Total Count) + + Import Resumes Button */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center space-x-2.5">
+              <h1 className="text-lg sm:text-xl font-black text-slate-900 tracking-tight">Talent Bank</h1>
+              <span className="text-xs font-bold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full">
+                {candidates.length}
+              </span>
             </div>
-            <div>
-              <div className="flex items-center space-x-2">
-                <h1 className="text-base font-extrabold text-slate-900">Permanent Agency Talent Bank</h1>
-                <span className="bg-[#fce17c]/40 text-slate-900 text-[10px] font-black px-2 py-0.5 rounded border border-[#f5d762]/70 uppercase">
-                  RC-02 & RC-07
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Automated CV Intake, Duplicate Scrubbing, Silver Medalist Vault, and 90-Day Fee Protection.
-              </p>
-            </div>
-          </div>
 
-          <div className="flex items-center space-x-3">
             <button
               onClick={() => {
                 setIsImportModalOpen(true);
@@ -975,164 +967,17 @@ export default function CandidateBankPage() {
                 setParseError(null);
                 setSelectedMandateId("");
               }}
-              className="inline-flex items-center space-x-2 px-4 py-2.5 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer border border-[#e5bf00]"
+              className="inline-flex items-center space-x-2 px-3.5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-bold text-xs rounded-xl shadow-2xs transition-colors cursor-pointer border border-[#e5bf00]"
             >
-              <UploadCloud className="h-4 w-4" />
-              <span>+ Import & Parse Resumes (Gemini AI)</span>
+              <UploadCloud className="h-4 w-4 text-slate-900" />
+              <span>+ Import Resumes</span>
             </button>
           </div>
-        </div>
 
-        {/* Top Macro KPI Stat Cards (RC-02, RC-06, RC-07, PL-01) */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          {/* Card 1: Total Talent Ingested */}
-          <div
-            onClick={() => {
-              setSilverFilter(false);
-              setNoticeFilter(false);
-              setProbationFilter(false);
-            }}
-            className={`bg-white rounded-2xl border p-4.5 shadow-2xs hover:shadow-xs transition-all cursor-pointer ${
-              !silverFilter && !noticeFilter && !probationFilter
-                ? "border-[#f5d762] ring-2 ring-[#fce17c] bg-amber-50/20"
-                : "border-slate-200/90 hover:border-slate-300"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">Total Talent Bank</span>
-              <div className="w-8 h-8 rounded-xl bg-[#fce17c]/40 border border-[#f5d762]/60 flex items-center justify-center text-slate-800">
-                <Users className="h-4 w-4" />
-              </div>
-            </div>
-            <div className="mt-2 flex items-baseline space-x-2">
-              <span className="text-2xl font-black text-slate-900">{candidates.length}</span>
-              <span className="text-xs text-slate-500 font-semibold">Profiles Ingested</span>
-            </div>
-            <p className="text-[11px] text-slate-400 mt-1">
-              Multi-resume AI batch parsed & deduplicated
-            </p>
-          </div>
-
-          {/* Card 2: Silver Medalist Vault */}
-          <div
-            onClick={() => {
-              setSilverFilter(!silverFilter);
-              setNoticeFilter(false);
-              setProbationFilter(false);
-            }}
-            className={`bg-white rounded-2xl border p-4.5 shadow-2xs hover:shadow-xs transition-all cursor-pointer ${
-              silverFilter
-                ? "border-amber-400 ring-2 ring-amber-300 bg-amber-50/40"
-                : "border-slate-200/90 hover:border-amber-300"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-1.5">
-                <span className="text-[11px] font-bold text-amber-900 uppercase tracking-wider">Silver Medalists</span>
-                <span className="bg-amber-100 text-amber-800 text-[9px] font-black px-1.5 py-0.5 rounded border border-amber-200 uppercase">
-                  RC-07
-                </span>
-              </div>
-              <div className="w-8 h-8 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-700">
-                <Award className="h-4 w-4" />
-              </div>
-            </div>
-            <div className="mt-2 flex items-baseline space-x-2">
-              <span className="text-2xl font-black text-amber-950">
-                {candidates.filter((c) => c.isSilverMedalist).length}
-              </span>
-              <span className="text-xs text-amber-800 font-semibold">Pre-Vetted</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Final-round runners-up ready for 1-click redeploy
-            </p>
-          </div>
-
-          {/* Card 3: Notice Period Radar */}
-          <div
-            onClick={() => {
-              setNoticeFilter(!noticeFilter);
-              setSilverFilter(false);
-              setProbationFilter(false);
-            }}
-            className={`bg-white rounded-2xl border p-4.5 shadow-2xs hover:shadow-xs transition-all cursor-pointer ${
-              noticeFilter
-                ? "border-purple-400 ring-2 ring-purple-300 bg-purple-50/30"
-                : "border-slate-200/90 hover:border-purple-300"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-1.5">
-                <span className="text-[11px] font-bold text-purple-900 uppercase tracking-wider">Notice Risk Radar</span>
-                <span className="bg-purple-100 text-purple-800 text-[9px] font-black px-1.5 py-0.5 rounded border border-purple-200 uppercase">
-                  RC-06
-                </span>
-              </div>
-              <div className="w-8 h-8 rounded-xl bg-purple-100 border border-purple-200 flex items-center justify-center text-purple-700">
-                <ShieldAlert className="h-4 w-4" />
-              </div>
-            </div>
-            <div className="mt-2 flex items-baseline space-x-2">
-              <span className="text-2xl font-black text-purple-950">
-                {
-                  candidates.filter((c) => {
-                    const s = c.submissions[0]?.stage;
-                    return s === "OFFER_ISSUED" || s === "OFFER_ACCEPTED" || s === "NOTICE_PERIOD_ACTIVE";
-                  }).length
-                }
-              </span>
-              <span className="text-xs text-purple-800 font-semibold">In Resignation</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Counter-offer risk monitor & retention pulses
-            </p>
-          </div>
-
-          {/* Card 4: 90-Day Guarantee Vault */}
-          <div
-            onClick={() => {
-              setProbationFilter(!probationFilter);
-              setSilverFilter(false);
-              setNoticeFilter(false);
-            }}
-            className={`bg-white rounded-2xl border p-4.5 shadow-2xs hover:shadow-xs transition-all cursor-pointer ${
-              probationFilter
-                ? "border-emerald-400 ring-2 ring-emerald-300 bg-emerald-50/30"
-                : "border-slate-200/90 hover:border-emerald-300"
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-1.5">
-                <span className="text-[11px] font-bold text-emerald-900 uppercase tracking-wider">90d Guarantee</span>
-                <span className="bg-emerald-100 text-emerald-800 text-[9px] font-black px-1.5 py-0.5 rounded border border-emerald-200 uppercase">
-                  PL-01
-                </span>
-              </div>
-              <div className="w-8 h-8 rounded-xl bg-emerald-100 border border-emerald-200 flex items-center justify-center text-emerald-700">
-                <Shield className="h-4 w-4" />
-              </div>
-            </div>
-            <div className="mt-2 flex items-baseline space-x-2">
-              <span className="text-2xl font-black text-emerald-950">
-                {
-                  candidates.filter((c) => {
-                    const s = c.submissions[0];
-                    return s?.stage === "JOINED_DAY_1_ACTIVE" && s?.probationStatus !== "EARLY_EXIT_REPLACEMENT";
-                  }).length
-                }
-              </span>
-              <span className="text-xs text-emerald-800 font-semibold">Active Placements</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Fee protection countdown & early exit monitor
-            </p>
-          </div>
-        </div>
-
-        {/* Table Filters & Views */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-slate-200/80 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 bg-slate-50/70">
-            <div className="relative rounded-xl shadow-2xs flex-1 max-w-md">
+          {/* Row 2: Search Input (Left) + Interactive Metric Filter Tabs (Right) */}
+          <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 pt-3 border-t border-slate-100">
+            {/* Search Input */}
+            <div className="relative flex-1 max-w-md">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Search className="h-3.5 w-3.5 text-slate-400" />
               </div>
@@ -1140,39 +985,41 @@ export default function CandidateBankPage() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search candidate name, skill, company, title..."
-                className="block w-full pl-9 pr-8 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-[#fce17c] focus:border-[#f5d762] bg-white text-slate-900 transition-all placeholder:text-slate-400"
+                placeholder="Search candidate, skill, company, title..."
+                className="block w-full pl-9 pr-8 py-2 text-xs border border-slate-200 rounded-xl focus:ring-2 focus:ring-slate-900/10 focus:border-slate-400 bg-white text-slate-900 transition-all placeholder:text-slate-400"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery("")}
-                  className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 text-xs font-bold"
+                  className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 text-xs font-bold cursor-pointer"
                 >
                   ✕
                 </button>
               )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              {/* All Candidates Filter */}
+            {/* Interactive Metric Filter Tabs (Live Filter + Counter, Monochromatic Discipline) */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              {/* All Filter */}
               <button
+                type="button"
                 onClick={() => {
                   setProbationFilter(false);
                   setNoticeFilter(false);
                   setSilverFilter(false);
                 }}
-                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   !probationFilter && !noticeFilter && !silverFilter
-                    ? "bg-[#fce17c] border-[#f5d762] text-slate-900 shadow-2xs"
-                    : "bg-white border-slate-200 text-slate-600 hover:bg-slate-50"
+                    ? "bg-slate-900 text-white shadow-2xs"
+                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
                 }`}
               >
-                <Users className="h-3.5 w-3.5 text-slate-700" />
                 <span>All ({candidates.length})</span>
               </button>
 
-              {/* Silver Medalist Filter (RC-07) */}
+              {/* Silver Vault Filter */}
               <button
+                type="button"
                 onClick={() => {
                   setSilverFilter(!silverFilter);
                   if (!silverFilter) {
@@ -1180,19 +1027,18 @@ export default function CandidateBankPage() {
                     setNoticeFilter(false);
                   }
                 }}
-                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   silverFilter
-                    ? "bg-amber-100 border-amber-300 text-amber-900 shadow-2xs"
-                    : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                    ? "bg-slate-900 text-white shadow-2xs"
+                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
                 }`}
               >
-                <Award className={`h-3.5 w-3.5 ${silverFilter ? "text-amber-700" : "text-slate-400"}`} />
                 <span>Silver Vault ({candidates.filter((c) => c.isSilverMedalist).length})</span>
-                {silverFilter && <Check className="h-3 w-3 text-amber-800 ml-0.5" />}
               </button>
 
-              {/* Notice Period Risk Board Filter (RC-06) */}
+              {/* Notice Risk Filter */}
               <button
+                type="button"
                 onClick={() => {
                   setNoticeFilter(!noticeFilter);
                   if (!noticeFilter) {
@@ -1200,22 +1046,23 @@ export default function CandidateBankPage() {
                     setSilverFilter(false);
                   }
                 }}
-                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   noticeFilter
-                    ? "bg-purple-100 border-purple-300 text-purple-900 shadow-2xs"
-                    : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                    ? "bg-slate-900 text-white shadow-2xs"
+                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
                 }`}
               >
-                <ShieldAlert className={`h-3.5 w-3.5 ${noticeFilter ? "text-purple-700" : "text-slate-400"}`} />
-                <span>Notice Risk ({candidates.filter((c) => {
-                  const s = c.submissions[0]?.stage;
-                  return s === "OFFER_ISSUED" || s === "OFFER_ACCEPTED" || s === "NOTICE_PERIOD_ACTIVE";
-                }).length})</span>
-                {noticeFilter && <Check className="h-3 w-3 text-purple-800 ml-0.5" />}
+                <span>Notice Risk ({
+                  candidates.filter((c) => {
+                    const s = c.submissions[0]?.stage;
+                    return s === "OFFER_ISSUED" || s === "OFFER_ACCEPTED" || s === "NOTICE_PERIOD_ACTIVE";
+                  }).length
+                })</span>
               </button>
 
-              {/* 90-Day Probation Vault Filter (RC-07, PL-01) */}
+              {/* 90d Guarantee Filter */}
               <button
+                type="button"
                 onClick={() => {
                   setProbationFilter(!probationFilter);
                   if (!probationFilter) {
@@ -1223,21 +1070,25 @@ export default function CandidateBankPage() {
                     setSilverFilter(false);
                   }
                 }}
-                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border cursor-pointer ${
+                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                   probationFilter
-                    ? "bg-emerald-100 border-emerald-300 text-emerald-900 shadow-2xs"
-                    : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                    ? "bg-slate-900 text-white shadow-2xs"
+                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
                 }`}
               >
-                <Shield className={`h-3.5 w-3.5 ${probationFilter ? "text-emerald-700" : "text-slate-400"}`} />
-                <span>90d Guarantee ({candidates.filter((c) => {
-                  const s = c.submissions[0];
-                  return s?.stage === "JOINED_DAY_1_ACTIVE" && s?.probationStatus !== "EARLY_EXIT_REPLACEMENT";
-                }).length})</span>
-                {probationFilter && <Check className="h-3 w-3 text-emerald-800 ml-0.5" />}
+                <span>90d Guarantee ({
+                  candidates.filter((c) => {
+                    const s = c.submissions[0];
+                    return s?.stage === "JOINED_DAY_1_ACTIVE" && s?.probationStatus !== "EARLY_EXIT_REPLACEMENT";
+                  }).length
+                })</span>
               </button>
             </div>
           </div>
+        </div>
+
+        {/* Candidate List Container */}
+        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
 
           {/* Table */}
           {loading ? (
@@ -1260,237 +1111,75 @@ export default function CandidateBankPage() {
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full divide-y divide-slate-200 text-left text-xs">
-                <thead className="bg-slate-50/90 text-slate-700 uppercase font-bold text-[11px] tracking-wider border-b border-slate-200">
-                  <tr>
-                    <th scope="col" className="px-4 py-3 min-w-[260px]">
-                      Candidate & Role
-                    </th>
-                    <th scope="col" className="px-3 py-3 w-[100px] whitespace-nowrap">
-                      Date Sourced
-                    </th>
-                    <th scope="col" className="px-3 py-3 w-[105px] whitespace-nowrap">
-                      Source
-                    </th>
-                    <th scope="col" className="px-3 py-3 w-[125px] whitespace-nowrap">
-                      Mobile Number
-                    </th>
-                    <th scope="col" className="px-3 py-3 w-[230px]">
-                      Last Call Outcome
-                    </th>
-                    <th scope="col" className="px-3 py-3 w-[130px] whitespace-nowrap">
-                      Pipeline / Job
-                    </th>
-                    <th scope="col" className="px-3 py-3 w-[1%] whitespace-nowrap text-right">
-                      Actions
-                    </th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-slate-100">
-                  {displayedCandidates.map((c) => {
-                    const primarySub = c.submissions[0];
-                    const isScheduled = primarySub?.stage === "INTERVIEW_SCHEDULED";
-                    const isCompleted = primarySub?.stage === "INTERVIEW_COMPLETED";
-                    const isShortlisted = primarySub?.stage === "CLIENT_SHORTLISTED";
-                    const isOfferStage = primarySub?.stage === "OFFER_ISSUED" || primarySub?.stage === "OFFER_ACCEPTED";
-                    const isNoticeStage = primarySub?.stage === "NOTICE_PERIOD_ACTIVE";
-                    const isJoined = primarySub?.stage === "JOINED_DAY_1_ACTIVE";
+            <div className="p-4 bg-slate-50/50 space-y-3">
+              {/* Resdex Candidate Selection & Stats Counter Header */}
+              {displayedCandidates.length > 0 && (
+                <div className="flex items-center justify-between px-3.5 py-2.5 bg-white rounded-xl border border-slate-200/80 text-xs text-slate-600 font-medium shadow-2xs">
+                  <div className="flex items-center space-x-2.5">
+                    <input
+                      type="checkbox"
+                      checked={
+                        selectedCandidateIds.length > 0 &&
+                        displayedCandidates.every((c) => selectedCandidateIds.includes(c.id))
+                      }
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const allIds = Array.from(
+                            new Set([...selectedCandidateIds, ...displayedCandidates.map((c) => c.id)])
+                          );
+                          setSelectedCandidateIds(allIds);
+                        } else {
+                          const displayedSet = new Set(displayedCandidates.map((c) => c.id));
+                          setSelectedCandidateIds((prev) => prev.filter((id) => !displayedSet.has(id)));
+                        }
+                      }}
+                      aria-label="Select all candidates in this view"
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
+                    />
+                    <span className="font-bold text-slate-800">
+                      Showing {displayedCandidates.length} candidate{displayedCandidates.length === 1 ? "" : "s"}
+                    </span>
+                    {selectedCandidateIds.length > 0 && (
+                      <span className="bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-full text-[11px] border border-amber-300">
+                        {selectedCandidateIds.length} selected
+                      </span>
+                    )}
+                  </div>
 
-                    const dispObj = CALL_DISPOSITIONS.find((d) => d.value === c.lastCallDisposition);
+                  {selectedCandidateIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCandidateIds([])}
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-900 underline cursor-pointer"
+                    >
+                      Clear Selection
+                    </button>
+                  )}
+                </div>
+              )}
 
-                    return (
-                      <tr
-                        key={c.id}
-                        className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
-                        onClick={() => handleOpenCandidateModal(c)}
-                      >
-                        {/* 1. Candidate Name & Role (Expanded to take full primary space) */}
-                        <td className="px-4 py-3">
-                          <div className="flex items-center space-x-3">
-                            <div className="w-9 h-9 rounded-xl bg-[#fce17c] border border-[#f5d762] flex items-center justify-center font-black text-slate-900 text-xs flex-shrink-0 shadow-2xs">
-                              {c.fullName.substring(0, 2).toUpperCase()}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                              <div className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors flex items-center space-x-1.5">
-                                <span className="text-xs sm:text-sm">{c.fullName}</span>
-                                {c.isSilverMedalist && (
-                                  <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-black px-1.5 py-0.2 rounded-md flex items-center space-x-0.5 flex-shrink-0">
-                                    <Award className="h-2.5 w-2.5 text-amber-700" />
-                                    <span>SILVER</span>
-                                  </span>
-                                )}
-                              </div>
-                              <div className="text-[11px] text-slate-500 font-medium truncate">
-                                {c.currentTitle || "Professional"} {c.currentCompany ? `at ${c.currentCompany}` : ""}
-                              </div>
-                              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[10px] text-slate-400 font-medium">
-                                <span className="font-semibold text-slate-600">{c.totalExpYears}y Exp</span>
-                                <span>•</span>
-                                <span>{c.noticePeriodDays}d Notice</span>
-                                <span>•</span>
-                                <span>
-                                  {c.currentCtc ? `${(c.currentCtc / 100000).toFixed(1)}L` : "N/A"} →{" "}
-                                  <strong className="text-emerald-700 font-bold">
-                                    {c.expectedCtc ? `${(c.expectedCtc / 100000).toFixed(1)}L ${c.currency}` : "Comp N/A"}
-                                  </strong>
-                                </span>
-                                {c.resumeUrl && (
-                                  <a
-                                    href={c.resumeUrl}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    onClick={(e) => e.stopPropagation()}
-                                    className="inline-flex items-center space-x-0.5 font-bold text-blue-600 hover:text-blue-800 bg-blue-50 border border-blue-200 px-1.5 py-0.2 rounded hover:bg-blue-100 transition-colors ml-1"
-                                    title="View Original CV"
-                                  >
-                                    <FileText className="h-2.5 w-2.5" />
-                                    <span>CV</span>
-                                  </a>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        </td>
-
-                        {/* 2. Date Sourced */}
-                        <td className="px-3 py-3 text-slate-600 font-medium whitespace-nowrap w-[100px] text-[11px]">
-                          {new Date(c.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                        </td>
-
-                        {/* 3. Source Name */}
-                        <td className="px-3 py-3 whitespace-nowrap w-[105px]">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                            {c.source.replace(/_/g, " ")}
-                          </span>
-                        </td>
-
-                        {/* 4. Mobile Number (From resume) */}
-                        <td className="px-3 py-3 font-mono text-slate-800 font-semibold whitespace-nowrap w-[125px] text-[11px]">
-                          {c.phone || "N/A"}
-                        </td>
-
-                        {/* 5. Last Call Outcome */}
-                        <td className="px-3 py-3 w-[230px]">
-                          {dispObj ? (
-                            <div className="space-y-1">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${dispObj.badge}`}>
-                                  {dispObj.label}
-                                </span>
-                                {c.lastCallDisposition === "CONNECTED_CALLBACK" && c.nextCallbackAt && (() => {
-                                  const cbBadge = getCallbackBadge(c.nextCallbackAt);
-                                  return cbBadge ? (
-                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] border shadow-2xs ${cbBadge.className}`}>
-                                      {cbBadge.text}
-                                    </span>
-                                  ) : null;
-                                })()}
-                              </div>
-                              {c.lastCallNotes && (
-                                <p className="text-[10px] text-slate-500 italic mt-0.5 max-w-xs truncate">
-                                  "{c.lastCallNotes}"
-                                </p>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-slate-400 text-[11px] italic">No calls logged yet</span>
-                          )}
-                        </td>
-
-                        {/* 6. Pipeline / Job Context (Compact) */}
-                        <td className="px-3 py-3 whitespace-nowrap w-[130px]">
-                          {primarySub ? (
-                            <div className="space-y-0.5 max-w-[130px]">
-                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-extrabold border ${
-                                isJoined
-                                  ? "bg-emerald-100 text-emerald-800 border-emerald-300"
-                                  : isNoticeStage
-                                  ? "bg-amber-100 text-amber-800 border-amber-300"
-                                  : isOfferStage
-                                  ? "bg-purple-100 text-purple-800 border-purple-300"
-                                  : isScheduled
-                                  ? "bg-blue-100 text-blue-800 border-blue-300"
-                                  : "bg-slate-100 text-slate-700 border-slate-200"
-                              }`}>
-                                {primarySub.stage.replace(/_/g, " ")}
-                              </span>
-                              <div className="text-[10px] text-slate-500 font-medium truncate" title={`${primarySub.mandate.title} (${primarySub.mandate.client.name})`}>
-                                {primarySub.mandate.title}
-                              </div>
-                            </div>
-                          ) : (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
-                              Talent Pool
-                            </span>
-                          )}
-                        </td>
-
-                        {/* 7. Actions (Shrink-wrapped, zero wasted space) */}
-                        <td className="px-3 py-3 text-right whitespace-nowrap w-[1%]" onClick={(e) => e.stopPropagation()}>
-                          <div className="inline-flex items-center justify-end space-x-1.5">
-                            <button
-                              onClick={() => handleOpenCandidateModal(c)}
-                              className="inline-flex items-center space-x-1 px-2.5 py-1 bg-slate-100 hover:bg-[#fce17c] hover:border-[#f5d762] border border-slate-200 text-slate-800 hover:text-slate-900 font-bold rounded-lg text-xs transition-colors cursor-pointer shadow-2xs"
-                              title="Log Call Outcome & Screening Details"
-                            >
-                              <PhoneCall className="h-3 w-3 text-slate-700" />
-                              <span>Log Call & Details</span>
-                            </button>
-
-                            {c.isSilverMedalist && (
-                              <button
-                                onClick={() => {
-                                  setRedeployCandidate(c);
-                                  setRedeployNotes(`Redeploying Silver Medalist '${c.fullName}' with pre-vetted experience.`);
-                                }}
-                                className="inline-flex items-center space-x-1 px-2.5 py-1 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-black rounded-lg text-xs transition-all shadow-xs cursor-pointer border border-[#e5bf00]"
-                                title="1-Click Redeploy Silver Medalist"
-                              >
-                                <Zap className="h-3 w-3" />
-                                <span>Redeploy</span>
-                              </button>
-                            )}
-
-                            {primarySub && (primarySub.stage === "CLIENT_SHORTLISTED" || primarySub.stage === "SCREENED_QUALIFIED") && (
-                              <button
-                                onClick={() => handleOpenScheduleModal(c)}
-                                className="inline-flex items-center space-x-1 px-2 py-1 bg-purple-600 hover:bg-purple-700 text-white font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
-                                title="Schedule Interview"
-                              >
-                                <Calendar className="h-3 w-3" />
-                                <span>Schedule</span>
-                              </button>
-                            )}
-
-                            {primarySub && isNoticeStage && (
-                              <button
-                                onClick={() => handleOpenPulseModal(c)}
-                                className="inline-flex items-center space-x-1 px-2 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-bold rounded-lg text-xs transition-all cursor-pointer"
-                                title="Retention Pulse Check"
-                              >
-                                <ShieldAlert className="h-3 w-3 text-amber-700" />
-                                <span>Pulse</span>
-                              </button>
-                            )}
-
-                            {primarySub && (isOfferStage || isNoticeStage) && (
-                              <button
-                                onClick={() => handleOpenJoiningModal(c)}
-                                className="inline-flex items-center space-x-1 px-2 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-lg text-xs transition-all shadow-xs cursor-pointer"
-                                title="Confirm Day 1 Joining & Auto-Invoice"
-                              >
-                                <Receipt className="h-3 w-3" />
-                                <span>Join</span>
-                              </button>
-                            )}
-                          </div>
-                        </td>
-                      </tr>
+              {/* Candidate Cards Stack */}
+              {displayedCandidates.map((c, idx) => (
+                <CandidateCard
+                  key={c.id}
+                  candidate={c as any}
+                  index={idx}
+                  isSelected={selectedCandidateIds.includes(c.id)}
+                  onToggleSelect={(id) => {
+                    setSelectedCandidateIds((prev) =>
+                      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
                     );
-                  })}
-                </tbody>
-              </table>
+                  }}
+                  onOpenModal={handleOpenCandidateModal}
+                  onScheduleInterview={handleOpenScheduleModal}
+                  onRedeploy={(cand) => {
+                    setRedeployCandidate(cand as any);
+                    setRedeployNotes(`Redeploying Silver Medalist '${cand.fullName}' with pre-vetted experience.`);
+                  }}
+                  onRetentionPulse={handleOpenPulseModal}
+                  onConfirmJoining={handleOpenJoiningModal}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -1505,7 +1194,7 @@ export default function CandidateBankPage() {
                 <Receipt className="h-5 w-5 text-emerald-700" />
                 <div>
                   <h3 className="font-extrabold text-slate-900 text-sm">
-                    Confirm Day-1 Physical Joining & Generate Commercial Tax Invoice (PL-01, PL-02)
+                    Confirm Day-1 Physical Joining & Generate Commercial Tax Invoice
                   </h3>
                   <p className="text-[10px] text-emerald-800">
                     Candidate: <strong>{joiningCandidate.fullName}</strong> • {joiningCandidate.submissions[0].mandate.title}
@@ -1653,7 +1342,7 @@ export default function CandidateBankPage() {
                 <RefreshCw className="h-5 w-5 text-rose-700" />
                 <div>
                   <h3 className="font-extrabold text-slate-900 text-sm">
-                    Trigger $0 Free Replacement Mandate (RC-07)
+                    Trigger $0 Free Replacement Mandate
                   </h3>
                   <p className="text-[10px] text-rose-800">
                     Candidate: <strong>{exitCandidate.fullName}</strong> • 90-Day Guarantee Policy
@@ -1709,7 +1398,7 @@ export default function CandidateBankPage() {
         </div>
       )}
 
-      {/* MODAL: OFFER LOCKDOWN & RESIGNATION PLAYBOOK (RC-06) */}
+      {/* MODAL: OFFER LOCKDOWN & RESIGNATION PLAYBOOK */}
       {offerModalCandidate && offerModalCandidate.submissions.length > 0 && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
@@ -1718,7 +1407,7 @@ export default function CandidateBankPage() {
                 <FileCheck className="h-5 w-5 text-purple-700" />
                 <div>
                   <h3 className="font-extrabold text-slate-900 text-sm">
-                    Pre-Offer Lockdown & Counter-Offer Immunity (RC-06)
+                    Pre-Offer Lockdown & Counter-Offer Immunity
                   </h3>
                   <p className="text-[10px] text-purple-800">
                     Candidate: <strong>{offerModalCandidate.fullName}</strong> • {offerModalCandidate.submissions[0].mandate.title}
@@ -1842,7 +1531,7 @@ export default function CandidateBankPage() {
               <div className="flex items-center space-x-2">
                 <ShieldAlert className="h-5 w-5 text-amber-700" />
                 <div>
-                  <h3 className="font-extrabold text-slate-900 text-sm">Notice Period Retention Pulse Check (RC-06)</h3>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Notice Period Retention Pulse Check</h3>
                   <p className="text-[10px] text-amber-800">Candidate: {pulseModalCandidate.fullName}</p>
                 </div>
               </div>
@@ -1962,7 +1651,7 @@ export default function CandidateBankPage() {
               <div className="flex items-center space-x-2">
                 <MessageSquare className="h-5 w-5 text-emerald-700" />
                 <div>
-                  <h3 className="font-extrabold text-slate-900 text-sm">Post-Interview Debrief & Feedback Capture (RC-05)</h3>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Post-Interview Debrief & Feedback Capture</h3>
                   <p className="text-[10px] text-emerald-800">Candidate: {debriefCandidate.fullName}</p>
                 </div>
               </div>
@@ -2053,7 +1742,7 @@ export default function CandidateBankPage() {
               <div className="flex items-center space-x-2">
                 <Award className="h-5 w-5 text-amber-700" />
                 <div>
-                  <h3 className="font-extrabold text-slate-900 text-sm">Add to Silver Medalist Vault (RC-07)</h3>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Add to Silver Medalist Vault</h3>
                   <p className="text-[10px] text-amber-800">Tag high-caliber finalist for cross-mandate redeployment</p>
                 </div>
               </div>
@@ -2118,7 +1807,7 @@ export default function CandidateBankPage() {
               <div className="flex items-center space-x-2">
                 <Zap className="h-5 w-5 text-amber-600" />
                 <div>
-                  <h3 className="font-extrabold text-slate-900 text-sm">1-Click Instant Redeployment (RC-07)</h3>
+                  <h3 className="font-extrabold text-slate-900 text-sm">1-Click Instant Redeployment</h3>
                   <p className="text-[10px] text-slate-500">Jumpstart active search pipeline with pre-vetted finalist</p>
                 </div>
               </div>
@@ -2206,7 +1895,7 @@ export default function CandidateBankPage() {
         </div>
       )}
 
-      {/* MODAL 3: UNIFIED BATCH RESUME INGESTION & SPLIT-SCREEN GEMINI AI REVIEW MODAL (RC-02) */}
+      {/* MODAL 3: UNIFIED BATCH RESUME INGESTION */}
       {isImportModalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
           <div
@@ -2222,7 +1911,7 @@ export default function CandidateBankPage() {
                 </div>
                 <div>
                   <h3 className="font-black text-slate-900 text-sm tracking-tight">
-                    CV Parsing & Intake Engine (RC-02)
+                    CV Parsing & Intake Engine
                   </h3>
                   <p className="text-[11px] text-slate-800 font-medium">
                     {batchResults.length > 0 && !parsing

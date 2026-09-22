@@ -17,49 +17,87 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const mandateId = searchParams.get("mandateId") || undefined;
 
-    // 1. Today's Interviews Query (00:00:00 to 23:59:59)
-    const startOfToday = new Date();
+    // 1. 3-Day Interviews Queries (Yesterday, Today, Tomorrow)
+    const now = new Date();
+    
+    // Today
+    const startOfToday = new Date(now);
     startOfToday.setHours(0, 0, 0, 0);
-    const endOfToday = new Date();
+    const endOfToday = new Date(now);
     endOfToday.setHours(23, 59, 59, 999);
 
-    const interviewsToday = await prisma.interviewSchedule.findMany({
-      where: {
-        agencyId: session.user.agencyId,
-        scheduledAt: {
-          gte: startOfToday,
-          lte: endOfToday,
-        },
-        ...(mandateId ? { mandateId } : {}),
-      },
-      include: {
-        candidate: {
-          select: {
-            id: true,
-            fullName: true,
-            email: true,
-            phone: true,
-            currentTitle: true,
-            currentCompany: true,
-          },
-        },
-        mandate: {
-          select: {
-            id: true,
-            title: true,
-            client: { select: { id: true, name: true } },
-          },
-        },
-        submission: {
-          select: {
-            id: true,
-            stage: true,
-            clientDecision: true,
-          },
+    // Yesterday
+    const startOfYesterday = new Date(now);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    startOfYesterday.setHours(0, 0, 0, 0);
+    const endOfYesterday = new Date(now);
+    endOfYesterday.setDate(endOfYesterday.getDate() - 1);
+    endOfYesterday.setHours(23, 59, 59, 999);
+
+    // Tomorrow
+    const startOfTomorrow = new Date(now);
+    startOfTomorrow.setDate(startOfTomorrow.getDate() + 1);
+    startOfTomorrow.setHours(0, 0, 0, 0);
+    const endOfTomorrow = new Date(now);
+    endOfTomorrow.setDate(endOfTomorrow.getDate() + 1);
+    endOfTomorrow.setHours(23, 59, 59, 999);
+
+    const interviewInclude = {
+      candidate: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          phone: true,
+          currentTitle: true,
+          currentCompany: true,
         },
       },
-      orderBy: { scheduledAt: "asc" },
-    });
+      mandate: {
+        select: {
+          id: true,
+          title: true,
+          client: { select: { id: true, name: true } },
+        },
+      },
+      submission: {
+        select: {
+          id: true,
+          stage: true,
+          clientDecision: true,
+        },
+      },
+    };
+
+    const [interviewsYesterday, interviewsToday, interviewsTomorrow] = await Promise.all([
+      prisma.interviewSchedule.findMany({
+        where: {
+          agencyId: session.user.agencyId,
+          scheduledAt: { gte: startOfYesterday, lte: endOfYesterday },
+          ...(mandateId ? { mandateId } : {}),
+        },
+        include: interviewInclude,
+        orderBy: { scheduledAt: "asc" },
+      }),
+      prisma.interviewSchedule.findMany({
+        where: {
+          agencyId: session.user.agencyId,
+          scheduledAt: { gte: startOfToday, lte: endOfToday },
+          ...(mandateId ? { mandateId } : {}),
+        },
+        include: interviewInclude,
+        orderBy: { scheduledAt: "asc" },
+      }),
+      prisma.interviewSchedule.findMany({
+        where: {
+          agencyId: session.user.agencyId,
+          scheduledAt: { gte: startOfTomorrow, lte: endOfTomorrow },
+          ...(mandateId ? { mandateId } : {}),
+        },
+        include: interviewInclude,
+        orderBy: { scheduledAt: "asc" },
+      }),
+    ]);
 
     // 2. Column 1: Screened Candidates (<24h vetted, awaiting client presentation)
     const screenedSubmissions = await prisma.candidateSubmission.findMany({
@@ -131,10 +169,10 @@ export async function GET(req: Request) {
       take: 50,
     });
 
-    const now = Date.now();
+    const nowMs = Date.now();
     const formattedSubmitted = submittedSubmissions.map((sub) => {
       const submittedAt = sub.submittedToClientAt ? new Date(sub.submittedToClientAt).getTime() : new Date(sub.createdAt).getTime();
-      const hoursWaiting = Math.max(0, Math.floor((now - submittedAt) / (1000 * 60 * 60)));
+      const hoursWaiting = Math.max(0, Math.floor((nowMs - submittedAt) / (1000 * 60 * 60)));
       let slaStatus: "HEALTHY" | "WARNING" | "BREACHED" = "HEALTHY";
       if (hoursWaiting >= 72) {
         slaStatus = "BREACHED";
@@ -147,6 +185,9 @@ export async function GET(req: Request) {
         slaStatus,
       };
     });
+
+    // Sort so breached & warnings are front-and-center
+    const chasesDue = [...formattedSubmitted].sort((a, b) => (b.hoursWaiting || 0) - (a.hoursWaiting || 0));
 
     // 4. Column 3: Interviewing (<24h debrief)
     const interviewingSubmissions = await prisma.candidateSubmission.findMany({
@@ -193,6 +234,58 @@ export async function GET(req: Request) {
       take: 50,
     });
 
+    // 5. RC-05: Notice Period & Post-Offer Drop-Off Radar
+    const noticePeriodSubmissions = await prisma.candidateSubmission.findMany({
+      where: {
+        agencyId: session.user.agencyId,
+        stage: {
+          in: [
+            SubmissionStage.OFFER_ACCEPTED,
+            SubmissionStage.NOTICE_PERIOD_ACTIVE,
+          ],
+        },
+        ...(mandateId ? { mandateId } : {}),
+      },
+      include: {
+        candidate: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+            phone: true,
+            currentTitle: true,
+            currentCompany: true,
+            expectedCtc: true,
+            currency: true,
+            noticePeriodDays: true,
+          },
+        },
+        mandate: {
+          select: {
+            id: true,
+            title: true,
+            client: { select: { id: true, name: true } },
+          },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 30,
+    });
+
+    const formattedNoticePeriod = noticePeriodSubmissions.map((sub) => {
+      const daysInNotice = sub.candidate.noticePeriodDays || 30;
+      const acceptedAt = new Date(sub.updatedAt).getTime();
+      const daysSinceAccepted = Math.max(0, Math.floor((nowMs - acceptedAt) / (1000 * 60 * 60 * 24)));
+      const daysRemaining = Math.max(0, daysInNotice - daysSinceAccepted);
+
+      return {
+        ...sub,
+        daysInNotice,
+        daysSinceAccepted,
+        daysRemaining,
+      };
+    });
+
     // Calculate SLA Compliance
     const totalSubmitted = formattedSubmitted.length;
     const breachedCount = formattedSubmitted.filter((s) => s.slaStatus === "BREACHED").length;
@@ -202,6 +295,10 @@ export async function GET(req: Request) {
 
     return NextResponse.json({
       interviewsToday,
+      interviewsYesterday,
+      interviewsTomorrow,
+      chasesDue,
+      noticePeriodWatch: formattedNoticePeriod,
       columns: {
         screened: screenedSubmissions,
         submitted: formattedSubmitted,
@@ -211,10 +308,13 @@ export async function GET(req: Request) {
         totalScreened: screenedSubmissions.length,
         totalSubmitted,
         totalInterviewing: interviewingSubmissions.length,
+        totalInterviewsYesterday: interviewsYesterday.length,
         totalInterviewsToday: interviewsToday.length,
+        totalInterviewsTomorrow: interviewsTomorrow.length,
         slaComplianceRate: complianceRate,
         breachedCount,
         warningCount,
+        noticePeriodCount: formattedNoticePeriod.length,
       },
     });
   } catch (error: any) {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { sanitizeUtf8 } from "@/lib/resume-parser";
 import { sendWhatsAppTextMessage } from "@/lib/whatsapp";
-import { SubmissionStage, CandidateJobStatus, InterviewStatus, InterviewType } from "@prisma/client";
+import { SubmissionStage, CandidateJobStatus, InterviewStatus, InterviewType, CallDisposition } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -205,17 +205,29 @@ export async function POST(req: NextRequest) {
           const mandate = submission.mandate;
           const agencyId = submission.agencyId;
 
+          const trimmedText = userResponseText.trim().toLowerCase();
+
           const isReschedule =
             chosenSlotId?.startsWith("SLOT_OTHER") ||
-            userResponseText.toLowerCase().includes("suggest") ||
-            userResponseText.toLowerCase().includes("other time") ||
-            userResponseText.toLowerCase().includes("reschedule");
+            trimmedText.includes("suggest") ||
+            trimmedText.includes("other time") ||
+            trimmedText.includes("reschedule") ||
+            trimmedText === "4" ||
+            trimmedText === "option 4";
 
           const isSlotConfirmed =
             (chosenSlotId?.startsWith("SLOT_") && !isReschedule) ||
-            userResponseText.toLowerCase().includes("option 1") ||
-            userResponseText.toLowerCase().includes("option 2") ||
-            userResponseText.toLowerCase().includes("option 3");
+            trimmedText === "1" ||
+            trimmedText === "2" ||
+            trimmedText === "3" ||
+            trimmedText.startsWith("option 1") ||
+            trimmedText.startsWith("option 2") ||
+            trimmedText.startsWith("option 3") ||
+            trimmedText.startsWith("slot 1") ||
+            trimmedText.startsWith("slot 2") ||
+            trimmedText.startsWith("slot 3") ||
+            trimmedText.includes("confirm") ||
+            trimmedText.includes("interested");
 
           // 1. Log to AuditLog (surfaces instantly in Recruiter Activity Feed)
           await prisma.auditLog.create({
@@ -240,7 +252,33 @@ export async function POST(req: NextRequest) {
             },
           });
 
-          // 2. Append timestamped update to submission client notes
+          // 2. Log to CallLog (surfaces instantly in candidate call history & activity)
+          try {
+            await prisma.callLog.create({
+              data: {
+                agencyId,
+                candidateId: candidate.id,
+                submissionId: submission.id,
+                mandateId: mandate.id,
+                disposition: isSlotConfirmed
+                  ? CallDisposition.CONNECTED_INTERESTED
+                  : isReschedule
+                  ? CallDisposition.CONNECTED_CALLBACK
+                  : CallDisposition.CONNECTED_INTERESTED,
+                notes: sanitizeUtf8(
+                  isSlotConfirmed
+                    ? `[WhatsApp] Candidate confirmed interview slot: "${userResponseText}"`
+                    : isReschedule
+                    ? `[WhatsApp] Candidate requested alternative interview time: "${userResponseText}"`
+                    : `[WhatsApp] Candidate reply received: "${userResponseText}"`
+                ),
+              },
+            });
+          } catch (callLogErr) {
+            console.error("Non-fatal: Failed to create CallLog from WhatsApp reply:", callLogErr);
+          }
+
+          // 3. Append timestamped update to submission client notes
           const nowStr = new Date().toLocaleDateString("en-US", {
             month: "short",
             day: "numeric",

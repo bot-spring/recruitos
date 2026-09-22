@@ -42,10 +42,13 @@ import {
   RotateCcw,
   ShieldCheck,
   RefreshCw,
+  MapPin,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CandidateDetailModal, CALL_DISPOSITIONS } from "@/components/CandidateDetailModal";
 import { ScheduleInterviewModal } from "@/components/ScheduleInterviewModal";
+import { CockpitHeader } from "@/components/CockpitHeader";
+import { CandidateCard } from "@/components/CandidateCard";
 
 interface MandateDetails {
   id: string;
@@ -202,6 +205,8 @@ export default function MandateWorkspacePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [activeQuickTab, setActiveQuickTab] = useState<"ALL" | "CALLBACKS_TODAY" | "READY_TO_SHARE">("ALL");
+  const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
+  const [isJdDrawerOpen, setIsJdDrawerOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Centered Call Screening Modal State
@@ -701,48 +706,9 @@ export default function MandateWorkspacePage() {
     <div className="min-h-screen bg-[#F8FAFC]">
       <UserSandboxBanner />
       {/* Top Header Navigation */}
-      <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between items-center h-16">
-            <div className="flex items-center space-x-4">
-              <Link
-                href="/cockpit?tab=mandates"
-                className="inline-flex items-center space-x-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
-              >
-                <ArrowLeft className="h-3.5 w-3.5" />
-                <span>Back to Mandates</span>
-              </Link>
-
-              <div className="h-5 w-px bg-slate-200" />
-
-              <div className="flex items-center space-x-2">
-                <span className="font-extrabold text-slate-900 text-base">{mandate.title}</span>
-                <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded border border-slate-200">
-                  {mandate.client.name}
-                </span>
-                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">
-                  SLA: {mandate.slaStatus}
-                </span>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-3">
-              <UserSandboxToggle />
-
-              <Link
-                href="/cockpit/candidates"
-                className="hidden sm:inline-flex items-center space-x-1.5 text-xs font-bold text-slate-600 hover:text-slate-900 px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors"
-              >
-                <Users className="h-3.5 w-3.5 text-slate-500" />
-                <span>Candidate Bank</span>
-              </Link>
-            </div>
-          </div>
-        </div>
-      </header>
 
       {/* Main Workspace Body */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 space-y-4">
         {/* Success Alert Banner */}
         {successMessage && (
           <div className="p-3.5 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center justify-between shadow-sm animate-in fade-in duration-150">
@@ -760,203 +726,241 @@ export default function MandateWorkspacePage() {
         )}
 
         {/* ========================================================================= */}
-        {/* SECTION 1: TOP MANDATE SPECIFICATION & JOB DESCRIPTION CARD             */}
+        {/* MANDATE HERO STRIP WITH CONSOLIDATED JOB ACTIONS (ASHBY PATTERN)         */}
         {/* ========================================================================= */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-6 space-y-4">
-          <div className="flex flex-col lg:flex-row justify-between items-start lg:items-center gap-3 border-b border-slate-100 pb-4">
-            <div>
-              <div className="flex items-center space-x-2">
-                <Briefcase className="h-4 w-4 text-slate-700" />
-                <h1 className="text-base font-black text-slate-900">{mandate.title}</h1>
+        <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 sm:p-5 space-y-3">
+          {/* Top Row: Breadcrumb + Title + Consolidated Actions */}
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            {/* Left: Breadcrumb + Title, Client, Openings & SLA */}
+            <div className="space-y-1">
+              <div className="flex items-center space-x-1.5 text-xs text-slate-400 font-medium">
+                <Link
+                  href="/cockpit?tab=mandates"
+                  className="hover:text-slate-900 inline-flex items-center space-x-1 font-semibold text-slate-500 hover:text-slate-800 transition-colors"
+                >
+                  <ArrowLeft className="h-3 w-3" />
+                  <span>Mandates</span>
+                </Link>
+                <span className="text-slate-300">/</span>
+                <span className="text-slate-600 font-medium">{mandate.client.name}</span>
               </div>
-              <p className="text-xs text-slate-500 mt-0.5">
-                Client: <strong>{mandate.client.name}</strong> • Work Mode: <strong>{mandate.workMode}</strong> • Location: <strong>{mandate.location || "Remote / Flexible"}</strong> • Experience: <strong>{mandate.minExp && mandate.maxExp ? `${mandate.minExp} - ${mandate.maxExp} Years` : mandate.minExp ? `${mandate.minExp}+ Years` : "Open"}</strong>
-              </p>
+
+              <div className="flex items-center space-x-3 flex-wrap gap-y-1.5 pt-0.5">
+                <button
+                  type="button"
+                  onClick={() => setIsJdDrawerOpen(true)}
+                  className="group flex items-center space-x-2 text-left cursor-pointer focus:outline-none"
+                >
+                  <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight group-hover:text-blue-700 transition-colors">
+                    {mandate.title}
+                  </h1>
+                  <span className="text-slate-400 group-hover:text-blue-600 transition-colors text-xs font-semibold underline underline-offset-2 flex items-center space-x-0.5">
+                    <span>(Full JD)</span>
+                  </span>
+                </button>
+                <span className="text-slate-300">|</span>
+                <span className="text-xs font-semibold text-slate-500">
+                  {mandate.openings} {mandate.openings === 1 ? "Opening" : "Openings"}
+                </span>
+                {/* SLA bulb dot indicator */}
+                <span className="inline-flex items-center space-x-1.5 text-[11px] font-semibold text-slate-700 bg-slate-50 px-2 py-0.5 rounded-full border border-slate-200">
+                  <span className={`h-1.5 w-1.5 rounded-full ${
+                    mandate.slaStatus === "BREACHED"
+                      ? "bg-rose-500 animate-pulse"
+                      : mandate.slaStatus === "WARNING" || mandate.slaStatus === "AT_RISK"
+                      ? "bg-amber-500"
+                      : "bg-emerald-500"
+                  }`} />
+                  <span>SLA: {mandate.slaStatus.replace("_", " ")}</span>
+                </span>
+              </div>
             </div>
 
-            <div className="flex items-center space-x-3 text-xs flex-wrap gap-y-2">
-              <div className="bg-emerald-50 text-emerald-900 px-3 py-1.5 rounded-xl border border-emerald-200 font-bold">
-                Exp: {mandate.minExp && mandate.maxExp ? `${mandate.minExp} - ${mandate.maxExp} Yrs` : mandate.minExp ? `${mandate.minExp}+ Yrs` : "Open"}
-              </div>
-              <div className="bg-purple-50 text-purple-900 px-3 py-1.5 rounded-xl border border-purple-200 font-bold">
-                Fee: {mandate.feePercentage}% CTC
-              </div>
-              <div className="bg-blue-50 text-blue-900 px-3 py-1.5 rounded-xl border border-blue-200 font-bold">
-                Guarantee: {mandate.guaranteeDays}d
-              </div>
-              <div className="bg-amber-50 text-amber-900 px-3 py-1.5 rounded-xl border border-amber-200 font-bold">
-                Target CTC: {mandate.minCtc ? `${(mandate.minCtc / 100000).toFixed(1)}L` : "Open"} - {mandate.maxCtc ? `${(mandate.maxCtc / 100000).toFixed(1)}L` : "Negotiable"}
-              </div>
+            {/* Right: Sourcing Actions (Only 2 Clean Buttons) */}
+            <div className="flex items-center space-x-2 flex-wrap gap-y-2">
+              {/* 1. Talent Pool */}
+              <button
+                onClick={() => setIsPoolModalOpen(true)}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-800 font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                <Zap className="h-3.5 w-3.5 text-amber-500" />
+                <span>Talent Pool</span>
+                {matchingPool.length > 0 && (
+                  <span className="bg-white text-slate-700 text-[10px] font-black px-1.5 py-0.2 rounded-full border border-slate-200">
+                    {matchingPool.length}
+                  </span>
+                )}
+              </button>
+
+              {/* 2. Ingest Resumes */}
+              <button
+                onClick={() => {
+                  setIsIngestModalOpen(true);
+                  setUploadFiles([]);
+                  setBatchResults([]);
+                  setParseError(null);
+                }}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-black text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+              >
+                <UploadCloud className="h-3.5 w-3.5" />
+                <span>+ Ingest Resumes</span>
+              </button>
             </div>
           </div>
 
-          {/* Formatted JD & Client Contact Accordion / Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 text-xs">
-            <div className="lg:col-span-2 space-y-2">
-              <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px] block">
-                Job Description & Requirements
-              </span>
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/80 text-slate-700 leading-relaxed whitespace-pre-wrap font-sans max-h-36 overflow-y-auto">
-                {mandate.description || "No full JD text provided."}
+          {/* Bottom Row: Key Specs Icon Bar + Skills */}
+          <div className="pt-1 flex flex-wrap items-center justify-between gap-y-2 text-xs text-slate-600">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+              {/* Exp */}
+              <div className="flex items-center space-x-1.5">
+                <Clock className="h-3.5 w-3.5 text-slate-400" />
+                <span>
+                  Exp: <strong className="text-slate-800">{mandate.minExp && mandate.maxExp ? `${mandate.minExp}-${mandate.maxExp} Yrs` : mandate.minExp ? `${mandate.minExp}+ Yrs` : "Open"}</strong>
+                </span>
               </div>
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {mandate.skills.map((s, idx) => (
-                  <span key={idx} className="bg-brand-surfaceLight border border-brand-surface text-slate-800 text-[11px] font-semibold px-2 py-0.5 rounded">
-                    {s}
+
+              {/* CTC */}
+              <div className="flex items-center space-x-1.5">
+                <DollarSign className="h-3.5 w-3.5 text-slate-400" />
+                <span>
+                  Target CTC: <strong className="text-slate-800">{mandate.minCtc ? `₹${(mandate.minCtc / 100000).toFixed(1)}L` : "Open"} - {mandate.maxCtc ? `₹${(mandate.maxCtc / 100000).toFixed(1)}L` : "Open"}</strong>
+                </span>
+              </div>
+
+              {/* Location & Mode */}
+              <div className="flex items-center space-x-1.5">
+                <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                <span>
+                  <strong className="text-slate-800">{mandate.location || "Remote / Flexible"}</strong> ({mandate.workMode})
+                </span>
+              </div>
+
+              {/* Fee & Guarantee */}
+              <div className="flex items-center space-x-1.5">
+                <Shield className="h-3.5 w-3.5 text-slate-400" />
+                <span>
+                  Fee: <strong className="text-slate-800">{mandate.feePercentage}%</strong> • Guarantee: <strong className="text-slate-800">{mandate.guaranteeDays}d</strong>
+                </span>
+              </div>
+            </div>
+
+            {/* Top Skills Badges */}
+            {mandate.skills.length > 0 && (
+              <div className="flex items-center space-x-1 flex-wrap">
+                {mandate.skills.slice(0, 3).map((skill, idx) => (
+                  <span
+                    key={idx}
+                    className="bg-slate-100 text-slate-700 text-[10px] font-semibold px-2 py-0.5 rounded border border-slate-200"
+                  >
+                    {skill}
                   </span>
                 ))}
-              </div>
-            </div>
-
-            <div className="space-y-3 bg-slate-50/60 p-4 rounded-xl border border-slate-200/80">
-              <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px] block">
-                Client Organization & Contact
-              </span>
-              <div className="space-y-1.5 text-slate-600">
-                <div><strong>Company:</strong> {mandate.client.name}</div>
-                <div><strong>Industry:</strong> {mandate.client.industry || "Technology / Corporate"}</div>
-                {mandate.contact && (
-                  <>
-                    <div className="border-t border-slate-200 pt-1.5">
-                      <strong>Hiring Lead:</strong> {mandate.contact.name} ({mandate.contact.designation || "Lead"})
-                    </div>
-                    <div className="flex items-center space-x-1 text-[11px] text-slate-500">
-                      <Mail className="h-3 w-3 text-slate-400" />
-                      <span>{mandate.contact.email}</span>
-                    </div>
-                    {mandate.contact.phone && (
-                      <div className="flex items-center space-x-1 text-[11px] text-slate-500">
-                        <Phone className="h-3 w-3 text-slate-400" />
-                        <span>{mandate.contact.phone}</span>
-                      </div>
-                    )}
-                  </>
+                {mandate.skills.length > 3 && (
+                  <button
+                    onClick={() => setIsJdDrawerOpen(true)}
+                    className="text-[10px] text-slate-500 hover:text-slate-800 font-bold px-1.5 py-0.5 hover:underline cursor-pointer"
+                  >
+                    +{mandate.skills.length - 3} more
+                  </button>
                 )}
               </div>
-            </div>
-          </div>
-        </div>
-
-        {/* ========================================================================= */}
-        {/* SECTION 2: RECRUITER ACTION TOOLBAR (POOL MATCH, DIRECT INGEST, SHARE)   */}
-        {/* ========================================================================= */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm p-4 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3">
-          <div className="flex items-center space-x-2 flex-wrap gap-y-2">
-            {/* BUTTON 1: BROWSE MATCHING CANDIDATES IN POOL */}
-            <button
-              onClick={() => setIsPoolModalOpen(true)}
-              className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
-            >
-              <Zap className="h-3.5 w-3.5" />
-              <span>Browse Matching Candidates in Pool ({matchingPool.length})</span>
-            </button>
-
-            {/* BUTTON 2: INGEST CANDIDATES DIRECTLY TO THIS JOB */}
-            <button
-              onClick={() => {
-                setIsIngestModalOpen(true);
-                setUploadFiles([]);
-                setBatchResults([]);
-                setParseError(null);
-              }}
-              className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
-            >
-              <UploadCloud className="h-3.5 w-3.5" />
-              <span>+ Ingest Resumes for this Job</span>
-            </button>
-          </div>
-
-          {/* BUTTON 3: SHARE WITH CLIENT PORTAL (SMART HELPER) */}
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => {
-                setIsShareModalOpen(true);
-                setGeneratedPortalUrl(null);
-                setCopiedPortalUrl(false);
-              }}
-              className="inline-flex items-center space-x-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
-            >
-              <Send className="h-3.5 w-3.5" />
-              <span>Share Shortlist with Client Portal</span>
-              {readyToShareCount > 0 && (
-                <span className="bg-white text-blue-900 text-[10px] font-black px-1.5 py-0.2 rounded-full ml-1">
-                  {readyToShareCount} Ready
-                </span>
-              )}
-            </button>
-
-            {/* 1-CLICK CLIENT CHASE REMINDER (CF-04) */}
-            {sharedWithClientCount > 0 && (
-              <button
-                type="button"
-                onClick={handleChaseClient}
-                disabled={chasingClient}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
-              >
-                <BellRing className="h-3.5 w-3.5 text-amber-600 animate-pulse" />
-                <span>{chasingClient ? "Sending Reminder..." : "⚡ Chase Client for Feedback"}</span>
-                <span className="bg-amber-200 text-amber-950 text-[10px] font-black px-1.5 py-0.2 rounded-full ml-1">
-                  {sharedWithClientCount} Awaiting
-                </span>
-              </button>
             )}
           </div>
         </div>
 
         {/* ========================================================================= */}
-        {/* SECTION 3: ATTACHED CANDIDATES LIST (THE CORE RECRUITER DESK)           */}
+        {/* CANDIDATES DESK (TABS + DELIVERY ACTIONS)                                 */}
         {/* ========================================================================= */}
-        <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
-          {/* Quick Filter Segmented Control */}
-          <div className="px-4 py-2.5 bg-slate-100/70 border-b border-slate-200/80 flex items-center space-x-2 overflow-x-auto">
-            <button
-              onClick={() => setActiveQuickTab("ALL")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                activeQuickTab === "ALL"
-                  ? "bg-white text-slate-900 shadow-xs border border-slate-200"
-                  : "text-slate-600 hover:text-slate-900 hover:bg-white/60"
-              }`}
-            >
-              All Candidates ({candidates.length})
-            </button>
-
-            <button
-              onClick={() => setActiveQuickTab("CALLBACKS_TODAY")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
-                activeQuickTab === "CALLBACKS_TODAY"
-                  ? "bg-amber-500 text-white shadow-xs"
-                  : "text-amber-900 bg-amber-100/70 hover:bg-amber-100 border border-amber-300/80"
-              }`}
-            >
-              <Clock className="h-3.5 w-3.5" />
-              <span>Callbacks Due Today</span>
-              {callbacksDueCount > 0 && (
-                <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
-                  activeQuickTab === "CALLBACKS_TODAY" ? "bg-white text-amber-900" : "bg-amber-600 text-white"
+        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+          {/* Tabs + Delivery Actions Bar */}
+          <div className="px-5 pt-3 pb-2.5 bg-white border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            {/* Left: Sleek Underline Tabs */}
+            <div className="flex items-center space-x-6 overflow-x-auto -mb-2.5">
+              <button
+                onClick={() => setActiveQuickTab("ALL")}
+                className={`pb-3 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5 border-b-2 -mb-px ${
+                  activeQuickTab === "ALL"
+                    ? "border-slate-900 text-slate-900 font-extrabold"
+                    : "border-transparent text-slate-500 hover:text-slate-800 font-semibold"
+                }`}
+              >
+                <span>All Candidates</span>
+                <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
+                  activeQuickTab === "ALL" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
                 }`}>
-                  {callbacksDueCount}
+                  {candidates.length}
                 </span>
-              )}
-            </button>
+              </button>
 
-            <button
-              onClick={() => setActiveQuickTab("READY_TO_SHARE")}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer flex items-center space-x-1.5 ${
-                activeQuickTab === "READY_TO_SHARE"
-                  ? "bg-blue-600 text-white shadow-xs"
-                  : "text-blue-900 bg-blue-50 hover:bg-blue-100/70 border border-blue-200"
-              }`}
-            >
-              <Zap className="h-3.5 w-3.5" />
-              <span>Ready to Share</span>
-              {readyToShareCount > 0 && (
-                <span className={`text-[10px] font-black px-1.5 py-0.2 rounded-full ${
-                  activeQuickTab === "READY_TO_SHARE" ? "bg-white text-blue-900" : "bg-blue-600 text-white"
-                }`}>
-                  {readyToShareCount}
-                </span>
+              <button
+                onClick={() => setActiveQuickTab("CALLBACKS_TODAY")}
+                className={`pb-3 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5 border-b-2 -mb-px ${
+                  activeQuickTab === "CALLBACKS_TODAY"
+                    ? "border-amber-600 text-amber-900 font-extrabold"
+                    : "border-transparent text-slate-500 hover:text-slate-800 font-semibold"
+                }`}
+              >
+                <Clock className="h-3.5 w-3.5 text-amber-600" />
+                <span>Callbacks Due Today</span>
+                {callbacksDueCount > 0 && (
+                  <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-amber-500 text-white">
+                    {callbacksDueCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setActiveQuickTab("READY_TO_SHARE")}
+                className={`pb-3 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5 border-b-2 -mb-px ${
+                  activeQuickTab === "READY_TO_SHARE"
+                    ? "border-blue-600 text-blue-900 font-extrabold"
+                    : "border-transparent text-slate-500 hover:text-slate-800 font-semibold"
+                }`}
+              >
+                <Zap className="h-3.5 w-3.5 text-blue-600" />
+                <span>Ready to Share</span>
+                {readyToShareCount > 0 && (
+                  <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-blue-600 text-white">
+                    {readyToShareCount}
+                  </span>
+                )}
+              </button>
+            </div>
+
+            {/* Right: Client Delivery Actions (Share Shortlist + Chase Client) */}
+            <div className="flex items-center space-x-2 flex-shrink-0">
+              <button
+                onClick={() => {
+                  setIsShareModalOpen(true);
+                  setGeneratedPortalUrl(null);
+                  setCopiedPortalUrl(false);
+                }}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white font-extrabold text-xs rounded-lg shadow-xs transition-colors cursor-pointer"
+              >
+                <Send className="h-3 w-3" />
+                <span>Share Shortlist</span>
+                {readyToShareCount > 0 && (
+                  <span className="bg-white text-slate-900 text-[10px] font-black px-1.5 py-0.2 rounded-full ml-1">
+                    {readyToShareCount}
+                  </span>
+                )}
+              </button>
+
+              {sharedWithClientCount > 0 && (
+                <button
+                  type="button"
+                  onClick={handleChaseClient}
+                  disabled={chasingClient}
+                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-xs rounded-lg shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                >
+                  <BellRing className="h-3 w-3 text-amber-600" />
+                  <span>{chasingClient ? "Chasing..." : "Chase"}</span>
+                  <span className="bg-amber-200 text-amber-950 text-[10px] font-black px-1.5 py-0.2 rounded-full ml-1">
+                    {sharedWithClientCount}
+                  </span>
+                </button>
               )}
-            </button>
+            </div>
           </div>
 
           {/* Table Filters & Search */}
@@ -996,131 +1000,89 @@ export default function MandateWorkspacePage() {
             </div>
           </div>
 
-          {/* Candidates Table */}
+          {/* Candidates Cards Stack (Matching Talent Bank Architecture) */}
           {filteredCandidates.length === 0 ? (
             <div className="p-12 text-center text-slate-500 text-xs">
               <Users className="h-8 w-8 text-slate-300 mx-auto mb-2" />
               <p className="font-bold text-slate-700 text-sm">No candidates in this mandate yet</p>
               <p className="text-slate-400 text-xs mt-1">
-                Click <strong>"Browse Matching Candidates in Pool"</strong> or <strong>"+ Ingest Resumes for this Job"</strong> above!
+                Click <strong>"Talent Pool"</strong> or <strong>"+ Ingest Resumes"</strong> above!
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="min-w-full divide-y divide-slate-200 text-left text-xs">
-                <thead className="bg-brand-surfaceLight text-slate-700 uppercase font-semibold tracking-wider">
-                  <tr>
-                    <th scope="col" className="px-5 py-3">Candidate & Role</th>
-                    <th scope="col" className="px-4 py-3">Date Sourced</th>
-                    <th scope="col" className="px-4 py-3">Source Name</th>
-                    <th scope="col" className="px-4 py-3">Mobile Number</th>
-                    <th scope="col" className="px-5 py-3">Last Call Outcome</th>
-                    <th scope="col" className="px-4 py-3">Company Status</th>
-                    <th scope="col" className="px-4 py-3 text-right">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="bg-white divide-y divide-slate-100">
-                  {filteredCandidates.map((c) => {
-                    const dispObj = CALL_DISPOSITIONS.find((d) => d.value === c.lastCallOutcome);
-                    const statusObj = CANDIDATE_STATUSES.find((s) => s.value === c.status) || CANDIDATE_STATUSES[0];
+            <div className="p-4 bg-slate-50/50 space-y-3">
+              {/* Batch Selection Bar */}
+              {filteredCandidates.length > 0 && (
+                <div className="flex items-center justify-between px-3.5 py-2.5 bg-white rounded-xl border border-slate-200/80 text-xs text-slate-600 font-medium shadow-2xs">
+                  <div className="flex items-center space-x-2.5">
+                    <input
+                      type="checkbox"
+                      checked={
+                        selectedCandidateIds.length > 0 &&
+                        filteredCandidates.every((c) => selectedCandidateIds.includes(c.candidateId))
+                      }
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const allIds = Array.from(
+                            new Set([...selectedCandidateIds, ...filteredCandidates.map((c) => c.candidateId)])
+                          );
+                          setSelectedCandidateIds(allIds);
+                        } else {
+                          const displayedSet = new Set(filteredCandidates.map((c) => c.candidateId));
+                          setSelectedCandidateIds((prev) => prev.filter((id) => !displayedSet.has(id)));
+                        }
+                      }}
+                      aria-label="Select all candidates in this view"
+                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
+                    />
+                    <span className="font-bold text-slate-800">
+                      Showing {filteredCandidates.length} candidate{filteredCandidates.length === 1 ? "" : "s"}
+                    </span>
+                    {selectedCandidateIds.length > 0 && (
+                      <span className="bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-full text-[11px] border border-amber-300">
+                        {selectedCandidateIds.length} selected
+                      </span>
+                    )}
+                  </div>
 
-                    return (
-                      <tr
-                        key={c.submissionId}
-                        className="hover:bg-slate-50/80 transition-colors group cursor-pointer"
-                        onClick={() => handleOpenCandidateModal(c)}
-                      >
-                        {/* 1. Candidate Name & Role */}
-                        <td className="px-5 py-3.5">
-                          <div className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors flex items-center space-x-1.5">
-                            <span>{c.fullName}</span>
-                            {c.isSilverMedalist && (
-                              <span className="bg-amber-100 text-amber-900 border border-amber-300 text-[9px] font-extrabold px-1.5 py-0.2 rounded-full flex items-center space-x-0.5">
-                                <Award className="h-2.5 w-2.5 text-amber-700" />
-                                <span>SILVER</span>
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-[11px] text-slate-500 font-medium">
-                            {c.currentTitle || "Professional"} {c.currentCompany ? `at ${c.currentCompany}` : ""}
-                          </div>
-                        </td>
+                  {selectedCandidateIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedCandidateIds([])}
+                      className="text-xs font-semibold text-slate-500 hover:text-slate-900 underline cursor-pointer"
+                    >
+                      Clear Selection
+                    </button>
+                  )}
+                </div>
+              )}
 
-                        {/* 2. Date of Sourcing */}
-                        <td className="px-4 py-3.5 text-slate-600 font-medium whitespace-nowrap">
-                          {new Date(c.dateOfSourcing).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
-                        </td>
-
-                        {/* 3. Source Name */}
-                        <td className="px-4 py-3.5">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200">
-                            {c.source.replace(/_/g, " ")}
-                          </span>
-                        </td>
-
-                        {/* 4. Mobile Number (From resume) */}
-                        <td className="px-4 py-3.5 font-mono text-slate-800 font-semibold whitespace-nowrap">
-                          {c.phone || "N/A"}
-                        </td>
-
-                        {/* 5. Last Call Outcome */}
-                        <td className="px-5 py-3.5">
-                          {dispObj ? (
-                            <div className="space-y-1">
-                              <div className="flex flex-wrap items-center gap-1.5">
-                                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${dispObj.badge}`}>
-                                  {dispObj.label}
-                                </span>
-                                {c.lastCallOutcome === "CONNECTED_CALLBACK" && c.nextCallbackAt && (() => {
-                                  const cbBadge = getCallbackBadge(c.nextCallbackAt);
-                                  return cbBadge ? (
-                                    <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-[10px] border shadow-2xs ${cbBadge.className}`}>
-                                      {cbBadge.text}
-                                    </span>
-                                  ) : null;
-                                })()}
-                              </div>
-                              {c.lastCallNotes && (
-                                <p className="text-[10px] text-slate-500 italic mt-0.5 max-w-xs truncate">
-                                  "{c.lastCallNotes}"
-                                </p>
-                              )}
-                            </div>
-                          ) : (
-                            <span className="text-slate-400 text-[11px] italic">No calls logged yet</span>
-                          )}
-                        </td>
-
-                        {/* 6. Company Status Dropdown */}
-                        <td className="px-4 py-3.5" onClick={(e) => e.stopPropagation()}>
-                          <select
-                            value={c.status}
-                            onChange={(e) => handleUpdateStatus(c.submissionId, e.target.value)}
-                            className={`px-2.5 py-1 rounded-lg text-xs font-bold border cursor-pointer ${statusObj.badge}`}
-                          >
-                            {CANDIDATE_STATUSES.map((st) => (
-                              <option key={st.value} value={st.value}>
-                                {st.label}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-
-                        {/* 7. Action Button */}
-                        <td className="px-4 py-3.5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => handleOpenCandidateModal(c)}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1 bg-brand-surfaceLight hover:bg-brand-surface border border-brand-surfaceDark text-slate-800 font-bold rounded-lg text-xs transition-colors cursor-pointer"
-                          >
-                            <PhoneCall className="h-3 w-3 text-slate-700" />
-                            <span>Log Call & Details</span>
-                          </button>
-                        </td>
-                      </tr>
+              {/* Candidate Cards Stack */}
+              {filteredCandidates.map((c, idx) => (
+                <CandidateCard
+                  key={c.submissionId}
+                  candidate={{
+                    ...c,
+                    id: c.candidateId,
+                    lastCallDisposition: c.lastCallOutcome,
+                  }}
+                  index={idx}
+                  isSelected={selectedCandidateIds.includes(c.candidateId)}
+                  onToggleSelect={(id) => {
+                    setSelectedCandidateIds((prev) =>
+                      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
                     );
-                  })}
-                </tbody>
-              </table>
+                  }}
+                  onOpenModal={() => handleOpenCandidateModal(c)}
+                  onScheduleInterview={() => {
+                    setSelectedCandidate(null);
+                    setScheduleCandidate(c);
+                  }}
+                  statusOptions={CANDIDATE_STATUSES}
+                  currentStatus={c.status}
+                  onStatusChange={(_, newStatus) => handleUpdateStatus(c.submissionId, newStatus)}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -1909,6 +1871,148 @@ export default function MandateWorkspacePage() {
                   {generatingPortal ? "Generating..." : `Generate Link (${selectedForSharing.length})`}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* ========================================================================= */}
+      {/* SLIDE-OVER DRAWER: FULL JD & SPECIFICATIONS                              */}
+      {/* ========================================================================= */}
+      {isJdDrawerOpen && (
+        <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900/50 backdrop-blur-xs flex justify-end">
+          <div className="w-full max-w-xl bg-white h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-200">
+            {/* Drawer Header */}
+            <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
+              <div>
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Mandate Specifications</span>
+                <h2 className="text-base font-extrabold text-slate-900">{mandate.title}</h2>
+                <p className="text-xs text-slate-600 font-medium">{mandate.client.name}</p>
+              </div>
+              <button
+                onClick={() => setIsJdDrawerOpen(false)}
+                className="p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {/* Drawer Scrollable Content */}
+            <div className="p-6 space-y-6 overflow-y-auto flex-1 text-xs">
+              {/* Commercial Terms Grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Experience</span>
+                  <span className="font-extrabold text-slate-800 text-sm">
+                    {mandate.minExp && mandate.maxExp ? `${mandate.minExp}-${mandate.maxExp} Yrs` : mandate.minExp ? `${mandate.minExp}+ Yrs` : "Open"}
+                  </span>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Target CTC</span>
+                  <span className="font-extrabold text-slate-800 text-sm">
+                    {mandate.minCtc ? `₹${(mandate.minCtc / 100000).toFixed(1)}L` : "Open"} - {mandate.maxCtc ? `₹${(mandate.maxCtc / 100000).toFixed(1)}L` : "Open"}
+                  </span>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Work Mode</span>
+                  <span className="font-extrabold text-slate-800 text-sm">{mandate.workMode}</span>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Location</span>
+                  <span className="font-extrabold text-slate-800 text-sm">{mandate.location || "Flexible"}</span>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Recruiter Fee</span>
+                  <span className="font-extrabold text-slate-800 text-sm">{mandate.feePercentage}% CTC</span>
+                </div>
+                <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Guarantee</span>
+                  <span className="font-extrabold text-slate-800 text-sm">{mandate.guaranteeDays} Days</span>
+                </div>
+              </div>
+
+              {/* Skills Section */}
+              <div className="space-y-2">
+                <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px] block">
+                  Required Skills & Competencies ({mandate.skills.length})
+                </span>
+                <div className="flex flex-wrap gap-1.5">
+                  {mandate.skills.map((skill, idx) => (
+                    <span
+                      key={idx}
+                      className="bg-brand-surfaceLight border border-brand-surface text-slate-800 text-xs font-semibold px-2.5 py-1 rounded-lg"
+                    >
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+              </div>
+
+              {/* Full JD Description */}
+              <div className="space-y-2">
+                <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px] block">
+                  Full Job Description
+                </span>
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 text-slate-700 leading-relaxed whitespace-pre-wrap font-sans text-xs">
+                  {mandate.description || "No full JD text provided for this mandate."}
+                </div>
+              </div>
+
+              {/* Client Organization & Contact */}
+              <div className="space-y-3 bg-slate-50/80 p-4 rounded-xl border border-slate-200">
+                <span className="font-bold text-slate-700 uppercase tracking-wider text-[11px] block">
+                  Client Organization & Hiring Lead
+                </span>
+                <div className="space-y-2 text-slate-700">
+                  <div>
+                    <span className="text-slate-500 font-medium">Company:</span>{" "}
+                    <strong>{mandate.client.name}</strong>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 font-medium">Industry:</span>{" "}
+                    <strong>{mandate.client.industry || "Corporate / Technology"}</strong>
+                  </div>
+                  {mandate.contact ? (
+                    <div className="border-t border-slate-200 pt-2 space-y-1.5">
+                      <div>
+                        <span className="text-slate-500 font-medium">Hiring Lead:</span>{" "}
+                        <strong>{mandate.contact.name}</strong> ({mandate.contact.designation || "Lead"})
+                      </div>
+                      <div className="flex items-center space-x-1.5 text-slate-600">
+                        <Mail className="h-3.5 w-3.5 text-slate-400" />
+                        <span>{mandate.contact.email}</span>
+                      </div>
+                      {mandate.contact.phone && (
+                        <div className="flex items-center space-x-1.5 text-slate-600">
+                          <Phone className="h-3.5 w-3.5 text-slate-400" />
+                          <span>{mandate.contact.phone}</span>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="text-slate-400 italic">No direct hiring contact assigned.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Drawer Footer */}
+            <div className="px-6 py-3.5 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+              <button
+                onClick={() => setIsJdDrawerOpen(false)}
+                className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+              <button
+                onClick={() => {
+                  setIsJdDrawerOpen(false);
+                  setIsIngestModalOpen(true);
+                }}
+                className="px-4 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-extrabold text-xs rounded-xl shadow-xs transition-colors cursor-pointer inline-flex items-center space-x-1.5"
+              >
+                <UploadCloud className="h-3.5 w-3.5" />
+                <span>+ Ingest Resumes</span>
+              </button>
             </div>
           </div>
         </div>

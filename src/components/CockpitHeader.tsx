@@ -275,7 +275,7 @@ export function CockpitHeader({
   const handleTabClick = (tab: "dashboard" | "pipeline" | "mandates") => {
     if (onTabChange) {
       onTabChange(tab);
-      if (typeof window !== "undefined") {
+      if (typeof window !== "undefined" && window.location.pathname === "/cockpit") {
         const url = new URL(window.location.href);
         url.searchParams.set("tab", tab);
         window.history.replaceState({}, "", url.toString());
@@ -316,29 +316,15 @@ export function CockpitHeader({
               <button
                 type="button"
                 onClick={() => handleTabClick("dashboard")}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  activeTab === "dashboard"
-                    ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-                title="Macro Conversion Radar & Drop-off Diagnostics"
-              >
-                <LayoutDashboard className="h-3.5 w-3.5 text-slate-700" />
-                <span>📊 Radar</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => handleTabClick("pipeline")}
                 className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer relative ${
-                  activeTab === "pipeline"
+                  activeTab === "dashboard" || activeTab === "pipeline"
                     ? "bg-white text-slate-900 shadow-xs font-extrabold"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
-                title="Daily Lineup & 3-Column Tactical SLA Kanban"
+                title="Command Center: Interviews, SLA Chase Queue & Retentions"
               >
                 <Zap className="h-3.5 w-3.5 text-amber-500" />
-                <span>⚡ Pipeline</span>
+                <span>⚡ Command Center</span>
                 {pipelineAlertCount > 0 && (
                   <span
                     className={`ml-1 text-[9px] font-black px-1.5 py-0.2 rounded-full ${
@@ -358,7 +344,7 @@ export function CockpitHeader({
                     ? "bg-white text-slate-900 shadow-xs font-extrabold"
                     : "text-slate-600 hover:text-slate-900"
                 }`}
-                title="Mandates & SLA Radar"
+                title="Search Mandates & Client Workspaces"
               >
                 <Briefcase className="h-3.5 w-3.5 text-slate-700" />
                 <span>💼 Mandates</span>

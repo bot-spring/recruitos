@@ -15,28 +15,21 @@ import {
   AlertCircle,
   Sparkles,
   MapPin,
-  Eye,
   Check,
   X,
   MessageSquare,
   Calendar,
-  DollarSign,
-  Lock,
-  ThumbsUp,
   ThumbsDown,
-  HelpCircle,
   ExternalLink,
   ChevronRight,
-  Filter,
   Mail,
   Phone,
-  FileDown,
-  GraduationCap,
   FileText,
   PauseCircle,
-  Maximize2,
   Download,
+  Search,
 } from "lucide-react";
+import { CandidateCard } from "@/components/CandidateCard";
 
 interface PortalCandidate {
   submissionId: string;
@@ -120,15 +113,19 @@ export default function ZeroLoginClientPortalPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isLinkExpired, setIsLinkExpired] = useState(false);
-  const [activeFilter, setActiveFilter] = useState<"ALL" | "PENDING" | "SHORTLISTED" | "HOLD" | "REJECTED">("ALL");
 
-  // Expandable CV Slide-Over Drawer State
+  // Filters & Search (Mirroring Mandate Workspace)
+  const [activeTab, setActiveTab] = useState<"ALL" | "PENDING" | "SHORTLISTED" | "HOLD" | "REJECTED">("ALL");
+  const [searchQuery, setSearchQuery] = useState("");
+
+  // Slide-over CV & Dossier Drawer State
   const [expandedCandidate, setExpandedCandidate] = useState<PortalCandidate | null>(null);
-  const [expandedTab, setExpandedTab] = useState<"CV" | "TELEMETRY">("CV");
+  const [expandedTab, setExpandedTab] = useState<"CV" | "DOSSIER">("CV");
 
-  // Interactive Decision Modal State (CL-02)
+  // Interactive Decision Modal State
   const [selectedCandidate, setSelectedCandidate] = useState<PortalCandidate | null>(null);
   const [actionType, setActionType] = useState<"SHORTLIST" | "HOLD" | "REJECT" | "QUESTION" | null>(null);
+  const [shortlistMode, setShortlistMode] = useState<"COORDINATE" | "PROPOSE_SLOTS">("COORDINATE");
   const [decisionNotes, setDecisionNotes] = useState("");
   const [slot1Date, setSlot1Date] = useState("");
   const [slot1Time, setSlot1Time] = useState("11:00");
@@ -174,7 +171,6 @@ export default function ZeroLoginClientPortalPage() {
         throw new Error(json.error || "Client presentation link is invalid or expired.");
       }
 
-      // Check date client-side
       if (json.portal?.expiresAt && new Date() > new Date(json.portal.expiresAt)) {
         setIsLinkExpired(true);
         throw new Error("This client presentation link has expired.");
@@ -182,7 +178,7 @@ export default function ZeroLoginClientPortalPage() {
 
       setPortal(json.portal);
     } catch (err: any) {
-      setError(err.message || "Failed to load client portal");
+      setError(err.message || "Failed to load candidate presentation");
     } finally {
       setLoading(false);
     }
@@ -197,6 +193,8 @@ export default function ZeroLoginClientPortalPage() {
     setActionType(type);
     setDecisionNotes("");
     setSlotValidationError(null);
+    setShortlistMode("COORDINATE");
+
     if (type === "SHORTLIST") {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);
@@ -215,18 +213,36 @@ export default function ZeroLoginClientPortalPage() {
     e.preventDefault();
     if (!selectedCandidate || !actionType) return;
 
+    let validSlots: Array<{ date: string; time: string; formatted: string }> = [];
+    let formattedSlotsString: string | undefined = undefined;
+
     if (actionType === "SHORTLIST") {
-      if (!slot1Date || !slot1Time) {
-        setSlotValidationError("Please provide both Date and Time for Slot Option 1 (Mandatory).");
-        return;
-      }
-      if ((slot2Date && !slot2Time) || (!slot2Date && slot2Time)) {
-        setSlotValidationError("Please provide both Date and Time for Slot Option 2, or leave both empty.");
-        return;
-      }
-      if ((slot3Date && !slot3Time) || (!slot3Date && slot3Time)) {
-        setSlotValidationError("Please provide both Date and Time for Slot Option 3, or leave both empty.");
-        return;
+      if (shortlistMode === "PROPOSE_SLOTS") {
+        if (!slot1Date || !slot1Time) {
+          setSlotValidationError("Please provide both Date and Time for Slot Option 1.");
+          return;
+        }
+        if ((slot2Date && !slot2Time) || (!slot2Date && slot2Time)) {
+          setSlotValidationError("Please provide both Date and Time for Slot Option 2, or leave both empty.");
+          return;
+        }
+        if ((slot3Date && !slot3Time) || (!slot3Date && slot3Time)) {
+          setSlotValidationError("Please provide both Date and Time for Slot Option 3, or leave both empty.");
+          return;
+        }
+
+        if (slot1Date && slot1Time) {
+          validSlots.push({ date: slot1Date, time: slot1Time, formatted: formatSlotDisplay(slot1Date, slot1Time) });
+        }
+        if (slot2Date && slot2Time) {
+          validSlots.push({ date: slot2Date, time: slot2Time, formatted: formatSlotDisplay(slot2Date, slot2Time) });
+        }
+        if (slot3Date && slot3Time) {
+          validSlots.push({ date: slot3Date, time: slot3Time, formatted: formatSlotDisplay(slot3Date, slot3Time) });
+        }
+        formattedSlotsString = validSlots.map((s, i) => `Slot ${i + 1}: ${s.formatted}`).join(" | ");
+      } else {
+        formattedSlotsString = "Recruiter to coordinate interview schedule";
       }
     }
 
@@ -234,19 +250,6 @@ export default function ZeroLoginClientPortalPage() {
     setSlotValidationError(null);
 
     try {
-      const validSlots: Array<{ date: string; time: string; formatted: string }> = [];
-      if (slot1Date && slot1Time) {
-        validSlots.push({ date: slot1Date, time: slot1Time, formatted: formatSlotDisplay(slot1Date, slot1Time) });
-      }
-      if (slot2Date && slot2Time) {
-        validSlots.push({ date: slot2Date, time: slot2Time, formatted: formatSlotDisplay(slot2Date, slot2Time) });
-      }
-      if (slot3Date && slot3Time) {
-        validSlots.push({ date: slot3Date, time: slot3Time, formatted: formatSlotDisplay(slot3Date, slot3Time) });
-      }
-
-      const formattedSlotsString = validSlots.map((s, i) => `Slot ${i + 1}: ${s.formatted}`).join(" | ");
-
       const res = await fetch(`/api/portal/${token}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -255,7 +258,7 @@ export default function ZeroLoginClientPortalPage() {
           decision: actionType,
           notes: decisionNotes,
           preferredInterviewTimes: actionType === "SHORTLIST" ? formattedSlotsString : undefined,
-          proposedSlots: actionType === "SHORTLIST" ? validSlots : undefined,
+          proposedSlots: actionType === "SHORTLIST" && validSlots.length > 0 ? validSlots : undefined,
           rejectionReason: actionType === "REJECT" ? rejectionReason : actionType === "HOLD" ? holdReason : undefined,
         }),
       });
@@ -267,15 +270,15 @@ export default function ZeroLoginClientPortalPage() {
 
       setSuccessMessage(
         actionType === "SHORTLIST"
-          ? `Candidate '${selectedCandidate.fullName}' shortlisted for next round!`
+          ? `✓ '${selectedCandidate.fullName}' shortlisted for interview! Your search team has been alerted.`
           : actionType === "HOLD"
-          ? `Candidate '${selectedCandidate.fullName}' marked on hold.`
+          ? `⏳ '${selectedCandidate.fullName}' marked on hold.`
           : actionType === "REJECT"
-          ? `Feedback logged for '${selectedCandidate.fullName}'.`
-          : `Inquiry sent to desk recruiter.`
+          ? `✓ Feedback recorded for '${selectedCandidate.fullName}'.`
+          : `✓ Message sent to search lead.`
       );
 
-      // Keep expandedCandidate updated if open
+      // Keep expandedCandidate updated if currently viewing drawer
       if (expandedCandidate && expandedCandidate.submissionId === selectedCandidate.submissionId) {
         setExpandedCandidate({
           ...expandedCandidate,
@@ -286,7 +289,7 @@ export default function ZeroLoginClientPortalPage() {
               ? "REJECTED_WITH_FEEDBACK"
               : "INFO_REQUESTED",
           clientFeedbackNotes: decisionNotes || expandedCandidate.clientFeedbackNotes,
-          preferredInterviewTimes: actionType === "SHORTLIST" ? formattedSlotsString : expandedCandidate.preferredInterviewTimes,
+          preferredInterviewTimes: actionType === "SHORTLIST" ? formattedSlotsString || null : expandedCandidate.preferredInterviewTimes,
         });
       }
 
@@ -294,7 +297,7 @@ export default function ZeroLoginClientPortalPage() {
       setActionType(null);
       loadPortalData();
     } catch (err: any) {
-      alert(err.message || "Failed to record decision.");
+      alert(err.message || "Failed to record feedback.");
     } finally {
       setSubmittingDecision(false);
     }
@@ -303,41 +306,33 @@ export default function ZeroLoginClientPortalPage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-8 h-8 border-3 border-slate-800 border-t-transparent rounded-full animate-spin mx-auto mb-3"></div>
-          <p className="text-xs text-slate-500 font-medium tracking-wide uppercase">
-            Loading Client Presentation Portal...
+        <div className="text-center space-y-3">
+          <div className="w-9 h-9 border-3 border-slate-900 border-t-amber-400 rounded-full animate-spin mx-auto"></div>
+          <p className="text-xs text-slate-500 font-semibold tracking-wider uppercase">
+            Loading Candidate Presentation...
           </p>
         </div>
       </div>
     );
   }
 
-  // EXPIRED STATE BANNER & SCREEN (PII Protection)
+  // EXPIRED STATE SCREEN
   if (isLinkExpired || (portal?.expiresAt && new Date() > new Date(portal.expiresAt))) {
     return (
       <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center p-4">
-        <div className="bg-white p-8 sm:p-10 rounded-3xl border border-amber-200 shadow-sm max-w-lg text-center space-y-4">
-          <div className="w-14 h-14 bg-amber-50 border border-amber-200 text-amber-600 rounded-2xl flex items-center justify-center mx-auto">
+        <div className="bg-white p-8 sm:p-10 rounded-2xl border border-slate-200 shadow-sm max-w-lg text-center space-y-4">
+          <div className="w-14 h-14 bg-amber-50 border border-amber-200 text-amber-700 rounded-2xl flex items-center justify-center mx-auto">
             <Clock className="h-7 w-7" />
           </div>
-          <h2 className="text-xl font-black text-slate-900 tracking-tight">Review Link Expired</h2>
+          <h2 className="text-xl font-black text-slate-900 tracking-tight">Review Link Has Expired</h2>
           <p className="text-xs text-slate-600 leading-relaxed">
-            To safeguard candidate confidentiality and protect sensitive personally identifiable information (PII), client review links strictly expire after <strong>7 days</strong>.
+            To safeguard candidate privacy and confidential compensation data, presentation links expire after 7 days.
           </p>
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-left text-xs space-y-1">
-            <p className="font-bold text-slate-800">Need to review this shortlist?</p>
+          <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-left text-xs space-y-1">
+            <p className="font-bold text-slate-800">Need to access this shortlist?</p>
             <p className="text-slate-500">
-              Please contact your dedicated search recruiter or agency team to request a newly generated presentation link.
+              Please contact your dedicated search recruiter to receive a freshly generated presentation link.
             </p>
-          </div>
-          <div className="pt-2">
-            <Link
-              href="/login"
-              className="inline-flex items-center space-x-1.5 px-5 py-2.5 bg-slate-900 text-white font-bold text-xs rounded-xl shadow-sm hover:bg-slate-800 transition-colors"
-            >
-              <span>RecruitOS Portal Home</span>
-            </Link>
           </div>
         </div>
       </div>
@@ -347,26 +342,16 @@ export default function ZeroLoginClientPortalPage() {
   if (error || !portal) {
     return (
       <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center p-4">
-        <div className="bg-white p-8 rounded-3xl border border-slate-200 shadow-sm max-w-md text-center">
-          <AlertCircle className="h-10 w-10 text-rose-500 mx-auto mb-3" />
-          <h2 className="text-lg font-bold text-slate-900">Presentation Link Unavailable</h2>
-          <p className="text-xs text-slate-500 mt-2 mb-6">{error || "This shortlist portal link is invalid or deactivated."}</p>
-          <Link
-            href="/login"
-            className="inline-flex items-center space-x-1.5 px-4 py-2 bg-brand-yellow text-slate-900 font-bold text-xs rounded-lg shadow-sm hover:bg-brand-yellowHover"
-          >
-            <span>RecruitOS Login</span>
-          </Link>
+        <div className="bg-white p-8 rounded-2xl border border-slate-200 shadow-sm max-w-md text-center space-y-4">
+          <AlertCircle className="h-10 w-10 text-rose-500 mx-auto" />
+          <h2 className="text-lg font-bold text-slate-900">Presentation Unavailable</h2>
+          <p className="text-xs text-slate-500">{error || "This shortlist portal link is invalid or deactivated."}</p>
         </div>
       </div>
     );
   }
 
-  // Calculate 7-Day Countdown
-  const daysRemaining = portal.expiresAt
-    ? Math.max(0, Math.ceil((new Date(portal.expiresAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
-    : 7;
-
+  const totalCandidates = portal.candidates.length;
   const pendingCount = portal.candidates.filter(
     (c) => c.stage === "SUBMITTED_TO_CLIENT" || c.clientDecision === "PENDING_REVIEW"
   ).length;
@@ -380,17 +365,32 @@ export default function ZeroLoginClientPortalPage() {
     (c) => c.stage === "STAGE_REJECTED" || c.clientDecision === "REJECTED_WITH_FEEDBACK"
   ).length;
 
+  const reviewedCount = totalCandidates - pendingCount;
+
+  // Filter & Search Candidates
   const filteredCandidates = portal.candidates.filter((c) => {
-    if (activeFilter === "PENDING") return c.stage === "SUBMITTED_TO_CLIENT" || c.clientDecision === "PENDING_REVIEW";
-    if (activeFilter === "SHORTLISTED") return c.stage === "CLIENT_SHORTLISTED" || c.clientDecision === "SHORTLISTED_FOR_INTERVIEW";
-    if (activeFilter === "HOLD") return c.clientDecision === "INFO_REQUESTED" || (c as any).clientDecision === "HOLD";
-    if (activeFilter === "REJECTED") return c.stage === "STAGE_REJECTED" || c.clientDecision === "REJECTED_WITH_FEEDBACK";
+    // 1. Tab Filter
+    if (activeTab === "PENDING" && !(c.stage === "SUBMITTED_TO_CLIENT" || c.clientDecision === "PENDING_REVIEW")) return false;
+    if (activeTab === "SHORTLISTED" && !(c.stage === "CLIENT_SHORTLISTED" || c.clientDecision === "SHORTLISTED_FOR_INTERVIEW")) return false;
+    if (activeTab === "HOLD" && !(c.clientDecision === "INFO_REQUESTED" || (c as any).clientDecision === "HOLD")) return false;
+    if (activeTab === "REJECTED" && !(c.stage === "STAGE_REJECTED" || c.clientDecision === "REJECTED_WITH_FEEDBACK")) return false;
+
+    // 2. Search Query
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      const matchName = c.fullName?.toLowerCase().includes(q);
+      const matchTitle = c.currentTitle?.toLowerCase().includes(q);
+      const matchCompany = c.currentCompany?.toLowerCase().includes(q);
+      const matchSkills = c.skills?.some((s) => s.toLowerCase().includes(q));
+      if (!matchName && !matchTitle && !matchCompany && !matchSkills) return false;
+    }
+
     return true;
   });
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] flex flex-col justify-between text-slate-900">
-      {/* Top Client Header with 7-Day Security Badge */}
+    <div className="min-h-screen bg-[#F8FAFC] flex flex-col justify-between text-slate-900 font-sans">
+      {/* Top Client Header */}
       <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center space-x-3">
@@ -399,35 +399,31 @@ export default function ZeroLoginClientPortalPage() {
             </div>
             <div>
               <div className="flex items-center space-x-2">
-                <span className="font-extrabold text-slate-900 text-sm">{portal.agency.name}</span>
-                <span className="bg-[#fce17c]/30 text-slate-900 text-[10px] font-extrabold px-2 py-0.5 rounded border border-[#f5d762] uppercase tracking-wide">
-                  Candidate Screening Portal
+                <span className="font-extrabold text-slate-900 text-sm tracking-tight">{portal.agency.name}</span>
+                <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded-full border border-slate-200 uppercase tracking-wide">
+                  Candidate Presentation
                 </span>
               </div>
-              <p className="text-[11px] text-slate-500 font-medium">Prepared for <strong className="text-slate-800">{portal.clientOrgName}</strong></p>
+              <p className="text-[11px] text-slate-500 font-medium">
+                Prepared for <strong className="text-slate-800">{portal.clientOrgName}</strong>
+              </p>
             </div>
           </div>
 
           <div className="flex items-center space-x-3">
-            {/* 7-Day Expiry Countdown Pill */}
-            <div className="flex items-center space-x-1.5 text-xs bg-amber-50 text-amber-900 border border-amber-200/90 px-3 py-1 rounded-full font-extrabold shadow-2xs">
-              <Clock className="h-3.5 w-3.5 text-amber-600 animate-pulse" />
-              <span>Link Active: {daysRemaining} Day{daysRemaining === 1 ? "" : "s"} Left</span>
-            </div>
-
-            <div className="hidden md:flex items-center space-x-1.5 text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-1 rounded-full font-bold">
+            <div className="flex items-center space-x-1.5 text-xs bg-emerald-50 text-emerald-800 border border-emerald-200/90 px-3 py-1 rounded-full font-bold shadow-2xs">
               <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-              <span>Zero-Login Secure Link</span>
+              <span>Confidential Shortlist</span>
             </div>
           </div>
         </div>
       </header>
 
       {/* Main Content Area */}
-      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-8 w-full space-y-6">
+      <main className="max-w-6xl mx-auto px-4 sm:px-6 py-6 w-full space-y-4">
         {/* Success Alert Banner */}
         {successMessage && (
-          <div className="p-4 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-center justify-between shadow-sm animate-in fade-in duration-150 text-xs">
+          <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-center justify-between shadow-sm animate-in fade-in duration-150 text-xs">
             <div className="flex items-center space-x-2">
               <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0" />
               <span className="font-bold">{successMessage}</span>
@@ -441,58 +437,67 @@ export default function ZeroLoginClientPortalPage() {
           </div>
         )}
 
-        {/* Role Brief & 48h Feedback SLA Velocity Hero */}
-        <div className="bg-white rounded-3xl border border-slate-200 shadow-xs p-6 sm:p-8 space-y-6">
-          <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
-            <div className="space-y-2">
-              <div className="inline-flex items-center space-x-2 bg-slate-100 border border-slate-200 px-3 py-1 rounded-full text-xs font-bold text-slate-700">
-                <Building2 className="h-3.5 w-3.5 text-slate-500" />
-                <span>{portal.clientOrgName}</span>
+        {/* ========================================================================= */}
+        {/* MANDATE HERO STRIP (REPLICATING MANDATE WORKSPACE DESIGN)                 */}
+        {/* ========================================================================= */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-xs p-4 sm:p-5 space-y-3">
+          {/* Top Row: Client + Role Title + Openings + Right-side Concierge Actions */}
+          <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+            {/* Left: Client Org + Mandate Title */}
+            <div className="space-y-1">
+              <div className="flex items-center space-x-1.5 text-xs text-slate-400 font-medium">
+                <Building2 className="h-3 w-3 text-slate-400" />
+                <span className="text-slate-600 font-bold">{portal.clientOrgName}</span>
+                <span className="text-slate-300">/</span>
+                <span className="text-slate-500 font-medium">Candidate Review</span>
               </div>
 
-              <h1 className="text-2xl sm:text-3xl font-black text-slate-900 tracking-tight">
-                {portal.mandate.title}
-              </h1>
-
-              <div className="flex flex-wrap items-center gap-3 text-xs text-slate-500 font-medium">
-                <span className="flex items-center">
-                  <MapPin className="h-3.5 w-3.5 mr-1 text-slate-400" />
-                  {portal.mandate.location || "Bengaluru"} ({portal.mandate.workMode})
+              <div className="flex items-center space-x-3 flex-wrap gap-y-1.5 pt-0.5">
+                <h1 className="text-xl sm:text-2xl font-black text-slate-900 tracking-tight">
+                  {portal.mandate.title}
+                </h1>
+                <span className="text-slate-300">|</span>
+                <span className="text-xs font-semibold text-slate-500">
+                  {portal.mandate.openings} {portal.mandate.openings === 1 ? "Opening" : "Openings"}
                 </span>
-                <span>•</span>
-                <span>Experience: <strong className="text-slate-700">{portal.mandate.minExp}–{portal.mandate.maxExp} Years</strong></span>
-                <span>•</span>
-                <span>Openings: <strong className="text-slate-700">{portal.mandate.openings}</strong></span>
+                <span className="inline-flex items-center space-x-1.5 text-[11px] font-semibold text-slate-700 bg-slate-50 px-2.5 py-0.5 rounded-full border border-slate-200">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span>Curated Shortlist</span>
+                </span>
               </div>
             </div>
 
-            {/* 48-Hour Feedback SLA Velocity Clock (CF-04) */}
-            <div className="bg-[#fce17c]/15 border-2 border-[#fce17c] rounded-2xl p-4 sm:w-80 flex-shrink-0 shadow-2xs">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-black uppercase tracking-wider text-slate-800 flex items-center space-x-1.5">
-                  <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
-                  <span>Screening SLA Clock</span>
-                </span>
-                <Clock className="h-4 w-4 text-slate-800" />
+            {/* Right: Review Progress + Search Lead Concierge Contact */}
+            <div className="flex items-center space-x-2.5 flex-wrap gap-y-2">
+              {/* Review Progress Badge */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs flex items-center space-x-1.5">
+                <span className="text-slate-500 font-medium">Reviewed:</span>
+                <span className="font-black text-slate-900">{reviewedCount} of {totalCandidates}</span>
               </div>
-              <div className="text-xl font-black text-slate-900">
-                {portal.feedbackSlaHours}-Hour Review Window
-              </div>
-              <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">
-                Fast client decisions secure high-demand talent before competing offers occur.
-              </p>
+
+              {/* Dedicated Search Lead */}
               {portal.mandate.assignedRecruiter && (
-                <div className="mt-3 pt-2.5 border-t border-[#fce17c]/60 text-xs text-slate-700 flex items-center justify-between">
+                <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 rounded-xl px-3 py-1.5 text-xs">
                   <div>
-                    <span className="text-slate-500 block text-[10px] font-bold">Search Lead:</span>
+                    <span className="text-[10px] text-slate-400 font-bold block leading-none">SEARCH LEAD</span>
                     <span className="font-extrabold text-slate-900">{portal.mandate.assignedRecruiter.name}</span>
                   </div>
                   {portal.mandate.assignedRecruiter.phone && (
                     <a
                       href={`tel:${portal.mandate.assignedRecruiter.phone}`}
-                      className="text-[11px] font-mono font-bold text-slate-800 bg-white px-2 py-0.5 rounded border border-[#fce17c] hover:bg-[#fce17c]/20"
+                      className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-800 transition-colors flex items-center space-x-1"
                     >
-                      {portal.mandate.assignedRecruiter.phone}
+                      <Phone className="h-3 w-3 text-slate-500" />
+                      <span>Call</span>
+                    </a>
+                  )}
+                  {portal.mandate.assignedRecruiter.email && (
+                    <a
+                      href={`mailto:${portal.mandate.assignedRecruiter.email}`}
+                      className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-lg text-[11px] font-bold text-slate-800 transition-colors flex items-center space-x-1"
+                    >
+                      <Mail className="h-3 w-3 text-slate-500" />
+                      <span>Email</span>
                     </a>
                   )}
                 </div>
@@ -500,373 +505,202 @@ export default function ZeroLoginClientPortalPage() {
             </div>
           </div>
 
-          {/* Key Skills */}
-          {portal.mandate.skills && portal.mandate.skills.length > 0 && (
-            <div className="pt-4 border-t border-slate-100">
-              <span className="block text-xs font-black uppercase tracking-wider text-slate-500 mb-2">
-                Mandate Target Competencies
-              </span>
-              <div className="flex flex-wrap gap-2">
+          {/* Bottom Row: Key Specs Icon Bar + Skills */}
+          <div className="pt-1 flex flex-wrap items-center justify-between gap-y-2 text-xs text-slate-600">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5">
+              <div className="flex items-center space-x-1.5">
+                <Clock className="h-3.5 w-3.5 text-slate-400" />
+                <span>
+                  Exp: <strong className="text-slate-800">{portal.mandate.minExp}–{portal.mandate.maxExp} Yrs</strong>
+                </span>
+              </div>
+
+              <div className="flex items-center space-x-1.5">
+                <MapPin className="h-3.5 w-3.5 text-slate-400" />
+                <span>
+                  <strong className="text-slate-800">{portal.mandate.location || "Bengaluru"}</strong> ({portal.mandate.workMode})
+                </span>
+              </div>
+            </div>
+
+            {/* Top Skills Badges */}
+            {portal.mandate.skills && portal.mandate.skills.length > 0 && (
+              <div className="flex items-center space-x-1 flex-wrap">
                 {portal.mandate.skills.map((skill, idx) => (
                   <span
                     key={idx}
-                    className="bg-slate-100 hover:bg-[#fce17c]/20 border border-slate-200 text-slate-800 text-xs font-bold px-3 py-1 rounded-xl transition-colors"
+                    className="bg-slate-100 text-slate-700 text-[10px] font-semibold px-2 py-0.5 rounded border border-slate-200"
                   >
                     {skill}
                   </span>
                 ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
-        {/* Filter Tabs & Candidate List */}
-        <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="flex flex-wrap bg-white p-1 rounded-2xl border border-slate-200 shadow-2xs gap-1 max-w-xl">
+        {/* ========================================================================= */}
+        {/* CANDIDATES DESK (UNDERLINE TABS + SEARCH + CANDIDATE CARDS)               */}
+        {/* ========================================================================= */}
+        <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
+          {/* Sleek Underline Tabs Bar */}
+          <div className="px-5 pt-3 pb-2.5 bg-white border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center space-x-6 overflow-x-auto -mb-2.5">
               <button
-                onClick={() => setActiveFilter("ALL")}
-                className={`py-2 px-3 rounded-xl font-black text-xs transition-all cursor-pointer ${
-                  activeFilter === "ALL"
-                    ? "bg-slate-900 text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                onClick={() => setActiveTab("ALL")}
+                className={`pb-3 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5 border-b-2 -mb-px ${
+                  activeTab === "ALL"
+                    ? "border-slate-900 text-slate-900 font-extrabold"
+                    : "border-transparent text-slate-500 hover:text-slate-800 font-semibold"
                 }`}
               >
-                All Profiles ({portal.candidates.length})
+                <span>All Candidates</span>
+                <span
+                  className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
+                    activeTab === "ALL" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
+                  }`}
+                >
+                  {totalCandidates}
+                </span>
               </button>
 
               <button
-                onClick={() => setActiveFilter("PENDING")}
-                className={`py-2 px-3 rounded-xl font-black text-xs transition-all cursor-pointer ${
-                  activeFilter === "PENDING"
-                    ? "bg-[#FFD400] text-slate-900 border border-[#e5bf00] shadow-xs"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                onClick={() => setActiveTab("PENDING")}
+                className={`pb-3 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5 border-b-2 -mb-px ${
+                  activeTab === "PENDING"
+                    ? "border-amber-600 text-amber-900 font-extrabold"
+                    : "border-transparent text-slate-500 hover:text-slate-800 font-semibold"
                 }`}
               >
-                Pending Review ({pendingCount})
+                <span>Awaiting Review</span>
+                {pendingCount > 0 && (
+                  <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-amber-500 text-white">
+                    {pendingCount}
+                  </span>
+                )}
               </button>
 
               <button
-                onClick={() => setActiveFilter("SHORTLISTED")}
-                className={`py-2 px-3 rounded-xl font-black text-xs transition-all cursor-pointer ${
-                  activeFilter === "SHORTLISTED"
-                    ? "bg-emerald-600 text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                onClick={() => setActiveTab("SHORTLISTED")}
+                className={`pb-3 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5 border-b-2 -mb-px ${
+                  activeTab === "SHORTLISTED"
+                    ? "border-emerald-600 text-emerald-900 font-extrabold"
+                    : "border-transparent text-slate-500 hover:text-slate-800 font-semibold"
                 }`}
               >
-                Shortlisted ({shortlistedCount})
+                <span>Shortlisted</span>
+                {shortlistedCount > 0 && (
+                  <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-emerald-600 text-white">
+                    {shortlistedCount}
+                  </span>
+                )}
               </button>
 
               <button
-                onClick={() => setActiveFilter("HOLD")}
-                className={`py-2 px-3 rounded-xl font-black text-xs transition-all cursor-pointer ${
-                  activeFilter === "HOLD"
-                    ? "bg-amber-500 text-white shadow-xs"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                onClick={() => setActiveTab("HOLD")}
+                className={`pb-3 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5 border-b-2 -mb-px ${
+                  activeTab === "HOLD"
+                    ? "border-amber-600 text-amber-900 font-extrabold"
+                    : "border-transparent text-slate-500 hover:text-slate-800 font-semibold"
                 }`}
               >
-                On Hold ({holdCount})
+                <span>On Hold</span>
+                {holdCount > 0 && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-800">
+                    {holdCount}
+                  </span>
+                )}
               </button>
 
               <button
-                onClick={() => setActiveFilter("REJECTED")}
-                className={`py-2 px-3 rounded-xl font-black text-xs transition-all cursor-pointer ${
-                  activeFilter === "REJECTED"
-                    ? "bg-slate-200 text-slate-800 shadow-xs"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-100"
+                onClick={() => setActiveTab("REJECTED")}
+                className={`pb-3 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5 border-b-2 -mb-px ${
+                  activeTab === "REJECTED"
+                    ? "border-slate-800 text-slate-900 font-extrabold"
+                    : "border-transparent text-slate-500 hover:text-slate-800 font-semibold"
                 }`}
               >
-                Archived ({rejectedCount})
+                <span>Declined</span>
+                {rejectedCount > 0 && (
+                  <span className="text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-800">
+                    {rejectedCount}
+                  </span>
+                )}
               </button>
             </div>
 
-            <span className="text-xs text-slate-500 font-bold">
-              Showing {filteredCandidates.length} candidate profile{filteredCandidates.length === 1 ? "" : "s"}
+            <div className="text-xs text-slate-500 font-medium">
+              Showing <strong>{filteredCandidates.length}</strong> profile{filteredCandidates.length === 1 ? "" : "s"}
+            </div>
+          </div>
+
+          {/* Search & Filter Bar */}
+          <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 bg-slate-50/50">
+            <div className="relative rounded-lg shadow-sm flex-1 max-w-md">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-3.5 w-3.5 text-slate-400" />
+              </div>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search candidates by name, title, company, skills..."
+                className="block w-full pl-9 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-1 focus:ring-slate-400 bg-white text-slate-900"
+              />
+            </div>
+
+            <span className="text-xs text-slate-400">
+              Click <strong>Shortlist</strong>, <strong>Hold</strong>, or <strong>Decline</strong> on any profile
             </span>
           </div>
 
-          {/* Candidate Profile Cards Grid */}
+          {/* Candidate Cards Stack (Unified CandidateCard Architecture) */}
           {filteredCandidates.length === 0 ? (
-            <div className="p-12 text-center bg-white rounded-3xl border border-slate-200 text-slate-400">
-              <Users className="h-8 w-8 mx-auto mb-2 text-slate-300" />
-              <p className="font-bold text-slate-700 text-sm">No candidate profiles in this view</p>
-              <p className="text-xs text-slate-400 mt-1">
-                Your search team will present qualified candidates here as vetting is completed.
+            <div className="p-12 text-center text-slate-400 text-xs">
+              <Users className="h-8 w-8 text-slate-300 mx-auto mb-2" />
+              <p className="font-bold text-slate-700 text-sm">No candidates in this view</p>
+              <p className="text-slate-400 text-xs mt-1">
+                Try selecting another tab or clearing your search keywords.
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-6">
-              {filteredCandidates.map((cand) => {
-                const isShortlisted =
-                  cand.stage === "CLIENT_SHORTLISTED" || cand.clientDecision === "SHORTLISTED_FOR_INTERVIEW";
-                const isHold =
-                  cand.clientDecision === "INFO_REQUESTED" || (cand as any).clientDecision === "HOLD";
-                const isRejected =
-                  cand.stage === "STAGE_REJECTED" || cand.clientDecision === "REJECTED_WITH_FEEDBACK";
-                const isPending = !isShortlisted && !isHold && !isRejected;
-
-                const slaPillColor =
-                  cand.slaStatus === "BREACHED"
-                    ? "bg-rose-100 text-rose-800 border-rose-300"
-                    : cand.slaStatus === "WARNING"
-                    ? "bg-amber-100 text-amber-900 border-amber-300"
-                    : "bg-emerald-50 text-emerald-800 border-emerald-200";
-
-                return (
-                  <div
-                    key={cand.submissionId}
-                    className={`bg-white rounded-3xl border transition-all p-6 sm:p-7 space-y-5 shadow-xs ${
-                      isShortlisted
-                        ? "border-2 border-emerald-400/80 shadow-xs ring-4 ring-emerald-50"
-                        : isHold
-                        ? "border-amber-300 ring-2 ring-amber-400/20"
-                        : isRejected
-                        ? "border-slate-200 opacity-75"
-                        : "border-slate-200/90 hover:border-slate-300"
-                    }`}
-                  >
-                    {/* Header: Candidate Identity, Visible Contacts & SLA */}
-                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                      <div className="flex items-start space-x-3.5">
-                        <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-base shadow-xs flex-shrink-0 ${
-                          isShortlisted
-                            ? "bg-emerald-100 border border-emerald-300 text-emerald-950"
-                            : "bg-[#fce17c] border border-[#f5d762] text-slate-900"
-                        }`}>
-                          {cand.fullName.substring(0, 2).toUpperCase()}
-                        </div>
-                        <div>
-                          <div className="flex items-center space-x-2.5 flex-wrap">
-                            <h2 className="text-xl font-black text-slate-900 tracking-tight">{cand.fullName}</h2>
-                            {isShortlisted && (
-                              <span className="bg-emerald-100 text-emerald-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-emerald-300 flex items-center space-x-1 shadow-2xs">
-                                <Check className="h-3 w-3 text-emerald-700" />
-                                <span>Selected for Interview</span>
-                              </span>
-                            )}
-                            {isHold && (
-                              <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-amber-300 flex items-center space-x-1 shadow-2xs">
-                                <PauseCircle className="h-3 w-3 text-amber-700" />
-                                <span>On Hold</span>
-                              </span>
-                            )}
-                            {isRejected && (
-                              <span className="bg-slate-100 text-slate-600 text-[10px] font-bold px-2.5 py-0.5 rounded-full border border-slate-300">
-                                Archived / Declined
-                              </span>
-                            )}
-                            {isPending && (
-                              <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2.5 py-0.5 rounded-full border border-amber-300">
-                                ⏳ Pending Review
-                              </span>
-                            )}
-                          </div>
-
-                          {/* Direct Contact Links (100% visible per user instruction) */}
-                          <div className="flex items-center gap-2.5 mt-1.5 text-xs flex-wrap">
-                            <a
-                              href={`tel:${cand.phone}`}
-                              className="inline-flex items-center font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-[#fce17c]/40 px-2.5 py-0.5 rounded-lg border border-slate-200 transition-colors"
-                            >
-                              <Phone className="h-3 w-3 mr-1 text-slate-500" />
-                              <span className="font-mono">{cand.phone}</span>
-                            </a>
-                            <a
-                              href={`mailto:${cand.email}`}
-                              className="inline-flex items-center font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-[#fce17c]/40 px-2.5 py-0.5 rounded-lg border border-slate-200 transition-colors"
-                            >
-                              <Mail className="h-3 w-3 mr-1 text-slate-500" />
-                              <span>{cand.email}</span>
-                            </a>
-                            <span className="text-slate-500 font-medium flex items-center">
-                              <MapPin className="h-3 w-3 mr-0.5 text-slate-400" />
-                              {cand.location || portal.mandate.location || "Bengaluru"}
-                            </span>
-                          </div>
-
-                          <p className="text-xs text-slate-600 font-medium mt-1">
-                            Current: <strong className="text-slate-900 font-bold">{cand.currentTitle || "Professional"}</strong> {cand.currentCompany ? `at ${cand.currentCompany}` : ""}
-                          </p>
-                        </div>
-                      </div>
-
-                      {/* SLA Pill / Dispatched Status */}
-                      <div className="flex items-center gap-2">
-                        {isShortlisted && (
-                          <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-xl border border-emerald-200 flex items-center space-x-1">
-                            <span>Slots Dispatched ⚡</span>
-                          </span>
-                        )}
-                        {isPending && (
-                          <span className={`inline-flex items-center space-x-1.5 px-3 py-1 rounded-xl text-xs font-black border ${slaPillColor}`}>
-                            <Clock className="h-3.5 w-3.5" />
-                            <span>
-                              {cand.hoursRemaining > 0
-                                ? `SLA: ${cand.hoursRemaining}h Remaining`
-                                : `⚠️ Overdue (${cand.hoursElapsed}h)`}
-                            </span>
-                          </span>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Macro Metrics 4-Box Grid (Scan in 2 seconds) */}
-                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-50 border border-slate-200/80 rounded-2xl p-4">
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Total Experience</span>
-                        <span className="text-base font-black text-slate-900 mt-0.5 block">{cand.totalExpYears} Years</span>
-                        <span className="text-[10px] text-slate-500">
-                          {cand.relevantExpYears ? `${cand.relevantExpYears}y relevant` : "Verified in screening"}
-                        </span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Current Compensation</span>
-                        <span className="text-base font-black text-slate-900 mt-0.5 block">{cand.currentSalary || "Confidential"}</span>
-                        <span className="text-[10px] text-slate-500">Fixed + Variable</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Expected CTC</span>
-                        <span className="text-base font-black text-emerald-800 mt-0.5 block">{cand.expectedSalary || "Negotiable"}</span>
-                        <span className="text-[10px] text-emerald-600 font-bold">Within Budget Benchmark</span>
-                      </div>
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">Notice Period</span>
-                        <span className="text-base font-black text-amber-900 mt-0.5 block">{cand.noticePeriod || `${cand.noticePeriodDays} Days`}</span>
-                        <span className="text-[10px] text-slate-500">Buyout Negotiable</span>
-                      </div>
-                    </div>
-
-                    {/* Executive Recruiter AI Fit Rationale */}
-                    <div className="bg-blue-50/50 border border-blue-100 rounded-2xl p-4 text-xs text-slate-700 leading-relaxed space-y-1.5">
-                      <div className="flex items-center space-x-1.5 text-blue-900 font-bold text-xs">
-                        <Sparkles className="h-3.5 w-3.5 text-blue-600" />
-                        <span>Recruiter Evaluation & Fit Rationale</span>
-                      </div>
-                      <p>
-                        {cand.summary || `${cand.fullName} has ${cand.totalExpYears} years of progressive experience, demonstrating strong domain alignment with the ${portal.mandate.title} role specifications.`}
-                      </p>
-                      <div className="text-[11px] text-slate-500 pt-1.5 border-t border-blue-100 flex items-center space-x-3 flex-wrap gap-y-1">
-                        <span className="flex items-center space-x-1">
-                          <GraduationCap className="h-3.5 w-3.5 text-slate-400" />
-                          <span>{cand.qualification || "Graduate / Engineering Degree"}</span>
-                        </span>
-                        <span>•</span>
-                        <span>💼 Offer In Hand: <strong className="text-slate-700">{cand.offerInHand || "No"}</strong></span>
-                        {cand.reasonForLeaving && (
-                          <>
-                            <span>•</span>
-                            <span className="italic text-slate-600">Reason: {cand.reasonForLeaving}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Verified Skills Competencies */}
-                    {cand.skills && cand.skills.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 items-center">
-                        <span className="text-[11px] font-black uppercase tracking-wider text-slate-400 mr-1">Skills:</span>
-                        {cand.skills.map((s, idx) => (
-                          <span
-                            key={idx}
-                            className="bg-slate-100 hover:bg-[#fce17c]/30 border border-slate-200 text-slate-800 text-xs font-bold px-2.5 py-0.5 rounded-lg transition-colors"
-                          >
-                            {s}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Shortlisted Candidate Confirmed Proposed Slots Banner (CF-03) */}
-                    {isShortlisted && cand.preferredInterviewTimes && (
-                      <div className="bg-emerald-50/70 border border-emerald-200 rounded-2xl p-4 text-xs text-emerald-950 space-y-2">
-                        <span className="font-black block uppercase tracking-wider text-[10px] text-emerald-800">
-                          Client Proposed Interview Availability (Dispatched to Candidate):
-                        </span>
-                        <div className="flex flex-wrap gap-2">
-                          <span className="bg-white border border-emerald-300 px-3 py-1.5 rounded-xl font-bold shadow-2xs flex items-center space-x-1.5">
-                            <Calendar className="h-3.5 w-3.5 text-emerald-600" />
-                            <span>{cand.preferredInterviewTimes}</span>
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Logged Feedback Notes (If rejected or held) */}
-                    {cand.clientFeedbackNotes && !isShortlisted && (
-                      <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 text-xs text-slate-700 space-y-1">
-                        <span className="font-extrabold text-slate-900 block text-[11px]">Logged Feedback:</span>
-                        <p className="text-slate-800 font-medium">{cand.clientFeedbackNotes}</p>
-                        {cand.rejectionReason && (
-                          <p className="text-[11px] text-rose-700 font-bold pt-1">
-                            Reason: {cand.rejectionReason}
-                          </p>
-                        )}
-                      </div>
-                    )}
-
-                    {/* 3-WAY DECISION ACTION BAR (CF-02 & CF-03) */}
-                    <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        {/* Button 1: Shortlist for Interview (Triggers Slot Selector Modal) */}
-                        <button
-                          type="button"
-                          onClick={() => handleOpenDecision(cand, "SHORTLIST")}
-                          className="inline-flex items-center space-x-1.5 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
-                        >
-                          <Check className="h-3.5 w-3.5 stroke-[3]" />
-                          <span>Shortlist for Interview</span>
-                        </button>
-
-                        {/* Button 2: Put on Hold */}
-                        <button
-                          type="button"
-                          onClick={() => handleOpenDecision(cand, "HOLD")}
-                          className="inline-flex items-center space-x-1.5 px-3.5 py-2.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                        >
-                          <PauseCircle className="h-3.5 w-3.5 text-amber-600" />
-                          <span>Put on Hold</span>
-                        </button>
-
-                        {/* Button 3: Structured Rejection */}
-                        <button
-                          type="button"
-                          onClick={() => handleOpenDecision(cand, "REJECT")}
-                          className="inline-flex items-center space-x-1.5 px-3.5 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-200 font-bold text-xs rounded-xl transition-all cursor-pointer"
-                        >
-                          <ThumbsDown className="h-3.5 w-3.5 text-rose-500" />
-                          <span>Decline Profile</span>
-                        </button>
-                      </div>
-
-                      {/* Button 4: Slide-over Drawer CTA */}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setExpandedCandidate(cand);
-                          setExpandedTab("CV");
-                        }}
-                        className="inline-flex items-center space-x-1.5 px-3.5 py-2.5 bg-slate-100 hover:bg-[#fce17c] hover:border-[#f5d762] border border-slate-200 text-slate-800 font-extrabold text-xs rounded-xl transition-all cursor-pointer"
-                      >
-                        <FileText className="h-3.5 w-3.5 text-slate-700" />
-                        <span>View Full CV & AI Telemetry →</span>
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
+            <div className="p-4 bg-slate-50/50 space-y-3">
+              {filteredCandidates.map((cand, idx) => (
+                <CandidateCard
+                  key={cand.submissionId}
+                  candidate={{
+                    ...cand,
+                    id: cand.candidateId,
+                  }}
+                  index={idx}
+                  clientPortalMode={true}
+                  clientDecision={cand.clientDecision}
+                  onClientShortlist={() => handleOpenDecision(cand, "SHORTLIST")}
+                  onClientHold={() => handleOpenDecision(cand, "HOLD")}
+                  onClientReject={() => handleOpenDecision(cand, "REJECT")}
+                  onClientViewCv={() => {
+                    setExpandedCandidate(cand);
+                    setExpandedTab("CV");
+                  }}
+                  onOpenModal={() => {
+                    setExpandedCandidate(cand);
+                    setExpandedTab("DOSSIER");
+                  }}
+                />
+              ))}
             </div>
           )}
         </div>
       </main>
 
-      {/* EXPANDABLE CV & CANDIDATE TELEMETRY SLIDE-OVER DRAWER */}
+      {/* EXPANDABLE CV & CANDIDATE DOSSIER SLIDE-OVER DRAWER */}
       {expandedCandidate && (
         <div className="fixed inset-0 z-50 overflow-hidden bg-slate-900/60 backdrop-blur-xs flex justify-end">
           <div className="w-full max-w-4xl bg-white h-full shadow-2xl flex flex-col z-50 animate-in slide-in-from-right duration-200">
             {/* Drawer Header */}
             <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between bg-slate-50">
               <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 rounded-xl bg-brand-surface border border-brand-surfaceDark flex items-center justify-center font-black text-slate-800 text-sm">
+                <div className="w-10 h-10 rounded-xl bg-[#fce17c] border border-[#f5d762] flex items-center justify-center font-black text-slate-900 text-sm">
                   {expandedCandidate.fullName.substring(0, 2).toUpperCase()}
                 </div>
                 <div>
@@ -906,7 +740,7 @@ export default function ZeroLoginClientPortalPage() {
               </div>
             </div>
 
-            {/* View Mode Toggle: Original CV vs 19-Point Telemetry */}
+            {/* View Mode Toggle: Original CV vs Structured Dossier */}
             <div className="px-6 py-2.5 border-b border-slate-200 bg-white flex items-center justify-between">
               <div className="flex space-x-2">
                 <button
@@ -919,20 +753,20 @@ export default function ZeroLoginClientPortalPage() {
                   }`}
                 >
                   <FileText className="h-3.5 w-3.5" />
-                  <span>Original Resume / CV View</span>
+                  <span>Resume PDF View</span>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setExpandedTab("TELEMETRY")}
+                  onClick={() => setExpandedTab("DOSSIER")}
                   className={`px-3 py-1.5 text-xs font-bold rounded-lg flex items-center space-x-1.5 transition-colors cursor-pointer ${
-                    expandedTab === "TELEMETRY"
+                    expandedTab === "DOSSIER"
                       ? "bg-slate-900 text-white"
                       : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                   }`}
                 >
                   <Briefcase className="h-3.5 w-3.5" />
-                  <span>Full 19-Point Screening Telemetry</span>
+                  <span>Executive Dossier</span>
                 </button>
               </div>
 
@@ -970,127 +804,107 @@ export default function ZeroLoginClientPortalPage() {
                   ) : (
                     <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center space-y-3">
                       <FileText className="h-10 w-10 text-slate-300 mx-auto" />
-                      <h4 className="font-bold text-slate-800 text-sm">Resume File Available via Attachment</h4>
+                      <h4 className="font-bold text-slate-800 text-sm">Resume Attached via Email</h4>
                       <p className="text-xs text-slate-500 max-w-md mx-auto">
-                        The raw resume for {expandedCandidate.fullName} is attached to the presentation email sent to your inbox. You can also view full verified screening details in the adjacent tab.
+                        The resume document for {expandedCandidate.fullName} was shared in the email dispatch. You can review all verified background details in the Executive Dossier tab.
                       </p>
                     </div>
                   )}
                 </div>
               ) : (
-                /* Full 19-Column Telemetry View */
+                /* Clean Executive Dossier */
                 <div className="space-y-6">
                   <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-4">
                     <h4 className="font-bold text-slate-900 text-sm border-b pb-2 flex items-center space-x-2">
                       <Briefcase className="h-4 w-4 text-slate-500" />
-                      <span>Executive Candidate Screening Dossier (19 Standard Telemetry Fields)</span>
+                      <span>Executive Background Overview</span>
                     </h4>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">1. Date of Sourcing</span>
-                        <strong className="text-slate-900">{new Date(expandedCandidate.dateOfSourcing).toLocaleDateString()}</strong>
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Candidate Name</span>
+                        <strong className="text-slate-900 text-sm">{expandedCandidate.fullName}</strong>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">2. Sourcing Channel / Source</span>
-                        <strong className="text-slate-900">{expandedCandidate.sourceName}</strong>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">3. Client Organization</span>
-                        <strong className="text-slate-900">{portal.clientOrgName}</strong>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">4. Applied Position Name</span>
-                        <strong className="text-slate-900">{portal.mandate.title}</strong>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">5. Candidate Name</span>
-                        <strong className="text-slate-900">{expandedCandidate.fullName}</strong>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">6. Candidate Email ID</span>
-                        <strong className="text-slate-900">{expandedCandidate.email}</strong>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">7. Candidate Contact Number</span>
-                        <strong className="text-slate-900 font-mono">{expandedCandidate.phone}</strong>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">8. Candidate Location</span>
-                        <strong className="text-slate-900">{expandedCandidate.location || portal.mandate.location || "Bengaluru"}</strong>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">9. Ready to Relocate</span>
-                        <strong className="text-slate-900">{expandedCandidate.readyToRelocate || "Yes"}</strong>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">10. Total Experience</span>
-                        <strong className="text-slate-900">{expandedCandidate.totalExpYears} Years</strong>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">11. Relevant Experience</span>
-                        <strong className="text-slate-900">
-                          {expandedCandidate.relevantExpYears !== null && expandedCandidate.relevantExpYears !== undefined
-                            ? `${expandedCandidate.relevantExpYears} Years`
-                            : "Verified in Screening"}
-                        </strong>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">12. Designation / Current Title</span>
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Current Designation</span>
                         <strong className="text-slate-900">{expandedCandidate.currentTitle || "Professional"}</strong>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">13. Highest Qualification</span>
-                        <strong className="text-slate-900">{expandedCandidate.qualification || "Graduate Degree"}</strong>
-                      </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">14. Current / Last Company</span>
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Current / Last Company</span>
                         <strong className="text-slate-900">{expandedCandidate.currentCompany || "Confidential"}</strong>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">15. Current Salary (CTC)</span>
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Location</span>
+                        <strong className="text-slate-900">{expandedCandidate.location || portal.mandate.location || "Bengaluru"}</strong>
+                      </div>
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Total Experience</span>
+                        <strong className="text-slate-900">{expandedCandidate.totalExpYears} Years</strong>
+                      </div>
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Relevant Experience</span>
+                        <strong className="text-slate-900">
+                          {expandedCandidate.relevantExpYears !== null && expandedCandidate.relevantExpYears !== undefined
+                            ? `${expandedCandidate.relevantExpYears} Years`
+                            : "Vetted in screening"}
+                        </strong>
+                      </div>
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Current Compensation</span>
                         <strong className="text-slate-900">{expandedCandidate.currentSalary || "Confidential"}</strong>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">16. Expected Salary (CTC)</span>
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Expected Compensation</span>
                         <strong className="text-emerald-700 font-bold">{expandedCandidate.expectedSalary || "Negotiable"}</strong>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">17. Notice Period</span>
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Notice Period</span>
                         <strong className="text-slate-900">{expandedCandidate.noticePeriod || `${expandedCandidate.noticePeriodDays} Days`}</strong>
                       </div>
                       <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">18. Offer in Hand</span>
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Highest Qualification</span>
+                        <strong className="text-slate-900">{expandedCandidate.qualification || "Graduate Degree"}</strong>
+                      </div>
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Offers in Hand</span>
                         <strong className="text-slate-900">{expandedCandidate.offerInHand || "No"}</strong>
                       </div>
-                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 md:col-span-2">
-                        <span className="text-slate-400 block text-[10px] font-bold uppercase">19. Reason of Leaving</span>
-                        <p className="text-slate-800 italic mt-0.5">{expandedCandidate.reasonForLeaving || "Exploring progressive career growth"}</p>
+                      <div className="p-3 bg-slate-50 rounded-xl border border-slate-100">
+                        <span className="text-slate-400 block text-[10px] font-bold uppercase">Ready to Relocate</span>
+                        <strong className="text-slate-900">{expandedCandidate.readyToRelocate || "Yes"}</strong>
                       </div>
+                      {expandedCandidate.reasonForLeaving && (
+                        <div className="p-3 bg-slate-50 rounded-xl border border-slate-100 md:col-span-2">
+                          <span className="text-slate-400 block text-[10px] font-bold uppercase">Reason for Career Change</span>
+                          <p className="text-slate-800 italic mt-0.5">{expandedCandidate.reasonForLeaving}</p>
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   {/* Summary & Skills */}
                   {expandedCandidate.summary && (
                     <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2">
-                      <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Executive Search Notes</h4>
+                      <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Recruiter Evaluation</h4>
                       <p className="text-xs text-slate-700 leading-relaxed">{expandedCandidate.summary}</p>
                     </div>
                   )}
 
-                  <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2">
-                    <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Verified Competencies</h4>
-                    <div className="flex flex-wrap gap-1.5">
-                      {expandedCandidate.skills.map((s, idx) => (
-                        <span
-                          key={idx}
-                          className="bg-brand-surfaceLight border border-brand-surface text-slate-800 text-xs font-semibold px-2.5 py-1 rounded-lg"
-                        >
-                          {s}
-                        </span>
-                      ))}
+                  {expandedCandidate.skills && expandedCandidate.skills.length > 0 && (
+                    <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs space-y-2">
+                      <h4 className="font-bold text-slate-900 text-xs uppercase tracking-wider">Verified Competencies</h4>
+                      <div className="flex flex-wrap gap-1.5">
+                        {expandedCandidate.skills.map((s, idx) => (
+                          <span
+                            key={idx}
+                            className="bg-slate-100 border border-slate-200 text-slate-800 text-xs font-semibold px-2.5 py-1 rounded-lg"
+                          >
+                            {s}
+                          </span>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1098,16 +912,9 @@ export default function ZeroLoginClientPortalPage() {
             {/* Drawer Bottom Actions */}
             <div className="p-4 border-t border-slate-200 bg-white flex items-center justify-between gap-3">
               <span className="text-xs text-slate-500">
-                Action will immediately update recruitment status and alert desk team.
+                Logged decisions immediately inform your dedicated search team.
               </span>
               <div className="flex items-center space-x-2">
-                <button
-                  type="button"
-                  onClick={() => handleOpenDecision(expandedCandidate, "QUESTION")}
-                  className="px-3.5 py-2 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 hover:bg-slate-100 cursor-pointer"
-                >
-                  Ask Recruiter
-                </button>
                 <button
                   type="button"
                   onClick={() => handleOpenDecision(expandedCandidate, "HOLD")}
@@ -1125,9 +932,10 @@ export default function ZeroLoginClientPortalPage() {
                 <button
                   type="button"
                   onClick={() => handleOpenDecision(expandedCandidate, "SHORTLIST")}
-                  className="px-5 py-2 bg-[#FFD400] hover:bg-[#E6BF00] text-slate-900 rounded-xl text-xs font-black shadow-xs border border-[#e5bf00] cursor-pointer"
+                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-extrabold shadow-xs cursor-pointer flex items-center space-x-1"
                 >
-                  Shortlist for Next Round
+                  <Check className="h-3.5 w-3.5 stroke-[3]" />
+                  <span>Shortlist Candidate</span>
                 </button>
               </div>
             </div>
@@ -1135,14 +943,14 @@ export default function ZeroLoginClientPortalPage() {
         </div>
       )}
 
-      {/* INTERACTIVE DECISION MODAL (CF-02 & CF-03) */}
+      {/* INTERACTIVE FRICTIONLESS DECISION MODAL */}
       {selectedCandidate && actionType && (
-        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
             <div
               className={`px-6 py-4 border-b flex items-center justify-between ${
                 actionType === "SHORTLIST"
-                  ? "bg-amber-50/60 border-amber-200"
+                  ? "bg-emerald-50/70 border-emerald-200"
                   : actionType === "HOLD"
                   ? "bg-amber-50 border-amber-200"
                   : actionType === "REJECT"
@@ -1151,18 +959,20 @@ export default function ZeroLoginClientPortalPage() {
               }`}
             >
               <div className="flex items-center space-x-2.5">
-                {actionType === "SHORTLIST" && <ThumbsUp className="h-5 w-5 text-amber-600" />}
+                {actionType === "SHORTLIST" && <Check className="h-5 w-5 text-emerald-600 stroke-[3]" />}
                 {actionType === "HOLD" && <PauseCircle className="h-5 w-5 text-amber-700" />}
                 {actionType === "REJECT" && <ThumbsDown className="h-5 w-5 text-rose-700" />}
                 {actionType === "QUESTION" && <MessageSquare className="h-5 w-5 text-slate-800" />}
                 <div>
                   <h3 className="font-black text-slate-900 text-sm">
-                    {actionType === "SHORTLIST" && "Shortlist Candidate & Propose Interview Slots"}
-                    {actionType === "HOLD" && "Put Candidate on Temporary Hold"}
-                    {actionType === "REJECT" && "Decline Profile & Structured Feedback"}
+                    {actionType === "SHORTLIST" && "Shortlist for Interview"}
+                    {actionType === "HOLD" && "Put Candidate on Hold"}
+                    {actionType === "REJECT" && "Decline Profile"}
                     {actionType === "QUESTION" && "Ask Search Lead a Question"}
                   </h3>
-                  <p className="text-[11px] text-slate-600 font-medium">Candidate: <strong className="text-slate-900">{selectedCandidate.fullName}</strong> • {portal.mandate.title}</p>
+                  <p className="text-[11px] text-slate-600 font-medium">
+                    Candidate: <strong className="text-slate-900">{selectedCandidate.fullName}</strong> • {portal.mandate.title}
+                  </p>
                 </div>
               </div>
               <button
@@ -1177,35 +987,85 @@ export default function ZeroLoginClientPortalPage() {
             </div>
 
             <form onSubmit={handleDecisionSubmit} className="p-6 space-y-4">
-              {/* Shortlist Flow (Concrete Date & Time Slot Pickers) */}
+              {/* Shortlist Flow */}
               {actionType === "SHORTLIST" && (
                 <div className="space-y-4">
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="block font-black text-slate-900 text-xs">
-                        Propose Interview Slots (Max 3 Options)
-                      </label>
-                      <span className="text-[10px] font-semibold text-amber-700 bg-amber-100/80 px-2 py-0.5 rounded-full">
-                        Slot 1 Required
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-500 mb-3">
-                      Select specific date and time options. The candidate will receive these options on WhatsApp to confirm with 1 click.
-                    </p>
+                  <div className="space-y-2">
+                    <label className="block font-black text-slate-900 text-xs">
+                      How would you like to schedule?
+                    </label>
 
-                    {slotValidationError && (
-                      <div className="mb-3 p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-medium flex items-center space-x-2">
-                        <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
-                        <span>{slotValidationError}</span>
+                    {/* Choice 1: Recruiter Coordinates */}
+                    <div
+                      onClick={() => setShortlistMode("COORDINATE")}
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-start space-x-3 ${
+                        shortlistMode === "COORDINATE"
+                          ? "bg-emerald-50/70 border-emerald-400 ring-2 ring-emerald-400/20"
+                          : "bg-slate-50 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      <div
+                        className={`h-5 w-5 rounded-full flex items-center justify-center border mt-0.5 transition-all ${
+                          shortlistMode === "COORDINATE"
+                            ? "bg-emerald-600 border-emerald-700 text-white"
+                            : "border-slate-300 bg-white"
+                        }`}
+                      >
+                        {shortlistMode === "COORDINATE" && <Check className="h-3 w-3 stroke-[3]" />}
                       </div>
-                    )}
+                      <div>
+                        <div className="font-extrabold text-slate-900 text-xs">
+                          Recruiter to Coordinate (Fastest)
+                        </div>
+                        <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          Your search lead will reach out to candidate and panel to coordinate interview slots seamlessly.
+                        </p>
+                      </div>
+                    </div>
 
-                    <div className="space-y-2.5">
-                      {/* Slot 1 - Mandatory */}
-                      <div className="p-3 rounded-2xl border border-amber-300/80 bg-amber-50/40 space-y-2">
+                    {/* Choice 2: Propose Specific Slots */}
+                    <div
+                      onClick={() => setShortlistMode("PROPOSE_SLOTS")}
+                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-start space-x-3 ${
+                        shortlistMode === "PROPOSE_SLOTS"
+                          ? "bg-emerald-50/70 border-emerald-400 ring-2 ring-emerald-400/20"
+                          : "bg-slate-50 border-slate-200 hover:bg-slate-100"
+                      }`}
+                    >
+                      <div
+                        className={`h-5 w-5 rounded-full flex items-center justify-center border mt-0.5 transition-all ${
+                          shortlistMode === "PROPOSE_SLOTS"
+                            ? "bg-emerald-600 border-emerald-700 text-white"
+                            : "border-slate-300 bg-white"
+                        }`}
+                      >
+                        {shortlistMode === "PROPOSE_SLOTS" && <Check className="h-3 w-3 stroke-[3]" />}
+                      </div>
+                      <div>
+                        <div className="font-extrabold text-slate-900 text-xs">
+                          I have specific interview slots ready
+                        </div>
+                        <p className="text-[11px] text-slate-500 font-medium mt-0.5">
+                          Propose specific dates and times for candidate to confirm.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {shortlistMode === "PROPOSE_SLOTS" && (
+                    <div className="space-y-3 pt-2">
+                      {slotValidationError && (
+                        <div className="p-2.5 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-[11px] font-medium flex items-center space-x-2">
+                          <AlertCircle className="h-4 w-4 shrink-0 text-rose-500" />
+                          <span>{slotValidationError}</span>
+                        </div>
+                      )}
+
+                      {/* Slot 1 */}
+                      <div className="p-3 rounded-xl border border-emerald-300/80 bg-emerald-50/40 space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-slate-900 flex items-center space-x-1.5">
-                            <span className="h-5 w-5 rounded-full bg-[#FFD400] text-slate-900 flex items-center justify-center text-[10px] font-black">1</span>
+                            <span className="h-5 w-5 rounded-full bg-emerald-600 text-white flex items-center justify-center text-[10px] font-black">1</span>
                             <span>Option 1 (Primary Slot) *</span>
                           </span>
                           {slot1Date && slot1Time && (
@@ -1226,7 +1086,7 @@ export default function ZeroLoginClientPortalPage() {
                                 setSlot1Date(e.target.value);
                                 setSlotValidationError(null);
                               }}
-                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                             />
                           </div>
                           <div>
@@ -1239,14 +1099,14 @@ export default function ZeroLoginClientPortalPage() {
                                 setSlot1Time(e.target.value);
                                 setSlotValidationError(null);
                               }}
-                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                             />
                           </div>
                         </div>
                       </div>
 
-                      {/* Slot 2 - Optional */}
-                      <div className="p-3 rounded-2xl border border-slate-200 bg-slate-50/70 space-y-2">
+                      {/* Slot 2 */}
+                      <div className="p-3 rounded-xl border border-slate-200 bg-slate-50/70 space-y-2">
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
                             <span className="h-5 w-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] font-black">2</span>
@@ -1280,7 +1140,7 @@ export default function ZeroLoginClientPortalPage() {
                                 setSlot2Date(e.target.value);
                                 setSlotValidationError(null);
                               }}
-                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                             />
                           </div>
                           <div>
@@ -1292,77 +1152,24 @@ export default function ZeroLoginClientPortalPage() {
                                 setSlot2Time(e.target.value);
                                 setSlotValidationError(null);
                               }}
-                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
-                            />
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Slot 3 - Optional */}
-                      <div className="p-3 rounded-2xl border border-slate-200 bg-slate-50/70 space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
-                            <span className="h-5 w-5 rounded-full bg-slate-200 text-slate-700 flex items-center justify-center text-[10px] font-black">3</span>
-                            <span>Option 3 (Alternative)</span>
-                            <span className="text-[10px] font-normal text-slate-400">Optional</span>
-                          </span>
-                          {slot3Date && slot3Time ? (
-                            <span className="text-[10px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                              {formatSlotDisplay(slot3Date, slot3Time)}
-                            </span>
-                          ) : (
-                            slot3Date || slot3Time ? (
-                              <button
-                                type="button"
-                                onClick={() => { setSlot3Date(""); setSlot3Time(""); }}
-                                className="text-[10px] text-slate-400 hover:text-rose-600 underline cursor-pointer"
-                              >
-                                Clear
-                              </button>
-                            ) : null
-                          )}
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Date</label>
-                            <input
-                              type="date"
-                              value={slot3Date}
-                              min={new Date().toISOString().split("T")[0]}
-                              onChange={(e) => {
-                                setSlot3Date(e.target.value);
-                                setSlotValidationError(null);
-                              }}
-                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-[10px] font-medium text-slate-500 mb-0.5">Time</label>
-                            <input
-                              type="time"
-                              value={slot3Time}
-                              onChange={(e) => {
-                                setSlot3Time(e.target.value);
-                                setSlotValidationError(null);
-                              }}
-                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                              className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                             />
                           </div>
                         </div>
                       </div>
                     </div>
-                  </div>
+                  )}
 
                   <div>
                     <label className="block font-bold text-slate-800 mb-1 text-xs">
-                      Panel Notes / Key Tech Evaluation Focus (Optional)
+                      Panel Notes / Evaluation Focus (Optional)
                     </label>
                     <textarea
                       rows={2}
                       value={decisionNotes}
                       onChange={(e) => setDecisionNotes(e.target.value)}
-                      placeholder="e.g. Please emphasize hands-on system architecture and team leadership in Round 1."
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-[#fce17c]"
+                      placeholder="e.g. Focus on system architecture and leadership in Round 1."
+                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-emerald-400"
                     />
                   </div>
                 </div>
@@ -1373,7 +1180,7 @@ export default function ZeroLoginClientPortalPage() {
                 <div className="space-y-4">
                   <div>
                     <label className="block font-black text-slate-900 mb-1 text-xs">
-                      Hold Reason *
+                      Reason for Hold *
                     </label>
                     <p className="text-[11px] text-slate-500 mb-2.5">
                       Temporarily pause this profile while keeping candidate pipeline warm.
@@ -1383,12 +1190,12 @@ export default function ZeroLoginClientPortalPage() {
                       {[
                         {
                           id: "Comparing with incoming profiles",
-                          title: "Comparing with Incoming Profiles",
-                          desc: "Evaluating parallel candidates before locking interview list",
+                          title: "Comparing with Other Profiles",
+                          desc: "Evaluating other candidates before locking interview shortlist",
                         },
                         {
                           id: "Hiring manager / interview panel traveling",
-                          title: "Panel / Hiring Manager Traveling",
+                          title: "Interview Panel Traveling / Busy",
                           desc: "Team availability constrained this week",
                         },
                         {
@@ -1399,7 +1206,7 @@ export default function ZeroLoginClientPortalPage() {
                         {
                           id: "Reviewing internal budget / compensation",
                           title: "Internal Budget / Level Review",
-                          desc: "Clarifying internal compensation bands for this opening",
+                          desc: "Clarifying internal compensation bands for this role",
                         },
                       ].map((item) => {
                         const isSelected = holdReason === item.id;
@@ -1407,9 +1214,9 @@ export default function ZeroLoginClientPortalPage() {
                           <div
                             key={item.id}
                             onClick={() => setHoldReason(item.id)}
-                            className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
+                            className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
                               isSelected
-                                ? "bg-amber-50/80 border-amber-400 ring-2 ring-amber-400/20 shadow-2xs"
+                                ? "bg-amber-50 border-amber-400 ring-2 ring-amber-400/20 shadow-2xs"
                                 : "bg-slate-50/70 border-slate-200 hover:bg-slate-100 hover:border-slate-300"
                             }`}
                           >
@@ -1440,40 +1247,40 @@ export default function ZeroLoginClientPortalPage() {
                       rows={2}
                       value={decisionNotes}
                       onChange={(e) => setDecisionNotes(e.target.value)}
-                      placeholder="e.g. Keep warm; we will revisit after interviewing the first 2 candidates."
+                      placeholder="e.g. Keep warm; we will revisit early next week."
                       className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-200"
                     />
                   </div>
                 </div>
               )}
 
-              {/* Reject Flow (CF-02: Structured Rejection Matrix) */}
+              {/* Decline Flow */}
               {actionType === "REJECT" && (
                 <div className="space-y-4">
                   <div>
                     <label className="block font-black text-slate-900 mb-1 text-xs">
-                      Primary Decline Reason (CF-02 Structured Calibration) *
+                      Primary Reason for Declining *
                     </label>
                     <p className="text-[11px] text-slate-500 mb-2.5">
-                      Structured feedback helps your search team recalibrate pipeline candidates in real time.
+                      Your feedback helps the search team calibrate subsequent candidate profiles.
                     </p>
 
                     <div className="grid grid-cols-1 gap-2">
                       {[
                         {
                           id: "Compensation expectation is above budget",
-                          title: "Over Expected Salary / Compensation",
+                          title: "Compensation Above Budget",
                           desc: "Current or expected CTC exceeds client budget benchmark",
                         },
                         {
                           id: "Lacks required depth in core tech stack",
-                          title: "Technical Skill / Depth Gap",
+                          title: "Technical Competency / Depth Gap",
                           desc: "Missing required core competency or hands-on framework depth",
                         },
                         {
                           id: "Notice period is too long for hiring timeline",
                           title: "Notice Period Too Long",
-                          desc: "Availability timeline does not match project kick-off date",
+                          desc: "Availability timeline does not match project start date",
                         },
                         {
                           id: "Domain / Industry mismatch",
@@ -1483,7 +1290,7 @@ export default function ZeroLoginClientPortalPage() {
                         {
                           id: "Seniority level mismatch (under/overqualified)",
                           title: "Seniority Mismatch (Over / Under)",
-                          desc: "Level of leadership or years does not match role requirements",
+                          desc: "Years of experience or seniority level is not aligned",
                         },
                       ].map((item) => {
                         const isSelected = rejectionReason === item.id;
@@ -1491,9 +1298,9 @@ export default function ZeroLoginClientPortalPage() {
                           <div
                             key={item.id}
                             onClick={() => setRejectionReason(item.id)}
-                            className={`p-3 rounded-2xl border transition-all cursor-pointer flex items-center justify-between ${
+                            className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
                               isSelected
-                                ? "bg-rose-50/80 border-rose-400 ring-2 ring-rose-400/20 shadow-2xs"
+                                ? "bg-rose-50 border-rose-400 ring-2 ring-rose-400/20 shadow-2xs"
                                 : "bg-slate-50/70 border-slate-200 hover:bg-slate-100 hover:border-slate-300"
                             }`}
                           >
@@ -1518,13 +1325,13 @@ export default function ZeroLoginClientPortalPage() {
 
                   <div>
                     <label className="block font-bold text-slate-800 mb-1 text-xs">
-                      Additional Calibration Notes for Recruiter (Optional)
+                      Calibration Notes for Search Lead (Optional)
                     </label>
                     <textarea
                       rows={2}
                       value={decisionNotes}
                       onChange={(e) => setDecisionNotes(e.target.value)}
-                      placeholder="e.g. Strong profile, but we need someone who has specifically managed Kubernetes clusters at scale."
+                      placeholder="e.g. Good profile, but we specifically need someone with deep Kafka experience."
                       className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-rose-200"
                     />
                   </div>
@@ -1536,14 +1343,14 @@ export default function ZeroLoginClientPortalPage() {
                 <div className="space-y-3">
                   <div>
                     <label className="block font-bold text-slate-900 mb-1 text-xs">
-                      Question for Search Lead *
+                      Message for Search Lead *
                     </label>
                     <textarea
                       rows={3}
                       required
                       value={decisionNotes}
                       onChange={(e) => setDecisionNotes(e.target.value)}
-                      placeholder="e.g. Has this candidate led autonomous deployment in physical production environments?"
+                      placeholder="e.g. Has this candidate managed team sizes above 10 engineers?"
                       className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-300"
                     />
                   </div>
@@ -1566,7 +1373,7 @@ export default function ZeroLoginClientPortalPage() {
                   disabled={submittingDecision}
                   className={`px-6 py-2.5 font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50 ${
                     actionType === "SHORTLIST"
-                      ? "bg-[#FFD400] hover:bg-[#E6BF00] text-slate-900 border border-[#e5bf00]"
+                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
                       : actionType === "HOLD"
                       ? "bg-amber-500 hover:bg-amber-600 text-white"
                       : actionType === "REJECT"
@@ -1575,10 +1382,12 @@ export default function ZeroLoginClientPortalPage() {
                   }`}
                 >
                   {submittingDecision
-                    ? "Recording Decision..."
+                    ? "Recording..."
                     : actionType === "SHORTLIST"
-                    ? "Confirm Shortlist & Propose Slots"
-                    : "Confirm & Send Feedback"}
+                    ? "Confirm Shortlist"
+                    : actionType === "HOLD"
+                    ? "Confirm Hold"
+                    : "Confirm & Submit Feedback"}
                 </button>
               </div>
             </form>
@@ -1586,9 +1395,9 @@ export default function ZeroLoginClientPortalPage() {
         </div>
       )}
 
-      {/* Footer */}
+      {/* Clean Professional Footer */}
       <footer className="py-6 text-center text-xs text-slate-400 border-t border-slate-200 bg-white">
-        RecruitOS Executive Client Presentation Portal • Powered by {portal.agency.name} • 7-Day Temporary Protected Session
+        Client Candidate Presentation Portal • Curated by {portal.agency.name} for {portal.clientOrgName}
       </footer>
     </div>
   );

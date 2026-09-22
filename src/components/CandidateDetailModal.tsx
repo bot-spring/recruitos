@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Award,
   Calendar,
@@ -12,6 +12,11 @@ import {
   CheckCircle2,
   AlertTriangle,
   MessageSquare,
+  Copy,
+  Check,
+  X,
+  ChevronDown,
+  ChevronUp,
 } from "lucide-react";
 
 export const CALL_DISPOSITIONS = [
@@ -88,6 +93,10 @@ export function CandidateDetailModal({
   onCallLogged,
   onOpenSchedule,
 }: CandidateDetailModalProps) {
+  // Active Tab for Right Dossier Pane: Default to "history" as per recruiter mental model
+  const [activeTab, setActiveTab] = useState<"history" | "profile">("history");
+
+  // Call Pad State
   const [callDisposition, setCallDisposition] = useState("");
   const [callNotes, setCallNotes] = useState("");
   const [callMandateId, setCallMandateId] = useState("");
@@ -101,15 +110,21 @@ export function CandidateDetailModal({
   const [reasonForLeaving, setReasonForLeaving] = useState("");
   const [offerInHand, setOfferInHand] = useState("No");
 
+  // Save Feedback & State
   const [loggingCall, setLoggingCall] = useState(false);
   const [callValidationError, setCallValidationError] = useState<string | null>(null);
+  const [lastSavedOutcome, setLastSavedOutcome] = useState<string | null>(null);
+  const [copiedField, setCopiedField] = useState<string | null>(null);
 
+  // History Accordion State (Show last 3, rest collapsed)
+  const [showAllCallLogs, setShowAllCallLogs] = useState(false);
+
+  // WhatsApp Slot Invite State
   const [sendingSlotInvite, setSendingSlotInvite] = useState(false);
   const [slotInviteSuccess, setSlotInviteSuccess] = useState<string | null>(null);
   const [slotInviteError, setSlotInviteError] = useState<string | null>(null);
 
-  // Track the candidate whose details are loaded in the form
-  const activeCandidateIdRef = React.useRef<string | null>(null);
+  const activeCandidateIdRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!isOpen || !candidate) {
@@ -119,12 +134,15 @@ export function CandidateDetailModal({
 
     const currentCandidateId = candidate.id || candidate.candidateId;
     if (activeCandidateIdRef.current === currentCandidateId) {
-      // Modal is already open for this exact candidate; don't wipe in-progress form state
       return;
     }
     activeCandidateIdRef.current = currentCandidateId;
 
-    // Pre-populate saved call disposition from candidate history
+    // Reset default tab to history upon opening new candidate
+    setActiveTab("history");
+    setShowAllCallLogs(false);
+
+    // Pre-populate saved call disposition
     const rawDisposition =
       candidate.lastCallDisposition ||
       candidate.lastCallOutcome ||
@@ -132,15 +150,16 @@ export function CandidateDetailModal({
       (candidate.callLogs && candidate.callLogs.find((l: any) => l.disposition)?.disposition) ||
       (candidate.submissions && candidate.submissions.find((s: any) => s.lastCallDisposition)?.lastCallDisposition) ||
       "";
-    setCallDisposition(normalizeDisposition(rawDisposition));
+    const normalized = normalizeDisposition(rawDisposition);
+    setCallDisposition(normalized);
     setCallNotes("");
     setCallValidationError(null);
+    setLastSavedOutcome(null);
 
     // Pre-populate mandate alignment
     if (mandateContext) {
       setCallMandateId(mandateContext.id);
     } else if (candidate.callLogs && candidate.callLogs.length > 0 && candidate.callLogs[0]?.mandate?.id) {
-      // Prioritize the mandate from the most recent logged interaction
       setCallMandateId(candidate.callLogs[0].mandate.id);
     } else if (candidate.submissions && candidate.submissions.length > 0) {
       setCallMandateId(candidate.submissions[0].mandate?.id || candidate.submissions[0].mandateId || "");
@@ -169,84 +188,56 @@ export function CandidateDetailModal({
       setCallbackTime("11:00");
     }
 
-      setReadyToRelocate(candidate.readyToRelocate || "Yes");
-      setRelevantExpYears(
-        candidate.relevantExpYears !== undefined && candidate.relevantExpYears !== null
-          ? String(candidate.relevantExpYears)
-          : candidate.totalExpYears
-          ? String(candidate.totalExpYears)
-          : ""
-      );
-      setCurrentSalary(
-        candidate.currentSalary ||
-          (candidate.currentCtc ? `${(candidate.currentCtc / 100000).toFixed(1)} LPA` : "")
-      );
-      setExpectedSalary(
-        candidate.expectedSalary ||
-          (candidate.expectedCtc ? `${(candidate.expectedCtc / 100000).toFixed(1)} LPA` : "")
-      );
-      setNoticePeriod(
-        candidate.noticePeriod ||
-          (candidate.noticePeriodDays ? `${candidate.noticePeriodDays} Days` : "30 Days")
-      );
-      setReasonForLeaving(candidate.reasonForLeaving || "");
-      setOfferInHand(candidate.offerInHand || "No");
+    setReadyToRelocate(candidate.readyToRelocate || "Yes");
+    setRelevantExpYears(
+      candidate.relevantExpYears !== undefined && candidate.relevantExpYears !== null
+        ? String(candidate.relevantExpYears)
+        : candidate.totalExpYears
+        ? String(candidate.totalExpYears)
+        : ""
+    );
+    setCurrentSalary(
+      candidate.currentSalary ||
+        (candidate.currentCtc ? `${(candidate.currentCtc / 100000).toFixed(1)} LPA` : "")
+    );
+    setExpectedSalary(
+      candidate.expectedSalary ||
+        (candidate.expectedCtc ? `${(candidate.expectedCtc / 100000).toFixed(1)} LPA` : "")
+    );
+    setNoticePeriod(
+      candidate.noticePeriod ||
+        (candidate.noticePeriodDays !== undefined && candidate.noticePeriodDays !== null
+          ? `${candidate.noticePeriodDays} Days`
+          : "30 Days")
+    );
+    setReasonForLeaving(candidate.reasonForLeaving || "");
+    setOfferInHand(candidate.offerInHand || "No");
   }, [isOpen, candidate, mandateContext]);
-
-  if (!isOpen || !candidate) return null;
 
   // Determine active submission ID & mandate title for scheduling
   let activeSubmissionId: string | null = null;
   let activeMandateTitle = "";
 
-  if (mandateContext && candidate.submissionId) {
+  if (mandateContext && candidate?.submissionId) {
     activeSubmissionId = candidate.submissionId;
     activeMandateTitle = mandateContext.title;
-  } else if (candidate.submissions && candidate.submissions.length > 0) {
+  } else if (candidate?.submissions && candidate.submissions.length > 0) {
     activeSubmissionId = candidate.submissions[0].id;
     activeMandateTitle = candidate.submissions[0].mandate?.title || "";
-  } else if (candidate.submissionId) {
+  } else if (candidate?.submissionId) {
     activeSubmissionId = candidate.submissionId;
     activeMandateTitle = mandateContext?.title || "";
   }
 
-  const handleSendSlotInvite = async () => {
-    const candidateId = candidate.id || candidate.candidateId;
-    if (!candidateId) return;
-    setSendingSlotInvite(true);
-    setSlotInviteSuccess(null);
-    setSlotInviteError(null);
-    try {
-      const res = await fetch(`/api/candidates/${candidateId}/send-slot-invitation`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          submissionId: activeSubmissionId,
-          customTimes: candidate.preferredInterviewTimes,
-        }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setSlotInviteSuccess("WhatsApp 4-option slot picker dispatched to candidate!");
-        setTimeout(() => setSlotInviteSuccess(null), 6000);
-      } else {
-        setSlotInviteError(data.error || "Failed to dispatch slot invite.");
-      }
-    } catch (err: any) {
-      setSlotInviteError(err.message || "Failed to dispatch slot invite.");
-    } finally {
-      setSendingSlotInvite(false);
-    }
-  };
-
-  const handleLogCall = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!callDisposition) {
+  // Core Call Save Function (Used by both auto-save and explicit form save)
+  const executeCallSave = async (overrideDisposition?: string) => {
+    const dispToSave = overrideDisposition || callDisposition;
+    if (!dispToSave) {
       setCallValidationError("Please select a call disposition outcome before saving.");
       return;
     }
 
-    if (callDisposition === "CONNECTED_CALLBACK" && (!callbackDate || !callbackTime)) {
+    if (dispToSave === "CONNECTED_CALLBACK" && (!callbackDate || !callbackTime)) {
       setCallValidationError("Please specify both a Date and Time for the scheduled call back.");
       return;
     }
@@ -256,20 +247,19 @@ export function CandidateDetailModal({
 
     try {
       const combinedCallback =
-        callDisposition === "CONNECTED_CALLBACK" && callbackDate && callbackTime
+        dispToSave === "CONNECTED_CALLBACK" && callbackDate && callbackTime
           ? new Date(`${callbackDate}T${callbackTime}:00`).toISOString()
           : null;
 
       let res: Response;
 
       if (mandateContext) {
-        // Mandate Workspace call log endpoint
         res = await fetch(`/api/mandates/${mandateContext.id}/call-log`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             submissionId: candidate.submissionId,
-            disposition: callDisposition,
+            disposition: dispToSave,
             notes: callNotes.trim() || undefined,
             callbackAt: combinedCallback,
             readyToRelocate,
@@ -282,13 +272,12 @@ export function CandidateDetailModal({
           }),
         });
       } else {
-        // Candidate Bank call log endpoint
         res = await fetch(`/api/candidates/${candidate.id}/call-log`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             mandateId: callMandateId || null,
-            disposition: callDisposition,
+            disposition: dispToSave,
             notes: callNotes.trim() || undefined,
             callbackAt: combinedCallback,
             readyToRelocate,
@@ -307,9 +296,10 @@ export function CandidateDetailModal({
         throw new Error(data.error || "Failed to log call outcome");
       }
 
-      // Keep saved disposition selected
-      setCallDisposition(callDisposition);
-      setCallNotes("");
+      setCallDisposition(dispToSave);
+      const timeStr = new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+      const dispObj = CALL_DISPOSITIONS.find((d) => d.value === dispToSave);
+      setLastSavedOutcome(`Saved at ${timeStr}`);
 
       if (onCallLogged) {
         onCallLogged(data);
@@ -321,156 +311,278 @@ export function CandidateDetailModal({
     }
   };
 
-  // Interactions list (unify callLogs from Candidate Bank and thisJobCallLogs from Mandate Workspace)
+  // Auto-save handler when user picks from dropdown
+  const handleDispositionChange = (newVal: string) => {
+    setCallDisposition(newVal);
+    setCallValidationError(null);
+    if (!newVal) return;
+
+    // For callback, don't auto-save yet; wait for date & time confirmation
+    if (newVal === "CONNECTED_CALLBACK") {
+      return;
+    }
+
+    // Auto-save immediately for all standard dispositions
+    executeCallSave(newVal);
+  };
+
+  // 1-Click quick log helper
+  const handleQuickLog = (dispValue: string) => {
+    setCallDisposition(dispValue);
+    executeCallSave(dispValue);
+  };
+
+  const handleSendSlotInvite = async () => {
+    const candidateId = candidate.id || candidate.candidateId;
+    if (!candidateId) return;
+    setSendingSlotInvite(true);
+    setSlotInviteSuccess(null);
+    setSlotInviteError(null);
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}/send-slot-invitation`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submissionId: activeSubmissionId,
+          customTimes: candidate.preferredInterviewTimes,
+        }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSlotInviteSuccess("WhatsApp slot picker dispatched to candidate!");
+        setTimeout(() => setSlotInviteSuccess(null), 5000);
+      } else {
+        setSlotInviteError(data.error || "Failed to dispatch slot invite.");
+      }
+    } catch (err: any) {
+      setSlotInviteError(err.message || "Failed to dispatch slot invite.");
+    } finally {
+      setSendingSlotInvite(false);
+    }
+  };
+
+  const handleCopyText = (text: string, fieldName: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedField(fieldName);
+    setTimeout(() => setCopiedField(null), 2000);
+  };
+
+  // Keyboard Shortcuts (Esc to close, Ctrl/Cmd + Enter to save full form)
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        executeCallSave();
+      }
+    };
+    if (isOpen) {
+      window.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, callDisposition, callbackDate, callbackTime, callNotes, readyToRelocate, relevantExpYears, currentSalary, expectedSalary, noticePeriod, reasonForLeaving, offerInHand]);
+
+  if (!isOpen || !candidate) return null;
+
   const candidateCallLogs = candidate.callLogs || candidate.thisJobCallLogs || [];
   const otherJobsHistory = candidate.otherJobsHistory || [];
+  const isConnected = callDisposition.startsWith("CONNECTED");
+
+  // Show top 3 call logs by default, or all if expanded
+  const displayedCallLogs = showAllCallLogs ? candidateCallLogs : candidateCallLogs.slice(0, 3);
+  const hiddenCount = candidateCallLogs.length - 3;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150">
-      <div className="w-full max-w-4xl bg-white rounded-3xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[90vh] animate-in zoom-in-95 duration-150">
+    <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-5 animate-in fade-in duration-150">
+      <div className="w-full max-w-5xl bg-white rounded-2xl shadow-2xl border border-slate-200 overflow-hidden flex flex-col max-h-[92vh] animate-in zoom-in-95 duration-150">
         
-        {/* Modal Header */}
-        <div className="px-6 py-4 border-b border-slate-200 bg-slate-50/90 flex items-center justify-between flex-shrink-0">
-          <div className="space-y-1">
-            <div className="flex items-center space-x-2">
-              <span className="text-[10px] font-black uppercase tracking-wider bg-slate-200 text-slate-700 px-2 py-0.5 rounded">
-                Candidate Screening & Call Record
-              </span>
-              <span className="text-[10px] text-slate-500 font-mono">
-                Source: {(candidate.source || "GENERAL").replace(/_/g, " ")}
-              </span>
-              {candidate.qualification && (
-                <span className="text-[10px] bg-blue-100 text-blue-800 font-bold px-2 py-0.5 rounded">
-                  {candidate.qualification}
-                </span>
-              )}
-              {candidate.isSilverMedalist && (
-                <span className="text-[10px] bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded flex items-center space-x-1">
-                  <Award className="h-3 w-3 text-amber-700" />
-                  <span>Silver Medalist</span>
-                </span>
-              )}
+        {/* ========================================================================= */}
+        {/* 1. TOP ANCHORED CANDIDATE HEADER                                          */}
+        {/* ========================================================================= */}
+        <div className="px-6 py-3.5 border-b border-slate-200 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 flex-shrink-0">
+          <div className="flex items-center space-x-3 min-w-0">
+            {/* Botspring Gold Avatar */}
+            <div className="w-11 h-11 rounded-full bg-[#fce17c] border border-[#f5d762] text-slate-900 font-black text-sm flex items-center justify-center shadow-2xs flex-shrink-0">
+              {candidate.fullName.substring(0, 2).toUpperCase()}
             </div>
-            <div className="flex items-center space-x-3">
-              <h2 className="text-lg font-extrabold text-slate-900">{candidate.fullName}</h2>
-              <span className="text-xs text-slate-500 font-medium">
-                {candidate.currentTitle || "Professional"}{" "}
-                {candidate.currentCompany ? `at ${candidate.currentCompany}` : ""}
-              </span>
+
+            <div className="min-w-0">
+              <div className="flex items-center space-x-2 flex-wrap">
+                <h2 className="text-base sm:text-lg font-extrabold text-slate-900 truncate">
+                  {candidate.fullName}
+                </h2>
+                {candidate.isSilverMedalist && (
+                  <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200/80 px-1.5 py-0.2 rounded-md shadow-2xs">
+                    🥈 Silver Medalist
+                  </span>
+                )}
+                <span className="text-[11px] text-slate-400 font-mono">
+                  Source: {(candidate.source || "GENERAL").replace(/_/g, " ")}
+                </span>
+              </div>
+
+              {/* Subtitle & Inline Meta */}
+              <div className="flex items-center space-x-2 text-xs text-slate-600 font-medium truncate mt-0.5">
+                <span className="truncate">
+                  {candidate.currentTitle || "Professional"}
+                  {candidate.currentCompany ? ` at ${candidate.currentCompany}` : ""}
+                </span>
+                <span className="text-slate-300">•</span>
+                <span className="text-slate-800 font-semibold">{candidate.totalExpYears || 0} yrs exp</span>
+                {candidate.location && (
+                  <>
+                    <span className="text-slate-300">•</span>
+                    <span className="text-slate-500">{candidate.location}</span>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2">
-            {/* ⚡ Schedule Interview CTA (Active in BOTH Talent Bank and Mandate Workspace) */}
+          {/* Header Action Buttons */}
+          <div className="flex items-center space-x-2 flex-shrink-0">
+            {/* ⚡ Schedule Interview CTA */}
             {activeSubmissionId && onOpenSchedule && (
               <button
                 type="button"
                 onClick={() => {
                   onOpenSchedule(candidate, activeSubmissionId!, activeMandateTitle);
                 }}
-                className="inline-flex items-center space-x-1 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer"
+                className="inline-flex items-center space-x-1 px-3 py-1.5 bg-[#FFD400] hover:bg-[#f0c800] active:bg-[#e0bb00] text-slate-950 text-xs font-black rounded-xl shadow-xs transition-colors cursor-pointer"
+                title="Schedule Interview Round"
               >
-                <Calendar className="h-3.5 w-3.5" />
+                <Calendar className="h-3.5 w-3.5 text-slate-900" />
                 <span>⚡ Schedule Interview</span>
               </button>
             )}
 
+            {/* View Original CV Ghost Button */}
             {candidate.resumeUrl && (
               <a
                 href={candidate.resumeUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center space-x-1 px-3 py-1.5 bg-brand-surfaceLight hover:bg-brand-surface text-slate-800 text-xs font-bold rounded-xl border border-brand-surfaceDark transition-colors"
+                className="inline-flex items-center space-x-1 px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-xl border border-slate-200 hover:border-slate-300 shadow-2xs transition-colors"
+                title="Open Original Resume PDF"
               >
-                <FileText className="h-3.5 w-3.5 text-blue-600" />
-                <span>View Original CV</span>
+                <FileText className="h-3.5 w-3.5 text-slate-500" />
+                <span>View CV</span>
               </a>
             )}
 
+            {/* Close Modal Button */}
             <button
               type="button"
               onClick={onClose}
-              className="h-8 w-8 rounded-lg hover:bg-slate-200 text-slate-500 hover:text-slate-800 flex items-center justify-center text-xl leading-none cursor-pointer transition-colors"
+              className="h-8 w-8 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-800 flex items-center justify-center transition-colors cursor-pointer"
+              title="Close (Esc)"
+              aria-label="Close modal"
             >
-              &times;
+              <X className="h-5 w-5" />
             </button>
           </div>
         </div>
 
-        {/* Modal Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-6 text-xs">
+        {/* ========================================================================= */}
+        {/* 2. TWO-PANE BODY:                                                         */}
+        {/*    LEFT PANE = SCREENING PAD (ACTION)                                     */}
+        {/*    RIGHT PANE = ACTIVITY & HISTORY (DEFAULT) + PROFILE & RESUME           */}
+        {/* ========================================================================= */}
+        <div className="flex-1 flex flex-col md:flex-row overflow-hidden divide-y md:divide-y-0 md:divide-x divide-slate-200">
           
-          {/* Quick Candidate Snapshot Card */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <span className="text-slate-400 block text-[10px]">Mobile (Resume)</span>
-              <strong className="text-slate-900 text-xs block font-mono">{candidate.phone || "N/A"}</strong>
-            </div>
-
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <span className="text-slate-400 block text-[10px]">Email Address</span>
-              <strong className="text-slate-900 text-xs block truncate">{candidate.email}</strong>
-            </div>
-
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <span className="text-slate-400 block text-[10px]">Total Experience</span>
-              <strong className="text-slate-900 text-xs block">{candidate.totalExpYears || 0} Years</strong>
-            </div>
-
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200">
-              <span className="text-slate-400 block text-[10px]">
-                {candidate.currentCtc || candidate.expectedCtc ? "Compensation (CTC)" : "Qualification"}
-              </span>
-              {candidate.currentCtc || candidate.expectedCtc ? (
-                <strong className="text-slate-900 text-xs block">
-                  {candidate.currentCtc ? `${(candidate.currentCtc / 100000).toFixed(1)}L` : "N/A"} →{" "}
-                  <span className="text-emerald-700">
-                    {candidate.expectedCtc
-                      ? `${(candidate.expectedCtc / 100000).toFixed(1)}L ${candidate.currency || "INR"}`
-                      : "N/A"}
+          {/* ----------------------------------------------------------------------- */}
+          {/* LEFT PANE (~45% width): LIVE CALL SCREENING PAD (ACTION FIRST)          */}
+          {/* ----------------------------------------------------------------------- */}
+          <div className="w-full md:w-[440px] flex-shrink-0 flex flex-col overflow-hidden bg-white">
+            
+            {/* Scrollable Form Body */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-4 text-xs">
+              
+              {/* TOP ANCHORED CALL OUTCOME CARD (AUTO-SAVES INSTANTLY) */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200/90 space-y-3 shadow-2xs">
+                <div className="flex items-center justify-between">
+                  <span className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center space-x-1.5">
+                    <PhoneCall className="h-3.5 w-3.5 text-slate-700" />
+                    <span>Call Outcome <span className="text-rose-600">*</span></span>
                   </span>
-                </strong>
-              ) : (
-                <strong className="text-slate-900 text-xs block truncate">{candidate.qualification || "N/A"}</strong>
-              )}
-            </div>
-          </div>
+                  
+                  {/* Real-time Save Confirmation Badge */}
+                  {loggingCall ? (
+                    <span className="text-[10px] font-bold text-slate-500 flex items-center">
+                      <div className="w-2.5 h-2.5 border-2 border-slate-600 border-t-transparent rounded-full animate-spin mr-1"></div>
+                      Saving...
+                    </span>
+                  ) : lastSavedOutcome ? (
+                    <span className="text-[10px] font-bold text-emerald-700 flex items-center animate-in fade-in">
+                      <Check className="h-3 w-3 mr-0.5" /> {lastSavedOutcome}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-slate-400 font-medium">Auto-saves on select</span>
+                  )}
+                </div>
 
-          {/* STRUCTURED CALL LOGGING & SCREENING FORM */}
-          <div className="bg-slate-50 p-5 rounded-2xl border border-slate-200 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center space-x-1.5">
-                <PhoneCall className="h-4 w-4 text-blue-600" />
-                <span>Log Recruiter Call & Screened Qualification</span>
-              </h3>
-              <span className="text-[11px] text-slate-500 font-medium">Fields with * are required to qualify candidate</span>
-            </div>
-
-            {callValidationError && (
-              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl flex items-center space-x-2 text-xs font-bold">
-                <AlertCircle className="h-4 w-4 flex-shrink-0 text-rose-600" />
-                <span>{callValidationError}</span>
-              </div>
-            )}
-
-            <form onSubmit={handleLogCall} className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {/* Call Disposition (Required) */}
+                {/* 1-Click Quick Outcome Chips for Rapid Dials */}
                 <div>
-                  <label className="block font-bold text-slate-800 mb-1">
-                    Call Outcome Disposition <span className="text-rose-600">*</span>
-                  </label>
+                  <span className="text-[10px] font-bold text-slate-400 block uppercase mb-1">
+                    1-Click Rapid Log:
+                  </span>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleQuickLog("RINGING_NO_ANSWER")}
+                      disabled={loggingCall}
+                      className={`py-1.5 px-2 border rounded-lg font-bold text-[11px] transition-colors shadow-2xs cursor-pointer text-center ${
+                        callDisposition === "RINGING_NO_ANSWER"
+                          ? "bg-slate-900 text-white border-slate-900"
+                          : "bg-white hover:bg-slate-100 border-slate-200 text-slate-700"
+                      }`}
+                      title="Quick log Ringing No Answer and auto-save"
+                    >
+                      ⚪ No Answer
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickLog("UNREACHABLE_BUSY")}
+                      disabled={loggingCall}
+                      className={`py-1.5 px-2 border rounded-lg font-bold text-[11px] transition-colors shadow-2xs cursor-pointer text-center ${
+                        callDisposition === "UNREACHABLE_BUSY"
+                          ? "bg-slate-900 text-white border-slate-900"
+                          : "bg-white hover:bg-slate-100 border-slate-200 text-slate-700"
+                      }`}
+                      title="Quick log Switched Off / Busy and auto-save"
+                    >
+                      ⚪ Busy / Off
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleQuickLog("CONNECTED_INTERESTED")}
+                      disabled={loggingCall}
+                      className={`py-1.5 px-2 rounded-lg font-bold text-[11px] transition-colors shadow-2xs cursor-pointer text-center border ${
+                        callDisposition === "CONNECTED_INTERESTED"
+                          ? "bg-emerald-50 border-emerald-300 text-emerald-900"
+                          : "bg-white hover:bg-slate-100 border-slate-200 text-slate-700"
+                      }`}
+                      title="Select Connected — Interested and auto-save"
+                    >
+                      🟢 Interested
+                    </button>
+                  </div>
+                </div>
+
+                {/* Full Call Disposition Dropdown (Auto-saves on selection) */}
+                <div>
                   <select
                     value={callDisposition}
-                    onChange={(e) => {
-                      setCallDisposition(e.target.value);
-                      setCallValidationError(null);
-                    }}
-                    className={`w-full px-3 py-2 border rounded-xl text-xs font-bold bg-white text-slate-900 ${
-                      !callDisposition ? "border-rose-300 ring-1 ring-rose-100" : "border-slate-300"
+                    onChange={(e) => handleDispositionChange(e.target.value)}
+                    className={`w-full px-3 py-2 border rounded-lg text-xs font-bold bg-white text-slate-900 focus:outline-hidden focus:ring-1 focus:ring-slate-900 shadow-2xs cursor-pointer ${
+                      !callDisposition ? "border-amber-300" : "border-slate-300"
                     }`}
                   >
-                    <option value="">-- Select Call Disposition * --</option>
+                    <option value="">-- Select Call Outcome --</option>
                     {CALL_DISPOSITIONS.map((d) => (
                       <option key={d.value} value={d.value}>
                         {d.label}
@@ -479,85 +591,103 @@ export function CandidateDetailModal({
                   </select>
                 </div>
 
-                {/* Associated Job Mandate */}
-                <div>
-                  <label className="block font-bold text-slate-800 mb-1">
-                    {mandateContext ? "Associated Mandate" : "Align to Job Mandate (Optional)"}
-                  </label>
-                  {mandateContext ? (
-                    <div className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-bold bg-slate-100 text-slate-700 truncate">
-                      {mandateContext.title} ({mandateContext.clientName})
-                    </div>
-                  ) : (
-                    <select
-                      value={callMandateId}
-                      onChange={(e) => setCallMandateId(e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs font-semibold bg-white text-slate-900"
-                    >
-                      <option value="">Talent Bank (General Screening / Unassigned)</option>
-                      {availableMandates.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.title} — {m.client.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              </div>
-
-              {/* Scheduled Callback Date & Time */}
-              {callDisposition === "CONNECTED_CALLBACK" && (
-                <div className="p-3.5 bg-amber-50/90 border border-amber-300 rounded-xl space-y-2 animate-in fade-in duration-200 shadow-2xs">
-                  <div className="flex items-center space-x-1.5 text-amber-950 font-extrabold text-xs">
-                    <Clock className="h-4 w-4 text-amber-700" />
-                    <span>Schedule Follow-Up Call Back</span>
+                {/* Validation Error Banner */}
+                {callValidationError && (
+                  <div className="p-2.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-lg flex items-center space-x-1.5 text-xs font-bold">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+                    <span>{callValidationError}</span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[11px] font-bold text-amber-900 mb-1">
-                        Call Back Date <span className="text-rose-600">*</span>
-                      </label>
+                )}
+
+                {/* Scheduled Callback Date & Time (Only expands when Callback requested) */}
+                {callDisposition === "CONNECTED_CALLBACK" && (
+                  <div className="p-3 bg-amber-50/90 border border-amber-200 rounded-lg space-y-2 animate-in fade-in duration-150">
+                    <span className="text-[11px] font-bold text-amber-900 flex items-center">
+                      <Clock className="h-3 w-3 text-amber-700 mr-1" />
+                      <span>Set Follow-Up Callback Date & Time *</span>
+                    </span>
+                    <div className="grid grid-cols-2 gap-2">
                       <input
                         type="date"
                         value={callbackDate}
                         onChange={(e) => setCallbackDate(e.target.value)}
-                        className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-amber-500"
+                        className="w-full px-2 py-1.5 border border-amber-300 rounded-md text-xs bg-white text-slate-900 font-semibold"
                         required
                       />
-                    </div>
-                    <div>
-                      <label className="block text-[11px] font-bold text-amber-900 mb-1">
-                        Call Back Time <span className="text-rose-600">*</span>
-                      </label>
                       <input
                         type="time"
                         value={callbackTime}
                         onChange={(e) => setCallbackTime(e.target.value)}
-                        className="w-full px-2.5 py-1.5 border border-amber-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-amber-500"
+                        className="w-full px-2 py-1.5 border border-amber-300 rounded-md text-xs bg-white text-slate-900 font-semibold"
                         required
                       />
                     </div>
+                    <button
+                      type="button"
+                      onClick={() => executeCallSave("CONNECTED_CALLBACK")}
+                      disabled={loggingCall || !callbackDate || !callbackTime}
+                      className="w-full py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-extrabold rounded-md shadow-2xs transition-colors text-xs cursor-pointer disabled:opacity-50"
+                    >
+                      {loggingCall ? "Scheduling Callback..." : "⏰ Confirm & Save Callback"}
+                    </button>
                   </div>
-                  <p className="text-[10px] text-amber-800 font-medium">
-                    RecruitOS will display overdue alerts and prioritize this candidate on today's callback queue when this time arrives.
-                  </p>
-                </div>
-              )}
+                )}
+              </div>
 
-              {/* 7 Recruiter Screening Items */}
-              <div className="bg-white p-4 rounded-xl border border-slate-200 space-y-3">
-                <p className="font-extrabold text-slate-800 text-[11px] uppercase tracking-wider text-blue-700">
-                  Recruiter Call Screening & Presentation Parameters (Shared with Client)
-                </p>
+              {/* Mandate Alignment Field */}
+              <div>
+                <label className="block font-bold text-slate-700 mb-1 text-[11px]">
+                  {mandateContext ? "Associated Mandate" : "Align to Job Mandate (Optional)"}
+                </label>
+                {mandateContext ? (
+                  <div className="w-full px-3 py-1.5 border border-slate-200 rounded-lg text-xs font-semibold bg-slate-100 text-slate-700 truncate">
+                    {mandateContext.title} ({mandateContext.clientName})
+                  </div>
+                ) : (
+                  <select
+                    value={callMandateId}
+                    onChange={(e) => setCallMandateId(e.target.value)}
+                    className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs font-semibold bg-white text-slate-900"
+                  >
+                    <option value="">Talent Bank (General / Unassigned)</option>
+                    {availableMandates.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.title} — {m.client.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                  {/* 1. Ready to Relocate */}
+              {/* DETAILED SCREENING PARAMETERS */}
+              <div className={`p-3.5 rounded-xl border space-y-3 transition-colors ${
+                isConnected ? "bg-slate-50/70 border-slate-200" : "bg-white border-slate-200/80"
+              }`}>
+                <span className="text-[11px] font-bold text-slate-900 uppercase tracking-wider block">
+                  Screening Parameters (Shared with Client)
+                </span>
+
+                <div className="grid grid-cols-2 gap-2.5">
+                  {/* Relevant Exp */}
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1 text-[11px]">1. Ready to Relocate</label>
+                    <label className="block font-semibold text-slate-600 mb-0.5 text-[10px]">Relevant Exp (Yrs)</label>
+                    <input
+                      type="number"
+                      step="0.5"
+                      placeholder="e.g. 5"
+                      value={relevantExpYears}
+                      onChange={(e) => setRelevantExpYears(e.target.value)}
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
+                    />
+                  </div>
+
+                  {/* Relocation */}
+                  <div>
+                    <label className="block font-semibold text-slate-600 mb-0.5 text-[10px]">Ready to Relocate</label>
                     <select
                       value={readyToRelocate}
                       onChange={(e) => setReadyToRelocate(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
                     >
                       <option value="Yes">Yes</option>
                       <option value="No">No</option>
@@ -567,411 +697,466 @@ export function CandidateDetailModal({
                     </select>
                   </div>
 
-                  {/* 2. Relevant Exp: in Years */}
+                  {/* Current Salary */}
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1 text-[11px]">2. Relevant Exp (Years)</label>
-                    <input
-                      type="number"
-                      step="0.5"
-                      placeholder="e.g. 5"
-                      value={relevantExpYears}
-                      onChange={(e) => setRelevantExpYears(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                    />
-                  </div>
-
-                  {/* 3. Current Salary */}
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1 text-[11px]">3. Current Salary</label>
+                    <label className="block font-semibold text-slate-600 mb-0.5 text-[10px]">Current Salary</label>
                     <input
                       type="text"
                       placeholder="e.g. 12 LPA"
                       value={currentSalary}
                       onChange={(e) => setCurrentSalary(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
                     />
                   </div>
 
-                  {/* 4. Expectation */}
+                  {/* Expected Salary */}
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1 text-[11px]">4. Expected Salary</label>
+                    <label className="block font-semibold text-slate-600 mb-0.5 text-[10px]">Expected Salary</label>
                     <input
                       type="text"
                       placeholder="e.g. 16 LPA"
                       value={expectedSalary}
                       onChange={(e) => setExpectedSalary(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
                     />
                   </div>
 
-                  {/* 5. Notice Period */}
+                  {/* Notice Period */}
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1 text-[11px]">5. Notice Period</label>
+                    <label className="block font-semibold text-slate-600 mb-0.5 text-[10px]">Notice Period</label>
                     <input
                       type="text"
-                      placeholder="e.g. 30 Days / Serving Notice"
+                      placeholder="e.g. 30 Days"
                       value={noticePeriod}
                       onChange={(e) => setNoticePeriod(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
                     />
                   </div>
 
-                  {/* 6. Reason of Leaving */}
+                  {/* Offer in Hand */}
                   <div>
-                    <label className="block font-bold text-slate-700 mb-1 text-[11px]">6. Reason for Leaving</label>
-                    <input
-                      type="text"
-                      placeholder="e.g. Looking for growth & leadership"
-                      value={reasonForLeaving}
-                      onChange={(e) => setReasonForLeaving(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                    />
-                  </div>
-
-                  {/* 7. Offer in Hand */}
-                  <div>
-                    <label className="block font-bold text-slate-700 mb-1 text-[11px]">7. Offer in Hand?</label>
+                    <label className="block font-semibold text-slate-600 mb-0.5 text-[10px]">Offer in Hand?</label>
                     <select
                       value={offerInHand}
                       onChange={(e) => setOfferInHand(e.target.value)}
-                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold"
+                      className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
                     >
                       <option value="No">No</option>
                       <option value="Yes (1 Offer)">Yes (1 Offer)</option>
-                      <option value="Yes (Multiple Offers)">Yes (Multiple Offers)</option>
+                      <option value="Yes (Multiple)">Yes (Multiple)</option>
                       <option value="In Final Stages">In Final Stages</option>
                     </select>
                   </div>
                 </div>
+
+                {/* Reason for Leaving */}
+                <div>
+                  <label className="block font-semibold text-slate-600 mb-0.5 text-[10px]">Reason for Leaving</label>
+                  <input
+                    type="text"
+                    placeholder="e.g. Looking for tech leadership & scale..."
+                    value={reasonForLeaving}
+                    onChange={(e) => setReasonForLeaving(e.target.value)}
+                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-medium"
+                  />
+                </div>
               </div>
 
-              {/* Notes */}
-              <div>
-                <label className="block font-semibold text-slate-700 mb-1">Call Notes / Conversation Summary</label>
+              {/* Call Notes Textarea */}
+              <div className="space-y-1">
+                <label className="block font-bold text-slate-700 text-[11px]">
+                  Call Notes / Conversation Summary
+                </label>
                 <textarea
-                  rows={2}
+                  rows={3}
                   value={callNotes}
                   onChange={(e) => setCallNotes(e.target.value)}
-                  placeholder="e.g. Candidate confirmed notice period is negotiable to 30 days, interested in backend engineering stack..."
-                  className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                  placeholder="e.g. Candidate confirmed notice period is 30 days, willing to relocate to Mumbai, ready for tech interview round..."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:ring-1 focus:ring-slate-900"
                 />
               </div>
+            </div>
 
-              <div className="flex justify-end space-x-2 pt-1">
+            {/* Bottom Form Actions */}
+            <div className="p-3.5 border-t border-slate-200 bg-slate-50 flex items-center justify-between flex-shrink-0">
+              <span className="text-[10px] text-slate-400 font-mono">
+                Press Ctrl+Enter to save
+              </span>
+              <div className="flex items-center space-x-2">
                 <button
                   type="button"
                   onClick={onClose}
-                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer text-xs"
+                  className="px-3 py-1.5 border border-slate-300 rounded-lg text-slate-700 font-bold hover:bg-slate-100 cursor-pointer text-xs transition-colors"
                 >
                   Cancel
                 </button>
                 <button
-                  type="submit"
-                  disabled={loggingCall}
-                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer text-xs disabled:opacity-50 flex items-center space-x-1.5"
+                  type="button"
+                  onClick={() => executeCallSave()}
+                  disabled={loggingCall || !callDisposition}
+                  className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-extrabold rounded-lg shadow-xs transition-all cursor-pointer text-xs disabled:opacity-50 flex items-center space-x-1.5"
                 >
                   {loggingCall ? (
-                    <>
-                      <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                      <span>Saving Call...</span>
-                    </>
+                    <span>Saving...</span>
                   ) : (
-                    <span>Save Call Outcome & Screening</span>
+                    <span>Save Screening & Notes</span>
                   )}
                 </button>
               </div>
-            </form>
+            </div>
           </div>
 
-          {/* CALL & ACTIVITY HISTORY */}
-          <div className="space-y-3">
-            <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center justify-between">
-              <span>Call & Activity History {mandateContext ? "(This Job)" : ""}</span>
-              <span className="text-[10px] text-slate-400 font-mono">
-                {candidateCallLogs.length} interaction(s) logged
-              </span>
-            </h3>
+          {/* ----------------------------------------------------------------------- */}
+          {/* RIGHT PANE (~55% width): INTELLIGENCE & DOSSIER                         */}
+          {/* DEFAULT TAB = ACTIVITY & HISTORY                                        */}
+          {/* ----------------------------------------------------------------------- */}
+          <div className="flex-1 flex flex-col overflow-hidden bg-slate-50/50">
+            {/* Right Pane Navigation Tabs */}
+            <div className="px-5 pt-3 border-b border-slate-200/80 bg-white flex items-center space-x-4 flex-shrink-0">
+              <button
+                type="button"
+                onClick={() => setActiveTab("history")}
+                className={`pb-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center space-x-1.5 ${
+                  activeTab === "history"
+                    ? "border-slate-900 text-slate-900"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <Clock className="h-3.5 w-3.5" />
+                <span>Activity & History ({candidateCallLogs.length})</span>
+              </button>
 
-            {/* Client Review Portal Feedback Event (If Available) */}
-            {(candidate.clientDecision || candidate.submittedToClientAt) && (
-              <div className="p-3.5 bg-gradient-to-r from-blue-50/80 to-indigo-50/80 border border-blue-200 rounded-xl space-y-2.5">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-1.5">
-                    <Building2 className="h-4 w-4 text-blue-700" />
-                    <strong className="text-slate-900 text-xs font-bold">Client Review Portal Telemetry</strong>
-                  </div>
-                  {candidate.clientFeedbackAt && (
-                    <span className="text-[10px] text-slate-500 font-mono">
-                      Decision logged: {new Date(candidate.clientFeedbackAt).toLocaleString()}
-                    </span>
-                  )}
-                </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab("profile")}
+                className={`pb-2.5 text-xs font-bold transition-all border-b-2 cursor-pointer flex items-center space-x-1.5 ${
+                  activeTab === "profile"
+                    ? "border-slate-900 text-slate-900"
+                    : "border-transparent text-slate-500 hover:text-slate-800"
+                }`}
+              >
+                <FileText className="h-3.5 w-3.5" />
+                <span>Profile & Resume</span>
+              </button>
+            </div>
 
-                {/* Decision Badge */}
-                <div className="flex flex-wrap items-center gap-2">
-                  {candidate.clientDecision === "SHORTLISTED_FOR_INTERVIEW" && (
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300">
-                      <CheckCircle2 className="h-3.5 w-3.5 text-emerald-700 mr-1" />
-                      Shortlisted for Interview by Client
-                    </span>
-                  )}
-                  {candidate.clientDecision === "REJECTED_WITH_FEEDBACK" && (
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-extrabold bg-rose-100 text-rose-900 border border-rose-300">
-                      <AlertCircle className="h-3.5 w-3.5 text-rose-700 mr-1" />
-                      Rejected by Client: {candidate.rejectionReason || "Feedback Provided"}
-                    </span>
-                  )}
-                  {candidate.clientDecision === "INFO_REQUESTED" && (
-                    <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-extrabold bg-amber-100 text-amber-900 border border-amber-300">
-                      <AlertTriangle className="h-3.5 w-3.5 text-amber-700 mr-1" />
-                      Information Requested / On Hold by Client
-                    </span>
-                  )}
-                  {(!candidate.clientDecision || candidate.clientDecision === "PENDING_REVIEW") &&
-                    candidate.submittedToClientAt && (
-                      <span className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-bold bg-blue-100 text-blue-900 border border-blue-300">
-                        <Clock className="h-3.5 w-3.5 text-blue-700 mr-1" />
-                        Shared with Client — Awaiting Feedback
-                      </span>
-                    )}
-                  {candidate.submittedToClientAt && (
-                    <span className="text-[11px] text-slate-500">
-                      (Shared: {new Date(candidate.submittedToClientAt).toLocaleDateString()})
-                    </span>
-                  )}
-                </div>
-
-                {/* Proposed Interview Times */}
-                {candidate.preferredInterviewTimes && (
-                  <div className="bg-white p-2.5 rounded-xl border border-emerald-200 text-xs text-slate-800 space-y-1.5 shadow-2xs">
-                    <div className="flex items-center justify-between">
-                      <span className="text-[11px] font-extrabold text-emerald-800 flex items-center">
-                        <Calendar className="h-3.5 w-3.5 text-emerald-700 mr-1.5 shrink-0" />
-                        <span>Client Proposed Interview Availability:</span>
-                      </span>
-                      <button
-                        type="button"
-                        onClick={handleSendSlotInvite}
-                        disabled={sendingSlotInvite}
-                        className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white font-bold text-[10px] flex items-center space-x-1.5 shadow-2xs transition-all cursor-pointer disabled:opacity-50"
-                        title="Send 4-option Interactive List Message to candidate's WhatsApp"
-                      >
-                        {sendingSlotInvite ? (
-                          <span>Dispatching...</span>
-                        ) : (
-                          <span>📱 Send WhatsApp Slot Picker</span>
-                        )}
-                      </button>
-                    </div>
-                    <p className="font-semibold text-slate-900 pl-5">
-                      {candidate.preferredInterviewTimes}
-                    </p>
-
-                    {/* Confirmed Slot Banner if candidate replied via WhatsApp */}
-                    {candidate.clientFeedbackNotes?.includes("Confirmed Slot ->") && (
-                      <div className="ml-5 p-2 rounded-lg bg-emerald-50 border border-emerald-300 text-emerald-950 flex items-center space-x-2 shadow-2xs">
-                        <span className="text-base">🎉</span>
-                        <div>
-                          <span className="text-[10px] uppercase tracking-wider font-extrabold text-emerald-800 block">
-                            WhatsApp Slot Confirmed by Candidate:
-                          </span>
-                          <span className="text-xs font-black text-emerald-900">
-                            {candidate.clientFeedbackNotes.split('Confirmed Slot -> "')[1]?.split('"')[0] || "Slot Confirmed"}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Reschedule Request Banner if candidate requested another time */}
-                    {candidate.clientFeedbackNotes?.includes("Requested alternative slot ->") && (
-                      <div className="ml-5 p-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-950 flex items-center space-x-2 shadow-2xs">
-                        <span className="text-base">🔄</span>
-                        <div>
-                          <span className="text-[10px] uppercase tracking-wider font-extrabold text-amber-800 block">
-                            Candidate Requested Alternative Time Window:
-                          </span>
-                          <span className="text-xs font-bold text-amber-900">
-                            Check WhatsApp conversation for candidate availability.
-                          </span>
-                        </div>
-                      </div>
-                    )}
-
-                    {slotInviteSuccess && (
-                      <div className="ml-5 p-1.5 rounded-md bg-emerald-50 border border-emerald-200 text-[11px] font-bold text-emerald-800 flex items-center space-x-1.5">
-                        <span>✅</span>
-                        <span>{slotInviteSuccess}</span>
-                      </div>
-                    )}
-                    {slotInviteError && (
-                      <div className="ml-5 p-1.5 rounded-md bg-rose-50 border border-rose-200 text-[11px] font-bold text-rose-700 flex items-center space-x-1.5">
-                        <span>⚠️</span>
-                        <span>{slotInviteError}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Client Feedback Comments */}
-                {candidate.clientFeedbackNotes && (
-                  <div className="bg-white p-2.5 rounded-lg border border-slate-200 text-xs text-slate-800 space-y-1">
-                    <span className="text-[11px] font-extrabold text-slate-700 flex items-center">
-                      <MessageSquare className="h-3 w-3 text-slate-500 mr-1" />
-                      <span>Client Comments & WhatsApp Timeline:</span>
-                    </span>
-                    <p className="italic text-slate-700 pl-4 whitespace-pre-line">
-                      "{candidate.clientFeedbackNotes}"
-                    </p>
-                  </div>
-                )}
-
-                {/* Client Question Text */}
-                {candidate.clientQuestionText && (
-                  <div className="bg-white p-2.5 rounded-lg border border-amber-200 text-xs text-slate-800 space-y-1">
-                    <span className="text-[11px] font-extrabold text-amber-800 flex items-center">
-                      <AlertTriangle className="h-3 w-3 text-amber-600 mr-1" />
-                      <span>Client Question / Clarification Requested:</span>
-                    </span>
-                    <p className="italic text-slate-800 pl-4">
-                      "{candidate.clientQuestionText}"
-                    </p>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Candidate Bank client question fallback */}
-            {!mandateContext &&
-              candidate.submissions &&
-              candidate.submissions.length > 0 &&
-              candidate.submissions[0].clientQuestionText &&
-              !candidate.clientQuestionText && (
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 space-y-1">
-                  <div className="font-bold flex items-center space-x-1.5 text-blue-800">
-                    <MessageSquare className="h-4 w-4 text-blue-600" />
-                    <span>Inquiry from Client Hiring Manager:</span>
-                  </div>
-                  <p className="italic bg-white p-2.5 rounded-lg border border-blue-200 text-slate-800">
-                    "{candidate.submissions[0].clientQuestionText}"
-                  </p>
-                </div>
-              )}
-
-            {candidateCallLogs.length === 0 ? (
-              <div className="p-4 bg-slate-50 rounded-xl text-center text-slate-400 text-xs">
-                No calls logged for this candidate yet. Use the form above to record your conversation.
-              </div>
-            ) : (
-              <div className="divide-y divide-slate-100 bg-white border border-slate-200 rounded-xl overflow-hidden">
-                {candidateCallLogs.map((log: any) => {
-                  const disp = CALL_DISPOSITIONS.find((d) => d.value === log.disposition);
-                  return (
-                    <div key={log.id} className="p-3 space-y-1 hover:bg-slate-50 transition-colors">
+            {/* Right Pane Scrollable Content */}
+            <div className="flex-1 overflow-y-auto p-5 space-y-4">
+              {activeTab === "history" ? (
+                <>
+                  {/* TAB 1 (DEFAULT): ACTIVITY & CALL HISTORY */}
+                  
+                  {/* Client Review Feedback (De-colored, clean typography) */}
+                  {(candidate.clientDecision || candidate.submittedToClientAt) && (
+                    <div className="p-3.5 bg-white border border-slate-200 rounded-xl space-y-2.5 shadow-2xs">
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-2">
-                          <span
-                            className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
-                              disp?.badge || "bg-slate-100 text-slate-800"
-                            }`}
-                          >
-                            {disp?.label || log.disposition}
+                        <div className="flex items-center space-x-1.5">
+                          <Building2 className="h-4 w-4 text-slate-700" />
+                          <strong className="text-slate-900 text-xs font-bold">Client Review Feedback</strong>
+                        </div>
+                        {candidate.clientFeedbackAt && (
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {new Date(candidate.clientFeedbackAt).toLocaleDateString()}
                           </span>
-                          {log.mandate && (
-                            <span className="text-[10px] text-purple-700 bg-purple-50 border border-purple-200 px-1.5 py-0.2 rounded font-semibold">
-                              {log.mandate.title} {log.mandate.client?.name ? `(${log.mandate.client.name})` : ""}
+                        )}
+                      </div>
+
+                      {/* Clean Status Typography (No loud fruit salad containers) */}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {candidate.clientDecision === "SHORTLISTED_FOR_INTERVIEW" && (
+                          <span className="inline-flex items-center text-xs font-bold text-slate-800">
+                            <CheckCircle2 className="h-4 w-4 text-emerald-600 mr-1.5" />
+                            Shortlisted for Interview by Client
+                          </span>
+                        )}
+                        {candidate.clientDecision === "REJECTED_WITH_FEEDBACK" && (
+                          <span className="inline-flex items-center text-xs font-bold text-slate-800">
+                            <AlertCircle className="h-4 w-4 text-rose-600 mr-1.5" />
+                            Rejected: {candidate.rejectionReason || "Feedback Provided"}
+                          </span>
+                        )}
+                        {candidate.clientDecision === "INFO_REQUESTED" && (
+                          <span className="inline-flex items-center text-xs font-bold text-slate-800">
+                            <AlertTriangle className="h-4 w-4 text-amber-600 mr-1.5" />
+                            Information Requested by Client
+                          </span>
+                        )}
+                        {(!candidate.clientDecision || candidate.clientDecision === "PENDING_REVIEW") &&
+                          candidate.submittedToClientAt && (
+                            <span className="inline-flex items-center text-xs font-semibold text-slate-700">
+                              <Clock className="h-4 w-4 text-slate-500 mr-1.5" />
+                              Awaiting Client Review
                             </span>
                           )}
-                        </div>
-                        <span className="text-[10px] text-slate-400">
-                          {new Date(log.calledAt).toLocaleString()} by{" "}
-                          <strong>{log.recruiter?.name || log.recruiterName || "Recruiter"}</strong>
-                        </span>
-                      </div>
-                      {log.notes && <p className="text-xs text-slate-700 font-medium pl-1">{log.notes}</p>}
-                      {log.callbackAt && (
-                        <div className="text-[10px] text-amber-800 font-bold flex items-center space-x-1 mt-1 pl-1">
-                          <Clock className="h-3 w-3 text-amber-600 mr-0.5" />
-                          <span>Scheduled Call Back: {new Date(log.callbackAt).toLocaleString()}</span>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* HISTORY FROM OTHER JOBS IN THE AGENCY (Mandate Workspace Context) */}
-          {mandateContext && otherJobsHistory && (
-            <div className="space-y-2">
-              <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center justify-between">
-                <span>History From Other Agency Jobs ({otherJobsHistory.length})</span>
-                <span className="text-[10px] text-purple-700 font-bold">Cross-Role Intelligence</span>
-              </h3>
-
-              {otherJobsHistory.length === 0 ? (
-                <div className="p-4 bg-slate-50 rounded-xl text-center text-slate-400 text-xs">
-                  This candidate has not been considered for other jobs in your agency yet.
-                </div>
-              ) : (
-                <div className="space-y-2.5">
-                  {otherJobsHistory.map((otherJob: any, idx: number) => (
-                    <div key={idx} className="p-3.5 bg-purple-50/40 border border-purple-200/70 rounded-xl space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <strong className="text-slate-900 text-xs">{otherJob.mandateTitle}</strong>
-                          <span className="text-[11px] text-slate-500 block">{otherJob.clientName}</span>
-                        </div>
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-purple-100 text-purple-900 border border-purple-300">
-                          Stage: {otherJob.stage.replace(/_/g, " ")}
-                        </span>
                       </div>
 
-                      {otherJob.callLogs && otherJob.callLogs.length > 0 && (
-                        <div className="text-[11px] text-slate-600 bg-white p-2.5 rounded-lg border border-purple-100 space-y-1">
-                          <span className="text-[10px] font-bold text-slate-400 block uppercase">Past Call Outcome:</span>
-                          <div className="font-semibold text-slate-800">
-                            {otherJob.callLogs[0].disposition.replace(/_/g, " ")}
+                      {/* Client Proposed Interview Availability */}
+                      {candidate.preferredInterviewTimes && (
+                        <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-200/80 text-xs space-y-1.5">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold text-slate-800 flex items-center">
+                              <Calendar className="h-3.5 w-3.5 text-slate-600 mr-1" />
+                              <span>Proposed Interview Times:</span>
+                            </span>
+                            {/* Neutral Ghost Button for WhatsApp slot (no solid green) */}
+                            <button
+                              type="button"
+                              onClick={handleSendSlotInvite}
+                              disabled={sendingSlotInvite}
+                              className="px-2.5 py-1 rounded-md bg-white hover:bg-slate-100 border border-slate-300 text-slate-800 font-bold text-[10px] flex items-center space-x-1.5 cursor-pointer disabled:opacity-50 shadow-2xs transition-colors"
+                              title="Send 4-option WhatsApp Slot Picker"
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                              <span>{sendingSlotInvite ? "Sending..." : "Send WhatsApp Slots"}</span>
+                            </button>
                           </div>
-                          {otherJob.callLogs[0].notes && <p className="italic">"{otherJob.callLogs[0].notes}"</p>}
+                          <p className="font-semibold text-slate-800 pl-4">{candidate.preferredInterviewTimes}</p>
+
+                          {/* Confirmed Slot Banner */}
+                          {candidate.clientFeedbackNotes?.includes("Confirmed Slot ->") && (
+                            <div className="p-2 rounded bg-emerald-50 border border-emerald-200 text-emerald-950 text-xs font-bold">
+                              🎉 WhatsApp Confirmed: {candidate.clientFeedbackNotes.split('Confirmed Slot -> "')[1]?.split('"')[0] || "Slot Confirmed"}
+                            </div>
+                          )}
+
+                          {slotInviteSuccess && (
+                            <div className="p-1.5 rounded bg-emerald-50 text-emerald-800 text-[11px] font-bold">
+                              ✅ {slotInviteSuccess}
+                            </div>
+                          )}
+                          {slotInviteError && (
+                            <div className="p-1.5 rounded bg-rose-50 text-rose-800 text-[11px] font-bold">
+                              ⚠️ {slotInviteError}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {candidate.clientFeedbackNotes && (
+                        <div className="bg-slate-50 p-2 rounded-lg border border-slate-200/80 text-xs text-slate-700">
+                          <span className="text-[10px] font-bold text-slate-400 block uppercase">Client Comments:</span>
+                          <p className="italic">{candidate.clientFeedbackNotes}</p>
                         </div>
                       )}
                     </div>
-                  ))}
-                </div>
+                  )}
+
+                  {/* Recruiter Call Records (Shows last 3, rest collapsible) */}
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-slate-900 uppercase tracking-wider block">
+                        Call Records ({candidateCallLogs.length})
+                      </span>
+                      {candidateCallLogs.length > 3 && (
+                        <span className="text-[10px] text-slate-400">
+                          {showAllCallLogs ? "Showing all" : "Showing latest 3"}
+                        </span>
+                      )}
+                    </div>
+
+                    {candidateCallLogs.length === 0 ? (
+                      <div className="p-4 bg-white rounded-xl border border-slate-200 text-center text-slate-400 text-xs">
+                        No calls recorded yet. Select an outcome on the left to log your first call.
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-slate-100 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-2xs">
+                        {displayedCallLogs.map((log: any) => {
+                          const disp = CALL_DISPOSITIONS.find((d) => d.value === log.disposition);
+                          return (
+                            <div key={log.id} className="p-3 space-y-1 hover:bg-slate-50 transition-colors text-xs">
+                              <div className="flex items-center justify-between">
+                                <span className="font-semibold text-slate-900">
+                                  {disp?.label || log.disposition}
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                  {new Date(log.calledAt).toLocaleString()} by {log.recruiter?.name || log.recruiterName || "Recruiter"}
+                                </span>
+                              </div>
+                              {log.notes && <p className="text-slate-600 font-medium pl-0.5">{log.notes}</p>}
+                              {log.callbackAt && (
+                                <div className="text-[10px] text-amber-800 font-bold flex items-center space-x-1 mt-0.5 pl-0.5">
+                                  <Clock className="h-3 w-3 text-amber-600" />
+                                  <span>Callback: {new Date(log.callbackAt).toLocaleString()}</span>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+
+                        {/* Collapsible Toggle for Older Records */}
+                        {candidateCallLogs.length > 3 && (
+                          <button
+                            type="button"
+                            onClick={() => setShowAllCallLogs(!showAllCallLogs)}
+                            className="w-full py-2 px-3 text-center text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-50/80 hover:bg-slate-100 transition-colors cursor-pointer flex items-center justify-center space-x-1"
+                          >
+                            {showAllCallLogs ? (
+                              <>
+                                <ChevronUp className="h-3.5 w-3.5" />
+                                <span>Collapse older call records</span>
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown className="h-3.5 w-3.5" />
+                                <span>View {hiddenCount} older call record{hiddenCount > 1 ? "s" : ""}</span>
+                              </>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Cross-Job Intelligence */}
+                  {mandateContext && otherJobsHistory && otherJobsHistory.length > 0 && (
+                    <div className="space-y-2 pt-2">
+                      <span className="text-[11px] font-bold text-slate-900 uppercase tracking-wider block">
+                        Cross-Role History ({otherJobsHistory.length})
+                      </span>
+                      <div className="space-y-2">
+                        {otherJobsHistory.map((otherJob: any, idx: number) => (
+                          <div key={idx} className="p-3 bg-white border border-slate-200 rounded-xl text-xs space-y-1 shadow-2xs">
+                            <div className="flex items-center justify-between">
+                              <strong className="text-slate-900">{otherJob.mandateTitle}</strong>
+                              <span className="text-[10px] font-semibold text-slate-700 bg-slate-100 px-1.5 py-0.5 rounded">
+                                {otherJob.stage.replace(/_/g, " ")}
+                              </span>
+                            </div>
+                            <span className="text-slate-500 text-[11px] block">{otherJob.clientName}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <>
+                  {/* TAB 2: PROFILE & RESUME */}
+                  
+                  {/* Contact Snippets with 1-Click Copy */}
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                      {/* Phone */}
+                      <div className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-100">
+                        <span className="text-slate-700 font-mono font-semibold">{candidate.phone || "No phone"}</span>
+                        {candidate.phone && (
+                          <button
+                            type="button"
+                            onClick={() => handleCopyText(candidate.phone, "phone")}
+                            className="text-[10px] text-slate-500 hover:text-slate-900 font-bold flex items-center space-x-1 cursor-pointer"
+                          >
+                            {copiedField === "phone" ? (
+                              <span className="text-emerald-600 flex items-center">
+                                <Check className="h-3 w-3 mr-0.5" /> Copied
+                              </span>
+                            ) : (
+                              <span className="flex items-center">
+                                <Copy className="h-3 w-3 mr-0.5" /> Copy
+                              </span>
+                            )}
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Email */}
+                      <div className="flex items-center justify-between p-2 bg-slate-50 rounded-lg border border-slate-100">
+                        <span className="text-slate-700 truncate max-w-[180px] font-medium">{candidate.email}</span>
+                        {candidate.email && (
+                          <button
+                            type="button"
+                            onClick={() => handleCopyText(candidate.email, "email")}
+                            className="text-[10px] text-slate-500 hover:text-slate-900 font-bold flex items-center space-x-1 cursor-pointer"
+                          >
+                            {copiedField === "email" ? (
+                              <span className="text-emerald-600 flex items-center">
+                                <Check className="h-3 w-3 mr-0.5" /> Copied
+                              </span>
+                            ) : (
+                              <span className="flex items-center">
+                                <Copy className="h-3 w-3 mr-0.5" /> Copy
+                              </span>
+                            )}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Resdex Metrics Matrix */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 border-t border-slate-100 text-xs">
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Total Exp</span>
+                        <strong className="text-slate-900 font-bold">{candidate.totalExpYears || 0} Years</strong>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Location</span>
+                        <strong className="text-slate-900 font-semibold truncate block" title={candidate.location || "N/A"}>
+                          {candidate.location || "N/A"}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Current CTC</span>
+                        <strong className="text-slate-900 font-semibold block">
+                          {candidate.currentCtc ? `₹${(candidate.currentCtc / 100000).toFixed(1)}L` : "N/A"}
+                        </strong>
+                      </div>
+                      <div>
+                        <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider block">Expected CTC</span>
+                        <strong className="text-emerald-700 font-bold block">
+                          {candidate.expectedCtc ? `₹${(candidate.expectedCtc / 100000).toFixed(1)}L` : "N/A"}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Key Skills */}
+                  {candidate.skills && candidate.skills.length > 0 && (
+                    <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-2">
+                      <span className="text-[11px] font-bold text-slate-900 uppercase tracking-wider block">
+                        Tagged Skills ({candidate.skills.length})
+                      </span>
+                      <div className="flex flex-wrap gap-1.5">
+                        {candidate.skills.map((skill: string, idx: number) => (
+                          <span
+                            key={idx}
+                            className="bg-slate-100 border border-slate-200/80 text-slate-700 text-xs font-medium px-2 py-0.5 rounded-md"
+                          >
+                            {skill}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Summary */}
+                  {candidate.summary && (
+                    <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-2">
+                      <span className="text-[11px] font-bold text-slate-900 uppercase tracking-wider block">
+                        Candidate Summary / Bio
+                      </span>
+                      <p className="text-xs text-slate-700 leading-relaxed whitespace-pre-line">
+                        {candidate.summary}
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Education Snippet */}
+                  {candidate.qualification && (
+                    <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Education & Degree</span>
+                      <p className="text-xs font-semibold text-slate-800">{candidate.qualification}</p>
+                    </div>
+                  )}
+                </>
               )}
             </div>
-          )}
-
-          {/* RESUME PREVIEW & SKILLS */}
-          <div className="space-y-2">
-            <h3 className="font-extrabold text-slate-900 text-xs uppercase tracking-wider flex items-center space-x-1.5">
-              <FileText className="h-3.5 w-3.5 text-slate-600" />
-              <span>Resume Summary & Skills</span>
-            </h3>
-            {candidate.summary && (
-              <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 text-slate-700 leading-relaxed text-xs">
-                {candidate.summary}
-              </div>
-            )}
-            {candidate.skills && candidate.skills.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 pt-1">
-                {candidate.skills.map((skill: string, idx: number) => (
-                  <span
-                    key={idx}
-                    className="bg-slate-100 border border-slate-200 text-slate-700 text-[10px] font-medium px-2 py-0.5 rounded"
-                  >
-                    {skill}
-                  </span>
-                ))}
-              </div>
-            )}
           </div>
         </div>
 
-        {/* Modal Footer */}
-        <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between flex-shrink-0">
-          <span className="text-[11px] text-slate-500 font-medium">
+        {/* ========================================================================= */}
+        {/* 3. MODAL FOOTER STATUS BAR                                                */}
+        {/* ========================================================================= */}
+        <div className="px-6 py-2.5 border-t border-slate-200 bg-white flex items-center justify-between flex-shrink-0 text-xs text-slate-500">
+          <span className="truncate max-w-md">
             {mandateContext
               ? `Mandate: ${mandateContext.title} • Client: ${mandateContext.clientName}`
               : `Talent Bank • ${
@@ -980,13 +1165,9 @@ export function CandidateDetailModal({
                     : "General Pool"
                 }`}
           </span>
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer text-xs"
-          >
-            Close Window
-          </button>
+          <span className="text-[11px] text-slate-400">
+            RecruitOS Telemetry • Press <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-[10px] font-mono">Esc</kbd> to exit
+          </span>
         </div>
       </div>
     </div>

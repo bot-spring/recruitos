@@ -40,3 +40,6 @@ AGENTS.md
 
 # Backups
 *.backup
+
+# UX References
+ux-references/

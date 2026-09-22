@@ -53,6 +53,8 @@ import {
   AlertTriangle,
   Video,
   ChevronDown,
+  MapPin,
+  MoreVertical,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CockpitHeader } from "@/components/CockpitHeader";
@@ -315,18 +317,88 @@ interface MandateFunnelRecord {
   }>;
 }
 
+interface NoticePeriodCandidate {
+  id: string;
+  stage: string;
+  updatedAt: string;
+  daysInNotice: number;
+  daysSinceAccepted: number;
+  daysRemaining: number;
+  candidate: {
+    id: string;
+    fullName: string;
+    email: string;
+    phone: string;
+    currentTitle: string | null;
+    currentCompany: string | null;
+    expectedCtc: number | null;
+    currency: string;
+    noticePeriodDays: number;
+  };
+  mandate: {
+    id: string;
+    title: string;
+    client: { id: string; name: string };
+  };
+}
+
+function getInitials(name: string) {
+  if (!name) return "CA";
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+function formatRelativeTime(dateString: string) {
+  try {
+    const d = new Date(dateString);
+    const now = new Date();
+    const diffMs = Math.max(0, now.getTime() - d.getTime());
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (diffDays === 0) return "Today";
+    if (diffDays === 1) return "1 day ago";
+    if (diffDays < 30) return `${diffDays} days ago`;
+    const diffMonths = Math.floor(diffDays / 30);
+    return diffMonths === 1 ? "1 month ago" : `${diffMonths} months ago`;
+  } catch {
+    return "";
+  }
+}
+
 export default function CockpitPage() {
   const router = useRouter();
   const { data: session } = useSession();
   const userRole = session?.user?.role;
   const isManagement = userRole === "AGENCY_OWNER" || userRole === "TEAM_LEAD";
 
+  // Active Mandate Kebab Menu State
+  const [activeMenuMandateId, setActiveMenuMandateId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const handleDocClick = () => setActiveMenuMandateId(null);
+    if (activeMenuMandateId) {
+      document.addEventListener("click", handleDocClick);
+      return () => document.removeEventListener("click", handleDocClick);
+    }
+  }, [activeMenuMandateId]);
+
   // Navigation State (Solo Owner Micro-Nav Architecture)
   const [currentTab, setCurrentTab] = useState<"dashboard" | "pipeline" | "mandates">("dashboard");
 
-  // Pipeline State (Tab: ⚡ Pipeline)
+  // Command Center 3-Day Interview Window Filter: 'today' | 'tomorrow' | 'yesterday'
+  const [interviewWindow, setInterviewWindow] = useState<"today" | "tomorrow" | "yesterday">("today");
+
+  // Pipeline State (⚡ Command Center)
   const [pipelineData, setPipelineData] = useState<{
     interviewsToday: PipelineInterview[];
+    interviewsYesterday?: PipelineInterview[];
+    interviewsTomorrow?: PipelineInterview[];
+    chasesDue?: PipelineCandidate[];
+    noticePeriodWatch?: NoticePeriodCandidate[];
     columns: {
       screened: PipelineCandidate[];
       submitted: PipelineCandidate[];
@@ -337,9 +409,12 @@ export default function CockpitPage() {
       totalSubmitted: number;
       totalInterviewing: number;
       totalInterviewsToday: number;
+      totalInterviewsYesterday?: number;
+      totalInterviewsTomorrow?: number;
       slaComplianceRate: number;
       breachedCount: number;
       warningCount: number;
+      noticePeriodCount?: number;
     };
   } | null>(null);
   const [pipelineLoading, setPipelineLoading] = useState(false);
@@ -964,11 +1039,14 @@ export default function CockpitPage() {
   });
 
   const filteredActiveMandates = activeMandates.filter((m) => {
-    const q = searchQuery.toLowerCase();
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
     return (
       m.title.toLowerCase().includes(q) ||
       m.client.name.toLowerCase().includes(q) ||
-      (m.location && m.location.toLowerCase().includes(q))
+      (m.location && m.location.toLowerCase().includes(q)) ||
+      (m.skills && m.skills.some((s) => s.toLowerCase().includes(q))) ||
+      (m.assignedRecruiter?.name && m.assignedRecruiter.name.toLowerCase().includes(q))
     );
   });
 
@@ -1007,237 +1085,514 @@ export default function CockpitPage() {
         )}
 
         {/* ========================================================================= */}
-        {/* TAB 1: DASHBOARD (CANDIDATE FUNNEL OPERATIONS - MACRO & MANDATE-WISE)     */}
+        {/* TAB: ⚡ COMMAND CENTER (UNIFIED RADAR, 3-DAY INTERVIEWS, SLA CHASE & NOTICE WATCH) */}
         {/* ========================================================================= */}
-        {currentTab === "dashboard" && (
+        {(currentTab === "dashboard" || currentTab === "pipeline") && (
           <div className="space-y-6">
-            {/* Dashboard Header Bar */}
+            {/* 1-Click Chase Notification Alert */}
+            {chaseSuccessMessage && (
+              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center justify-between shadow-sm animate-in fade-in duration-150">
+                <div className="flex items-center space-x-2.5">
+                  <Zap className="h-5 w-5 text-amber-600 flex-shrink-0 animate-bounce" />
+                  <span className="text-xs sm:text-sm font-bold">{chaseSuccessMessage}</span>
+                </div>
+                <button
+                  onClick={() => setChaseSuccessMessage(null)}
+                  className="text-xs text-amber-700 font-bold hover:underline cursor-pointer"
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
+            {/* Command Center Header Bar */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
               <div className="flex items-start sm:items-center space-x-3.5">
                 <div className="h-10 w-10 rounded-xl bg-[#fce17c] border border-[#f5d762] flex items-center justify-center text-slate-900 shadow-xs flex-shrink-0">
-                  <BarChart3 className="h-5 w-5 text-slate-900" />
+                  <Zap className="h-5 w-5 text-slate-900" />
                 </div>
                 <div>
                   <div className="flex items-center space-x-2">
-                    <h1 className="text-base font-black text-slate-900 tracking-tight">Agency Executive Pipeline & Funnel Radar</h1>
-                    <span className="bg-[#fce17c]/30 text-slate-900 text-[10px] font-extrabold px-2 py-0.5 rounded border border-[#f5d762] uppercase tracking-wide">
-                      RC-03 Velocity Radar
+                    <h1 className="text-base font-black text-slate-900 tracking-tight">Recruiter Command Center</h1>
+                    <span className="bg-[#fce17c]/40 text-slate-900 text-[10px] font-extrabold px-2 py-0.5 rounded border border-[#f5d762] uppercase tracking-wide">
+                      Live Velocity
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Macro candidate velocity across all active mandates and micro conversion progression metrics.
+                    Daily execution lineup, client review SLA bottlenecks, and post-offer drop-off radar.
                   </p>
                 </div>
               </div>
 
               <div className="flex items-center space-x-3">
+                {/* Mandate Filter */}
+                <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700">
+                  <Filter className="h-3.5 w-3.5 text-slate-500" />
+                  <select
+                    value={selectedPipelineMandateId}
+                    onChange={(e) => setSelectedPipelineMandateId(e.target.value)}
+                    className="bg-transparent text-xs font-bold text-slate-800 border-none outline-none cursor-pointer pr-2"
+                  >
+                    <option value="all">All Mandates ({activeMandates.length})</option>
+                    {activeMandates.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.title} ({m.client.name})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
                 <button
                   onClick={() => setIsOfflineModalOpen(true)}
                   className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fce17c] hover:bg-[#ebd066] border border-[#f5d762] text-slate-900 font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer"
                 >
                   <Plus className="h-4 w-4 text-slate-900" />
-                  <span>+ New Search Mandate</span>
+                  <span>+ New Mandate</span>
                 </button>
               </div>
             </div>
 
-            {/* TOP 4 MACRO KPI RADAR CARDS */}
+            {/* 1. HIGH-SIGNAL PULSE STRIP (4 METRICS) */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Card 1: Total Ingested */}
+              {/* Metric 1: Interviews Schedule */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
                 <div>
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Total Ingested</span>
+                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Interviews Lineup</span>
                   <div className="text-2xl font-black text-slate-900 mt-1">
-                    {loadingFunnel ? "..." : (macroFunnel?.ingested || 0)}
+                    {pipelineLoading ? "..." : (pipelineData?.stats?.totalInterviewsToday || 0)}
                   </div>
-                  <span className="text-[10px] text-slate-500 font-medium">Candidates in raw pipeline</span>
-                </div>
-                <div className="h-10 w-10 rounded-xl bg-slate-100 flex items-center justify-center text-slate-600">
-                  <Users className="h-5 w-5" />
-                </div>
-              </div>
-
-              {/* Card 2: In-Flight Evaluation */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-blue-600 uppercase tracking-wider block">Active In-Flight</span>
-                  <div className="text-2xl font-black text-slate-900 mt-1">
-                    {loadingFunnel ? "..." : ((macroFunnel?.shortlisted || 0) + (macroFunnel?.sharedWithCompany || 0) + (macroFunnel?.selectedForInterview || 0) + (macroFunnel?.interviewsDone || 0))}
+                  <div className="text-[10px] text-slate-500 font-semibold mt-0.5 flex items-center space-x-2">
+                    <span>Yest: <strong>{pipelineData?.stats?.totalInterviewsYesterday || 0}</strong></span>
+                    <span>•</span>
+                    <span>Today: <strong className="text-blue-600">{pipelineData?.stats?.totalInterviewsToday || 0}</strong></span>
+                    <span>•</span>
+                    <span>Tmrw: <strong>{pipelineData?.stats?.totalInterviewsTomorrow || 0}</strong></span>
                   </div>
-                  <span className="text-[10px] text-slate-500 font-medium">Screening to Interviews</span>
                 </div>
                 <div className="h-10 w-10 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
-                  <Filter className="h-5 w-5" />
+                  <Calendar className="h-5 w-5" />
                 </div>
               </div>
 
-              {/* Card 3: Decisions & Offers */}
+              {/* Metric 2: Client SLA Chases Due */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
                 <div>
-                  <span className="text-[11px] font-bold text-purple-600 uppercase tracking-wider block">Decisions & Offers</span>
-                  <div className="text-2xl font-black text-slate-900 mt-1">
-                    {loadingFunnel ? "..." : ((macroFunnel?.selected || 0) + (macroFunnel?.offered || 0))}
+                  <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider block">Chases Due (&gt;48h)</span>
+                  <div className="text-2xl font-black text-slate-900 mt-1 flex items-baseline space-x-2">
+                    <span>{pipelineLoading ? "..." : ((pipelineData?.stats?.breachedCount || 0) + (pipelineData?.stats?.warningCount || 0))}</span>
+                    {(pipelineData?.stats?.breachedCount || 0) > 0 && (
+                      <span className="text-xs font-bold text-rose-600">({pipelineData?.stats?.breachedCount} breached)</span>
+                    )}
                   </div>
-                  <span className="text-[10px] text-slate-500 font-medium">Final selection & pre-lock</span>
+                  <span className="text-[10px] text-slate-500 font-medium">Clients awaiting response</span>
+                </div>
+                <div className="h-10 w-10 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center">
+                  <Clock className="h-5 w-5" />
+                </div>
+              </div>
+
+              {/* Metric 3: Notice Period Watch (RC-05) */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
+                <div>
+                  <span className="text-[11px] font-bold text-purple-700 uppercase tracking-wider block">Notice Period Watch</span>
+                  <div className="text-2xl font-black text-slate-900 mt-1">
+                    {pipelineLoading ? "..." : (pipelineData?.stats?.noticePeriodCount || 0)}
+                  </div>
+                  <span className="text-[10px] text-purple-600 font-bold">Offer locked • 30-90d retain</span>
                 </div>
                 <div className="h-10 w-10 rounded-xl bg-purple-50 text-purple-600 border border-purple-100 flex items-center justify-center">
-                  <Flame className="h-5 w-5" />
+                  <ShieldCheck className="h-5 w-5" />
                 </div>
               </div>
 
-              {/* Card 4: Placements Secured */}
+              {/* Metric 4: Active Mandates Velocity */}
               <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
                 <div>
-                  <span className="text-[11px] font-bold text-emerald-600 uppercase tracking-wider block">Placements Secured</span>
+                  <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Active Mandates</span>
                   <div className="text-2xl font-black text-slate-900 mt-1">
-                    {loadingFunnel ? "..." : (macroFunnel?.joined || 0)}
+                    {activeMandates.length}
                   </div>
-                  <span className="text-[10px] text-emerald-600 font-extrabold">
-                    {macroFunnel ? `${macroFunnel.conversionRate}% Conversion Rate` : "0% Conversion Rate"}
+                  <span className="text-[10px] text-emerald-700 font-extrabold">
+                    {pipelineData?.stats?.slaComplianceRate ?? 100}% SLA Healthy
                   </span>
                 </div>
                 <div className="h-10 w-10 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100 flex items-center justify-center">
-                  <CheckCircle2 className="h-5 w-5" />
+                  <Briefcase className="h-5 w-5" />
                 </div>
               </div>
             </div>
 
-            {/* SECTION A: MACRO CANDIDATE FUNNEL BANNER (8 Interconnected Pipeline Stages) */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-6 space-y-4">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            {/* 2. 3-DAY INTERVIEWS COMMAND (YESTERDAY, TODAY, TOMORROW) */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4">
+              <div className="flex flex-col sm:flex-row justify-between sm:items-center pb-3 border-b border-slate-100 gap-3">
                 <div className="flex items-center space-x-2">
-                  <div className="h-7 w-7 rounded-lg bg-amber-50 border border-amber-200 flex items-center justify-center">
-                    <Flame className="h-4 w-4 text-amber-500" />
-                  </div>
-                  <h2 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                    A. Aggregate Candidate Conversion Pipeline (All Mandates)
-                  </h2>
+                  <Calendar className="h-4 w-4 text-slate-700" />
+                  <h2 className="text-sm font-black text-slate-900">Interviews Command</h2>
+                  <span className="text-xs text-slate-400 font-medium ml-1">3-day rolling window</span>
                 </div>
-                {macroFunnel && (
-                  <span className="inline-flex items-center space-x-1.5 text-xs font-black text-emerald-800 bg-emerald-50 px-3 py-1 rounded-xl border border-emerald-200 w-fit">
-                    <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                    <span>Overall Placement Rate: {macroFunnel.conversionRate}%</span>
-                  </span>
-                )}
+
+                {/* Sub-tabs: Today, Tomorrow, Yesterday */}
+                <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold w-fit">
+                  <button
+                    type="button"
+                    onClick={() => setInterviewWindow("today")}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      interviewWindow === "today"
+                        ? "bg-white text-slate-900 shadow-xs font-extrabold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Today ({pipelineData?.stats?.totalInterviewsToday || 0})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInterviewWindow("tomorrow")}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      interviewWindow === "tomorrow"
+                        ? "bg-white text-slate-900 shadow-xs font-extrabold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Tomorrow ({pipelineData?.stats?.totalInterviewsTomorrow || 0})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setInterviewWindow("yesterday")}
+                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                      interviewWindow === "yesterday"
+                        ? "bg-white text-slate-900 shadow-xs font-extrabold"
+                        : "text-slate-600 hover:text-slate-900"
+                    }`}
+                  >
+                    Yesterday ({pipelineData?.stats?.totalInterviewsYesterday || 0})
+                  </button>
+                </div>
               </div>
 
-              {loadingFunnel ? (
-                <div className="py-12 text-center text-slate-400 text-xs">Computing real-time pipeline funnel...</div>
-              ) : macroFunnel ? (
-                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-3">
-                  {/* Stage 1: Ingested */}
-                  <div className="bg-[#fce17c]/10 border border-[#fce17c]/70 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
-                    <div>
-                      <span className="bg-[#fce17c] text-slate-900 text-[10px] font-black px-2 py-0.5 rounded-full border border-[#f5d762] uppercase tracking-wide inline-block">
-                        1. Ingested
-                      </span>
-                      <div className="text-2xl font-black text-slate-900 mt-2">{macroFunnel.ingested}</div>
-                    </div>
-                    <span className="text-[10px] text-slate-600 font-bold block mt-2">Raw Sourced</span>
-                  </div>
-
-                  {/* Stage 2: Shortlisted */}
-                  <div className="bg-slate-50 border border-slate-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
-                    <div>
-                      <span className="bg-slate-200/80 text-slate-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-slate-300 uppercase tracking-wide inline-block">
-                        2. Shortlisted
-                      </span>
-                      <div className="text-2xl font-black text-slate-800 mt-2">{macroFunnel.shortlisted}</div>
-                    </div>
-                    <span className="text-[10px] text-slate-600 font-extrabold block mt-2">
-                      {macroFunnel.ingested > 0 ? `${Math.round((macroFunnel.shortlisted / macroFunnel.ingested) * 100)}% pass` : "0% pass"}
-                    </span>
-                  </div>
-
-                  {/* Stage 3: Shared with Company */}
-                  <div className="bg-blue-50/70 border border-blue-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
-                    <div>
-                      <span className="bg-blue-100 text-blue-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-blue-300 uppercase tracking-wide inline-block">
-                        3. Shared w/ Client
-                      </span>
-                      <div className="text-2xl font-black text-blue-950 mt-2">{macroFunnel.sharedWithCompany}</div>
-                    </div>
-                    <span className="text-[10px] text-blue-600 font-extrabold block mt-2">
-                      {macroFunnel.shortlisted > 0 ? `${Math.round((macroFunnel.sharedWithCompany / macroFunnel.shortlisted) * 100)}% pass` : "0% pass"}
-                    </span>
-                  </div>
-
-                  {/* Stage 4: Selected for Interview */}
-                  <div className="bg-purple-50/70 border border-purple-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
-                    <div>
-                      <span className="bg-purple-100 text-purple-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-purple-300 uppercase tracking-wide inline-block">
-                        4. Interview Selected
-                      </span>
-                      <div className="text-2xl font-black text-purple-950 mt-2">{macroFunnel.selectedForInterview}</div>
-                    </div>
-                    <span className="text-[10px] text-purple-600 font-extrabold block mt-2">
-                      {macroFunnel.sharedWithCompany > 0 ? `${Math.round((macroFunnel.selectedForInterview / macroFunnel.sharedWithCompany) * 100)}% pass` : "Client Approved"}
-                    </span>
-                  </div>
-
-                  {/* Stage 5: Interviews Done */}
-                  <div className="bg-indigo-50/70 border border-indigo-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
-                    <div>
-                      <span className="bg-indigo-100 text-indigo-800 text-[10px] font-black px-2 py-0.5 rounded-full border border-indigo-300 uppercase tracking-wide inline-block">
-                        5. Interviews Done
-                      </span>
-                      <div className="text-2xl font-black text-indigo-950 mt-2">{macroFunnel.interviewsDone}</div>
-                    </div>
-                    <span className="text-[10px] text-indigo-600 font-extrabold block mt-2">
-                      {macroFunnel.selectedForInterview > 0 ? `${Math.round((macroFunnel.interviewsDone / macroFunnel.selectedForInterview) * 100)}% debriefed` : "Debriefed"}
-                    </span>
-                  </div>
-
-                  {/* Stage 6: Selected */}
-                  <div className="bg-amber-50/70 border border-amber-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
-                    <div>
-                      <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2 py-0.5 rounded-full border border-amber-300 uppercase tracking-wide inline-block">
-                        6. Selected
-                      </span>
-                      <div className="text-2xl font-black text-amber-950 mt-2">{macroFunnel.selected}</div>
-                    </div>
-                    <span className="text-[10px] text-amber-700 font-extrabold block mt-2">Final Choice</span>
-                  </div>
-
-                  {/* Stage 7: Offered */}
-                  <div className="bg-fuchsia-50/70 border border-fuchsia-200 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-2xs">
-                    <div>
-                      <span className="bg-fuchsia-100 text-fuchsia-900 text-[10px] font-black px-2 py-0.5 rounded-full border border-fuchsia-300 uppercase tracking-wide inline-block">
-                        7. Offered
-                      </span>
-                      <div className="text-2xl font-black text-fuchsia-950 mt-2">{macroFunnel.offered}</div>
-                    </div>
-                    <span className="text-[10px] text-fuchsia-700 font-extrabold block mt-2">Offer Locked</span>
-                  </div>
-
-                  {/* Stage 8: Joined */}
-                  <div className="bg-emerald-50/80 border-2 border-emerald-300 rounded-xl p-3.5 text-center relative flex flex-col justify-between shadow-xs">
-                    <div>
-                      <span className="bg-emerald-200/90 text-emerald-950 text-[10px] font-black px-2 py-0.5 rounded-full border border-emerald-400 uppercase tracking-wide inline-block">
-                        8. Joined
-                      </span>
-                      <div className="text-2xl font-black text-emerald-950 mt-2">{macroFunnel.joined}</div>
-                    </div>
-                    <span className="text-[10px] text-emerald-700 font-black block mt-2">Hired & Billed</span>
-                  </div>
+              {/* Render Interview Cards based on selected window */}
+              {pipelineLoading ? (
+                <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs font-semibold">
+                  <Loader2 className="h-4 w-4 animate-spin text-slate-600" />
+                  <span>Loading interview schedule...</span>
                 </div>
-              ) : (
-                <div className="py-8 text-center text-slate-400 text-xs">No active funnel data available.</div>
-              )}
+              ) : (() => {
+                const currentList =
+                  interviewWindow === "today"
+                    ? pipelineData?.interviewsToday || []
+                    : interviewWindow === "tomorrow"
+                    ? pipelineData?.interviewsTomorrow || []
+                    : pipelineData?.interviewsYesterday || [];
+
+                if (currentList.length === 0) {
+                  return (
+                    <div className="py-8 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
+                      <Calendar className="h-7 w-7 text-slate-300 mx-auto mb-1.5" />
+                      <p className="text-xs font-bold text-slate-600">
+                        {interviewWindow === "today"
+                          ? "No interviews scheduled for today"
+                          : interviewWindow === "tomorrow"
+                          ? "No interviews scheduled for tomorrow"
+                          : "No interviews took place yesterday"}
+                      </p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Interviews synced via WhatsApp candidate slots appear here.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {currentList.map((iv) => {
+                      const timeStr = new Date(iv.scheduledAt).toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                      });
+                      const hasLink = !!iv.meetingLink;
+                      return (
+                        <div
+                          key={iv.id}
+                          className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between space-y-3"
+                        >
+                          <div>
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-black text-slate-900">{timeStr}</span>
+                              <span className="text-[10px] bg-white border border-slate-200 text-slate-700 font-bold px-1.5 py-0.5 rounded">
+                                {iv.durationMinutes} mins
+                              </span>
+                            </div>
+                            <h3 className="text-sm font-extrabold text-slate-900 mt-1">{iv.candidate.fullName}</h3>
+                            <p className="text-xs text-slate-600 font-medium">{iv.candidate.currentTitle || "Candidate"}</p>
+                            <div className="mt-1 flex items-center space-x-1 text-[11px] text-slate-500">
+                              <Briefcase className="h-3 w-3 text-slate-400" />
+                              <span className="font-semibold text-slate-700">{iv.mandate.title}</span>
+                              <span>• {iv.mandate.client.name}</span>
+                            </div>
+                          </div>
+
+                          <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between gap-2">
+                            {hasLink ? (
+                              <div className="flex items-center space-x-1.5">
+                                <a
+                                  href={iv.meetingLink!}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                                >
+                                  <Video className="h-3.5 w-3.5 text-emerald-600" />
+                                  <span>Join</span>
+                                  <ExternalLink className="h-2.5 w-2.5 ml-0.5 text-emerald-500" />
+                                </a>
+                                <button
+                                  onClick={() => {
+                                    navigator.clipboard.writeText(iv.meetingLink!);
+                                    setCopiedInterviewId(iv.id);
+                                    setTimeout(() => setCopiedInterviewId(null), 2000);
+                                  }}
+                                  className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-md transition-colors cursor-pointer"
+                                  title="Copy Meeting Link"
+                                >
+                                  {copiedInterviewId === iv.id ? (
+                                    <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                  ) : (
+                                    <Copy className="h-3.5 w-3.5" />
+                                  )}
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="inline-flex items-center space-x-1 text-[11px] font-extrabold text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-md">
+                                <AlertTriangle className="h-3 w-3 text-amber-600" />
+                                <span>Link Needed</span>
+                              </span>
+                            )}
+
+                            <div className="flex items-center space-x-1.5">
+                              <button
+                                onClick={() => {
+                                  setMeetingLinkModal({
+                                    isOpen: true,
+                                    interviewId: iv.id,
+                                    candidateName: iv.candidate.fullName,
+                                    mandateTitle: iv.mandate.title,
+                                    currentLink: iv.meetingLink || "",
+                                  });
+                                  setMeetingLinkInput(iv.meetingLink || "");
+                                }}
+                                className="text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-200 px-2 py-1 rounded-md transition-colors cursor-pointer"
+                              >
+                                {hasLink ? "Edit Link" : "+ Link"}
+                              </button>
+                              <button
+                                onClick={() => router.push(`/cockpit/mandates/${iv.mandate.id}`)}
+                                className="text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 px-2 py-1 rounded-md transition-colors cursor-pointer"
+                                title="View Mandate Workspace"
+                              >
+                                Debrief
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
 
-            {/* SECTION B: MANDATE-WISE CANDIDATE CONVERSION RADAR */}
+            {/* 3. TWO-COLUMN ACTION RADARS: RC-03 CLIENT CHASE QUEUE & RC-05 NOTICE PERIOD WATCH */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              {/* Left Column: RC-03 Client SLA Chase Queue */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col space-y-3">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center space-x-2">
+                    <Clock className="h-4 w-4 text-amber-600" />
+                    <div>
+                      <h2 className="text-sm font-black text-slate-900">Client Feedback Chase Queue</h2>
+                      <p className="text-[11px] text-slate-400 font-medium">Submissions awaiting client review (&gt;48h SLA)</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-black bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 rounded-full">
+                    {pipelineData?.chasesDue?.length || 0} Pending
+                  </span>
+                </div>
+
+                <div className="space-y-2.5 overflow-y-auto max-h-[420px] pr-1">
+                  {!pipelineData?.chasesDue || pipelineData.chasesDue.length === 0 ? (
+                    <div className="py-10 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
+                      <CheckCircle2 className="h-7 w-7 text-emerald-500 mx-auto mb-1.5" />
+                      <p className="text-xs font-bold text-slate-700">All Client SLAs are Healthy!</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">No submissions waiting on client review over 48 hours.</p>
+                    </div>
+                  ) : (
+                    pipelineData.chasesDue.map((c) => {
+                      const isBreached = c.slaStatus === "BREACHED";
+                      const isWarning = c.slaStatus === "WARNING";
+                      return (
+                        <div
+                          key={c.id}
+                          className={`p-3.5 bg-white rounded-xl border transition-all shadow-2xs hover:shadow-sm space-y-2.5 ${
+                            isBreached
+                              ? "border-l-4 border-l-rose-500 border-slate-200"
+                              : isWarning
+                              ? "border-l-4 border-l-amber-500 border-slate-200"
+                              : "border-slate-200"
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center space-x-2.5 min-w-0">
+                              <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-800 flex items-center justify-center font-black text-xs flex-shrink-0 border border-slate-200">
+                                {getInitials(c.candidate.fullName)}
+                              </div>
+                              <div className="min-w-0">
+                                <h4 className="text-xs font-black text-slate-900 truncate leading-tight">
+                                  {c.candidate.fullName}
+                                </h4>
+                                <p className="text-[11px] text-slate-500 truncate">
+                                  {c.mandate.client.name} • {c.mandate.title}
+                                </p>
+                              </div>
+                            </div>
+
+                            <span
+                              className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                                isBreached
+                                  ? "bg-rose-100 text-rose-800 border border-rose-200"
+                                  : isWarning
+                                  ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                  : "bg-slate-100 text-slate-700 border border-slate-200"
+                              }`}
+                            >
+                              {c.hoursWaiting}h waiting
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
+                            <span className="text-[10px] text-slate-400">
+                              Notice: <strong>{c.candidate.noticePeriodDays}d</strong> • Exp: <strong>{c.candidate.totalExpYears}y</strong>
+                            </span>
+
+                            <button
+                              onClick={() => handleChaseClient(c.mandate.id, c.candidate.fullName)}
+                              disabled={chasingMandateId === c.mandate.id}
+                              className="inline-flex items-center space-x-1.5 px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold rounded-lg text-xs transition-colors cursor-pointer disabled:opacity-50"
+                            >
+                              {chasingMandateId === c.mandate.id ? (
+                                <Loader2 className="h-3 w-3 animate-spin text-amber-700" />
+                              ) : (
+                                <Zap className="h-3 w-3 text-amber-600" />
+                              )}
+                              <span>1-Click Chase</span>
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
+              {/* Right Column: RC-05 Notice Period Watch (Drop-off Radar) */}
+              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col space-y-3">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div className="flex items-center space-x-2">
+                    <ShieldCheck className="h-4 w-4 text-purple-600" />
+                    <div>
+                      <h2 className="text-sm font-black text-slate-900">Notice Period & Retention Radar</h2>
+                      <p className="text-[11px] text-slate-400 font-medium">Pre-joined offer holders (RC-05 Drop-off mitigation)</p>
+                    </div>
+                  </div>
+                  <span className="text-xs font-black bg-purple-50 text-purple-800 border border-purple-200 px-2.5 py-0.5 rounded-full">
+                    {pipelineData?.noticePeriodWatch?.length || 0} In Notice
+                  </span>
+                </div>
+
+                <div className="space-y-2.5 overflow-y-auto max-h-[420px] pr-1">
+                  {!pipelineData?.noticePeriodWatch || pipelineData.noticePeriodWatch.length === 0 ? (
+                    <div className="py-10 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
+                      <ShieldCheck className="h-7 w-7 text-purple-300 mx-auto mb-1.5" />
+                      <p className="text-xs font-bold text-slate-700">No Candidates Currently Serving Notice</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Candidates who accept offers and enter notice periods appear here for active check-ins.
+                      </p>
+                    </div>
+                  ) : (
+                    pipelineData.noticePeriodWatch.map((c) => {
+                      const phoneClean = c.candidate.phone ? c.candidate.phone.replace(/[^0-9]/g, "") : "";
+                      const whatsappText = encodeURIComponent(
+                        `Hi ${c.candidate.fullName}, hope you're having a great week! Just wanted to check in on how your notice period is going. Let me know if you need anything from our end.`
+                      );
+                      const whatsappUrl = phoneClean
+                        ? `https://wa.me/${phoneClean}?text=${whatsappText}`
+                        : null;
+
+                      return (
+                        <div
+                          key={c.id}
+                          className="p-3.5 bg-white rounded-xl border border-slate-200 hover:border-purple-200 shadow-2xs hover:shadow-sm transition-all space-y-2.5"
+                        >
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="flex items-center space-x-2.5 min-w-0">
+                              <div className="w-8 h-8 rounded-full bg-purple-50 text-purple-900 flex items-center justify-center font-black text-xs flex-shrink-0 border border-purple-200">
+                                {getInitials(c.candidate.fullName)}
+                              </div>
+                              <div className="min-w-0">
+                                <h4 className="text-xs font-black text-slate-900 truncate leading-tight">
+                                  {c.candidate.fullName}
+                                </h4>
+                                <p className="text-[11px] text-slate-500 truncate">
+                                  Joining {c.mandate.client.name} • {c.mandate.title}
+                                </p>
+                              </div>
+                            </div>
+
+                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-50 text-purple-800 border border-purple-200">
+                              {c.daysRemaining} days left
+                            </span>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
+                            <span className="text-[10px] text-slate-400">
+                              Notice: <strong>{c.daysInNotice}d</strong> • Accepted <strong>{c.daysSinceAccepted}d ago</strong>
+                            </span>
+
+                            {whatsappUrl ? (
+                              <a
+                                href={whatsappUrl}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center space-x-1.5 px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 font-bold rounded-lg text-xs transition-colors cursor-pointer"
+                              >
+                                <span>💬 WhatsApp Pulse</span>
+                              </a>
+                            ) : (
+                              <button
+                                onClick={() => router.push(`/cockpit/mandates/${c.mandate.id}`)}
+                                className="text-xs font-bold text-slate-600 hover:text-slate-900"
+                              >
+                                View Profile
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 4. ACTIVE SEARCH MANDATES VELOCITY DECK (STREAMLINED EXECUTIVE LIST) */}
             <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
               <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 bg-slate-50/60">
                 <div>
                   <div className="flex items-center space-x-2">
                     <Target className="h-4 w-4 text-slate-700" />
                     <h2 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                      B. Active Mandate Conversion Radar & Drop-off Diagnostics
+                      Active Search Mandates Velocity Deck
                     </h2>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    Micro candidate distribution across each search mandate's 8 stages.
+                    Pipeline momentum, candidate volume, and quick access to active search workspaces.
                   </p>
                 </div>
 
@@ -1264,25 +1619,21 @@ export default function CockpitPage() {
               </div>
 
               {loadingFunnel ? (
-                <div className="py-12 text-center text-slate-400 text-xs">Loading mandate breakdown...</div>
+                <div className="py-12 text-center text-slate-400 text-xs">Loading mandates velocity...</div>
               ) : filteredMandateFunnels.length === 0 ? (
                 <div className="py-12 text-center text-slate-400 text-xs">
-                  {funnelSearchQuery ? "No mandates match your filter criteria." : "No active mandates found."}
+                  {funnelSearchQuery ? "No mandates match your filter criteria." : "No active search mandates found."}
                 </div>
               ) : (
                 <div className="overflow-x-auto">
                   <table className="min-w-full divide-y divide-slate-200 text-xs">
                     <thead className="bg-slate-50">
                       <tr>
-                        <th className="px-4 py-3 text-left font-black text-slate-600 uppercase tracking-wider">Mandate / Client</th>
-                        <th className="px-3 py-3 text-center font-bold text-slate-600 uppercase tracking-wider">1. Ingested</th>
-                        <th className="px-3 py-3 text-center font-bold text-slate-600 uppercase tracking-wider">2. Shortlisted</th>
-                        <th className="px-3 py-3 text-center font-bold text-blue-700 uppercase tracking-wider">3. Shared</th>
-                        <th className="px-3 py-3 text-center font-bold text-purple-700 uppercase tracking-wider">4. Interview</th>
-                        <th className="px-3 py-3 text-center font-bold text-indigo-700 uppercase tracking-wider">5. Debrief</th>
-                        <th className="px-3 py-3 text-center font-bold text-amber-800 uppercase tracking-wider">6. Selected</th>
-                        <th className="px-3 py-3 text-center font-bold text-fuchsia-800 uppercase tracking-wider">7. Offered</th>
-                        <th className="px-3 py-3 text-center font-bold text-emerald-800 uppercase tracking-wider bg-emerald-50/50">8. Joined</th>
+                        <th className="px-4 py-3 text-left font-black text-slate-600 uppercase tracking-wider">Search Mandate / Client</th>
+                        <th className="px-3 py-3 text-center font-bold text-slate-600 uppercase tracking-wider">Pipeline Depth</th>
+                        <th className="px-3 py-3 text-center font-bold text-blue-700 uppercase tracking-wider">In Review</th>
+                        <th className="px-3 py-3 text-center font-bold text-purple-700 uppercase tracking-wider">Interviews</th>
+                        <th className="px-3 py-3 text-center font-bold text-emerald-800 uppercase tracking-wider">Joined</th>
                         <th className="px-4 py-3 text-right font-bold text-slate-600 uppercase tracking-wider">Action</th>
                       </tr>
                     </thead>
@@ -1303,25 +1654,14 @@ export default function CockpitPage() {
                             </div>
                           </td>
 
-                          {/* 1. Ingested */}
+                          {/* Pipeline Depth */}
                           <td className="px-3 py-3.5 text-center font-bold text-slate-800">
-                            {m.funnel.ingested > 0 ? (
-                              <span>{m.funnel.ingested}</span>
-                            ) : (
-                              <span className="text-slate-300 font-normal">-</span>
-                            )}
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-black text-xs">
+                              {m.funnel.ingested} candidates
+                            </span>
                           </td>
 
-                          {/* 2. Shortlisted */}
-                          <td className="px-3 py-3.5 text-center font-bold text-slate-800">
-                            {m.funnel.shortlisted > 0 ? (
-                              <span>{m.funnel.shortlisted}</span>
-                            ) : (
-                              <span className="text-slate-300 font-normal">-</span>
-                            )}
-                          </td>
-
-                          {/* 3. Shared */}
+                          {/* In Review */}
                           <td className="px-3 py-3.5 text-center">
                             {m.funnel.sharedWithCompany > 0 ? (
                               <span className="inline-flex items-center justify-center min-w-[24px] px-2 py-0.5 rounded-full text-xs font-black bg-blue-100 text-blue-800 border border-blue-200">
@@ -1332,54 +1672,21 @@ export default function CockpitPage() {
                             )}
                           </td>
 
-                          {/* 4. Interview Selected */}
+                          {/* Interviews */}
                           <td className="px-3 py-3.5 text-center">
-                            {m.funnel.selectedForInterview > 0 ? (
+                            {m.funnel.interviewsDone + m.funnel.selectedForInterview > 0 ? (
                               <span className="inline-flex items-center justify-center min-w-[24px] px-2 py-0.5 rounded-full text-xs font-black bg-purple-100 text-purple-800 border border-purple-200">
-                                {m.funnel.selectedForInterview}
+                                {m.funnel.interviewsDone + m.funnel.selectedForInterview}
                               </span>
                             ) : (
                               <span className="text-slate-300 font-normal">-</span>
                             )}
                           </td>
 
-                          {/* 5. Interviews Done */}
+                          {/* Joined */}
                           <td className="px-3 py-3.5 text-center">
-                            {m.funnel.interviewsDone > 0 ? (
-                              <span className="inline-flex items-center justify-center min-w-[24px] px-2 py-0.5 rounded-full text-xs font-black bg-indigo-100 text-indigo-800 border border-indigo-200">
-                                {m.funnel.interviewsDone}
-                              </span>
-                            ) : (
-                              <span className="text-slate-300 font-normal">-</span>
-                            )}
-                          </td>
-
-                          {/* 6. Selected */}
-                          <td className="px-3 py-3.5 text-center">
-                            {m.funnel.selected > 0 ? (
-                              <span className="inline-flex items-center justify-center min-w-[24px] px-2 py-0.5 rounded-full text-xs font-black bg-amber-100 text-amber-900 border border-amber-300">
-                                {m.funnel.selected}
-                              </span>
-                            ) : (
-                              <span className="text-slate-300 font-normal">-</span>
-                            )}
-                          </td>
-
-                          {/* 7. Offered */}
-                          <td className="px-3 py-3.5 text-center">
-                            {m.funnel.offered > 0 ? (
-                              <span className="inline-flex items-center justify-center min-w-[24px] px-2 py-0.5 rounded-full text-xs font-black bg-fuchsia-100 text-fuchsia-900 border border-fuchsia-300">
-                                {m.funnel.offered}
-                              </span>
-                            ) : (
-                              <span className="text-slate-300 font-normal">-</span>
-                            )}
-                          </td>
-
-                          {/* 8. Joined */}
-                          <td className="px-3 py-3.5 text-center bg-emerald-50/40 border-l border-r border-emerald-100">
                             {m.funnel.joined > 0 ? (
-                              <span className="inline-flex items-center justify-center min-w-[24px] px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
+                              <span className="inline-flex items-center justify-center min-w-[24px] px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
                                 {m.funnel.joined}
                               </span>
                             ) : (
@@ -1407,462 +1714,7 @@ export default function CockpitPage() {
           </div>
         )}
 
-        {/* ========================================================================= */}
-        {/* TAB: PIPELINE (DAILY LINEUP & 3-COLUMN TACTICAL SLA KANBAN)               */}
-        {/* ========================================================================= */}
-        {currentTab === "pipeline" && (
-          <div className="space-y-6 animate-in fade-in duration-150">
-            {/* 1-Click Chase Notification Alert */}
-            {chaseSuccessMessage && (
-              <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center justify-between shadow-sm animate-in fade-in duration-150">
-                <div className="flex items-center space-x-2.5">
-                  <Zap className="h-5 w-5 text-amber-600 flex-shrink-0 animate-bounce" />
-                  <span className="text-xs sm:text-sm font-bold">{chaseSuccessMessage}</span>
-                </div>
-                <button
-                  onClick={() => setChaseSuccessMessage(null)}
-                  className="text-xs text-amber-700 font-bold hover:underline cursor-pointer"
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
-
-            {/* Pipeline Header Bar */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
-              <div className="flex items-start sm:items-center space-x-3.5">
-                <div className="h-10 w-10 rounded-xl bg-amber-100 border border-amber-200 flex items-center justify-center text-amber-700 shadow-xs flex-shrink-0">
-                  <Zap className="h-5 w-5" />
-                </div>
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <h1 className="text-base sm:text-lg font-black text-slate-900 tracking-tight">Tactical SLA Pipeline</h1>
-                    <span className="bg-amber-100 text-amber-900 text-[10px] font-black px-2 py-0.5 rounded-md border border-amber-200">
-                      LIVE EXECUTION
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-500 font-medium mt-0.5">
-                    Today's interview lineup and 3-stage candidate throughput with strict 48h client feedback SLA enforcement.
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2.5 self-stretch sm:self-auto">
-                {/* Mandate Filter */}
-                <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700">
-                  <Filter className="h-3.5 w-3.5 text-slate-500" />
-                  <select
-                    value={selectedPipelineMandateId}
-                    onChange={(e) => setSelectedPipelineMandateId(e.target.value)}
-                    className="bg-transparent text-xs font-bold text-slate-800 border-none outline-none cursor-pointer pr-2"
-                  >
-                    <option value="all">All Mandates ({activeMandates.length})</option>
-                    {activeMandates.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.title} ({m.client.name})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* SLA Compliance Pill */}
-                <div className="flex items-center space-x-2 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl text-xs font-bold text-emerald-800">
-                  <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                  <span>{pipelineData?.stats?.slaComplianceRate ?? 100}% SLA Healthy</span>
-                </div>
-
-                {/* Today Date Pill */}
-                <div className="hidden sm:flex items-center space-x-1.5 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-xl text-xs font-bold text-slate-600">
-                  <Calendar className="h-3.5 w-3.5 text-slate-500" />
-                  <span>{new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Section 1: Today's Interview Lineup */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                <div className="flex items-center space-x-2">
-                  <Calendar className="h-4 w-4 text-slate-700" />
-                  <h2 className="text-sm font-black text-slate-900">Today's Interview Lineup</h2>
-                  <span className="bg-slate-100 text-slate-700 text-[10px] font-black px-2 py-0.5 rounded-full border border-slate-200">
-                    {pipelineData?.interviewsToday?.length || 0} Scheduled
-                  </span>
-                </div>
-                <span className="text-[11px] text-slate-400 font-medium">Scenario B: Custom Meeting Links Enabled</span>
-              </div>
-
-              {pipelineLoading ? (
-                <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs font-semibold">
-                  <Loader2 className="h-4 w-4 animate-spin text-slate-600" />
-                  <span>Loading today's schedule...</span>
-                </div>
-              ) : !pipelineData?.interviewsToday || pipelineData.interviewsToday.length === 0 ? (
-                <div className="py-8 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
-                  <Calendar className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-                  <p className="text-xs font-bold text-slate-600">No interviews scheduled for today</p>
-                  <p className="text-[11px] text-slate-400 mt-0.5">When candidates confirm interview slots via WhatsApp, they appear here.</p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {pipelineData.interviewsToday.map((iv) => {
-                    const timeStr = new Date(iv.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    const hasLink = !!iv.meetingLink;
-                    return (
-                      <div key={iv.id} className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between space-y-3">
-                        <div>
-                          <div className="flex items-center justify-between">
-                            <span className="text-xs font-black text-slate-900">{timeStr}</span>
-                            <span className="text-[10px] bg-white border border-slate-200 text-slate-700 font-bold px-1.5 py-0.5 rounded">
-                              {iv.durationMinutes} mins
-                            </span>
-                          </div>
-                          <h3 className="text-sm font-extrabold text-slate-900 mt-1">{iv.candidate.fullName}</h3>
-                          <p className="text-xs text-slate-600 font-medium">{iv.candidate.currentTitle || "Candidate"}</p>
-                          <div className="mt-1 flex items-center space-x-1 text-[11px] text-slate-500">
-                            <Briefcase className="h-3 w-3 text-slate-400" />
-                            <span className="font-semibold text-slate-700">{iv.mandate.title}</span>
-                            <span>• {iv.mandate.client.name}</span>
-                          </div>
-                        </div>
-
-                        <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between gap-2">
-                          {hasLink ? (
-                            <div className="flex items-center space-x-1.5">
-                              <a
-                                href={iv.meetingLink!}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-                              >
-                                <Video className="h-3.5 w-3.5 text-emerald-600" />
-                                <span>Join</span>
-                                <ExternalLink className="h-2.5 w-2.5 ml-0.5 text-emerald-500" />
-                              </a>
-                              <button
-                                onClick={() => {
-                                  navigator.clipboard.writeText(iv.meetingLink!);
-                                  setCopiedInterviewId(iv.id);
-                                  setTimeout(() => setCopiedInterviewId(null), 2000);
-                                }}
-                                className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-md transition-colors cursor-pointer"
-                                title="Copy Meeting Link"
-                              >
-                                {copiedInterviewId === iv.id ? (
-                                  <Check className="h-3.5 w-3.5 text-emerald-600" />
-                                ) : (
-                                  <Copy className="h-3.5 w-3.5" />
-                                )}
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="inline-flex items-center space-x-1 text-[11px] font-extrabold text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-md">
-                              <AlertTriangle className="h-3 w-3 text-amber-600" />
-                              <span>⚠️ Link Needed</span>
-                            </span>
-                          )}
-
-                          <div className="flex items-center space-x-1.5">
-                            <button
-                              onClick={() => {
-                                setMeetingLinkModal({
-                                  isOpen: true,
-                                  interviewId: iv.id,
-                                  candidateName: iv.candidate.fullName,
-                                  mandateTitle: iv.mandate.title,
-                                  currentLink: iv.meetingLink || "",
-                                });
-                                setMeetingLinkInput(iv.meetingLink || "");
-                              }}
-                              className="text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-200 px-2 py-1 rounded-md transition-colors cursor-pointer"
-                            >
-                              {hasLink ? "Edit Link" : "+ Attach Link"}
-                            </button>
-                            <button
-                              onClick={() => router.push(`/cockpit/mandates/${iv.mandate.id}`)}
-                              className="text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 px-2 py-1 rounded-md transition-colors cursor-pointer"
-                              title="View Mandate Workspace"
-                            >
-                              Debrief
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-
-            {/* Section 2: 3-Column Tactical SLA Kanban */}
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-              {/* Column 1: Screened (<24h) */}
-              <div className="bg-slate-50/80 rounded-2xl border border-slate-200 p-4 flex flex-col space-y-3 min-h-[500px]">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                  <div className="flex items-center space-x-2">
-                    <div className="h-2 w-2 rounded-full bg-slate-400"></div>
-                    <h3 className="text-xs font-black uppercase tracking-wide text-slate-700">Screened</h3>
-                    <span className="text-[10px] text-slate-400 font-bold">&lt;24h</span>
-                  </div>
-                  <span className="text-xs font-black bg-white px-2 py-0.5 rounded-full border border-slate-200 text-slate-700">
-                    {pipelineData?.columns.screened?.length || 0}
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-400 font-medium">Vetted candidates ready for client presentation.</p>
-
-                <div className="space-y-2.5 overflow-y-auto flex-1 max-h-[600px] pr-1">
-                  {!pipelineData?.columns.screened || pipelineData.columns.screened.length === 0 ? (
-                    <div className="text-center py-12 text-xs text-slate-400 font-medium">
-                      No screened candidates awaiting submission.
-                    </div>
-                  ) : (
-                    pipelineData.columns.screened.map((c) => (
-                      <div key={c.id} className="p-3.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs hover:shadow-xs transition-all space-y-2">
-                        <div className="flex items-start justify-between">
-                          <div>
-                            <h4 className="text-xs font-black text-slate-900">{c.candidate.fullName}</h4>
-                            <p className="text-[11px] text-slate-600 font-medium">{c.candidate.currentTitle || "Profile"}</p>
-                          </div>
-                          <span className="text-[9px] bg-slate-100 text-slate-600 font-bold px-1.5 py-0.5 rounded border border-slate-200">
-                            {c.candidate.totalExpYears}y exp
-                          </span>
-                        </div>
-                        <div className="text-[11px] text-slate-500 font-medium truncate">
-                          Mandate: <span className="font-bold text-slate-700">{c.mandate.title}</span> ({c.mandate.client.name})
-                        </div>
-                        <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1 border-t border-slate-100">
-                          <span>{c.candidate.expectedCtc ? `${c.candidate.currency} ${c.candidate.expectedCtc.toLocaleString()}` : "CTC not set"}</span>
-                          <span className="font-semibold text-slate-500">{c.candidate.noticePeriodDays}d Notice</span>
-                        </div>
-                        {c.candidate.skills && c.candidate.skills.length > 0 && (
-                          <div className="flex flex-wrap gap-1 pt-1">
-                            {c.candidate.skills.slice(0, 3).map((s, idx) => (
-                              <span key={idx} className="text-[9px] bg-slate-50 text-slate-600 px-1.5 py-0.2 rounded border border-slate-200 font-medium">
-                                {s}
-                              </span>
-                            ))}
-                            {c.candidate.skills.length > 3 && (
-                              <span className="text-[9px] text-slate-400 font-semibold">+{c.candidate.skills.length - 3}</span>
-                            )}
-                          </div>
-                        )}
-                        <div className="pt-1.5 flex justify-end">
-                          <button
-                            onClick={() => router.push(`/cockpit/mandates/${c.mandate.id}`)}
-                            className="text-[11px] font-bold text-slate-700 hover:text-slate-900 hover:underline cursor-pointer"
-                          >
-                            View in Mandate →
-                          </button>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Column 2: Submitted to Client (<48h SLA) */}
-              <div className="bg-slate-50/80 rounded-2xl border border-slate-200 p-4 flex flex-col space-y-3 min-h-[500px]">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                  <div className="flex items-center space-x-2">
-                    <div className="h-2 w-2 rounded-full bg-amber-500 animate-pulse"></div>
-                    <h3 className="text-xs font-black uppercase tracking-wide text-slate-700">Submitted to Client</h3>
-                    <span className="text-[10px] text-amber-700 font-bold">&lt;48h SLA</span>
-                  </div>
-                  <span className="text-xs font-black bg-white px-2 py-0.5 rounded-full border border-slate-200 text-slate-700">
-                    {pipelineData?.columns.submitted?.length || 0}
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-400 font-medium">Awaiting client review with automated 48h SLA tracking.</p>
-
-                <div className="space-y-2.5 overflow-y-auto flex-1 max-h-[600px] pr-1">
-                  {!pipelineData?.columns.submitted || pipelineData.columns.submitted.length === 0 ? (
-                    <div className="text-center py-12 text-xs text-slate-400 font-medium">
-                      No candidates currently in client review.
-                    </div>
-                  ) : (
-                    pipelineData.columns.submitted.map((c) => {
-                      const isBreached = c.slaStatus === "BREACHED";
-                      const isWarning = c.slaStatus === "WARNING";
-                      return (
-                        <div
-                          key={c.id}
-                          className={`p-3.5 rounded-xl border transition-all space-y-2 ${
-                            isBreached
-                              ? "bg-rose-50/50 border-rose-400 ring-2 ring-rose-200 shadow-xs"
-                              : isWarning
-                              ? "bg-amber-50/40 border-amber-300 shadow-2xs"
-                              : "bg-white border-slate-200/90 shadow-2xs"
-                          }`}
-                        >
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <h4 className="text-xs font-black text-slate-900">{c.candidate.fullName}</h4>
-                              <p className="text-[11px] text-slate-600 font-medium">{c.candidate.currentTitle || "Profile"}</p>
-                            </div>
-                            {/* SLA Status Pill */}
-                            <span
-                              className={`text-[9px] font-black px-2 py-0.5 rounded-md border flex items-center space-x-1 ${
-                                isBreached
-                                  ? "bg-rose-500 text-white border-rose-600 animate-pulse"
-                                  : isWarning
-                                  ? "bg-amber-100 text-amber-900 border-amber-300"
-                                  : "bg-emerald-100 text-emerald-900 border-emerald-200"
-                              }`}
-                            >
-                              <Clock className="h-2.5 w-2.5" />
-                              <span>
-                                {isBreached
-                                  ? `BREACHED (${c.hoursWaiting}h)`
-                                  : isWarning
-                                  ? `48h Warning (${c.hoursWaiting}h)`
-                                  : `SLA OK (${c.hoursWaiting}h)`}
-                              </span>
-                            </span>
-                          </div>
-
-                          <div className="text-[11px] text-slate-500 font-medium truncate">
-                            Client: <span className="font-bold text-slate-700">{c.mandate.client.name}</span> • {c.mandate.title}
-                          </div>
-
-                          <div className="flex items-center justify-between text-[11px] text-slate-600 pt-1 border-t border-slate-100">
-                            <span>{c.candidate.noticePeriodDays}d Notice</span>
-                            <span className="text-[10px] text-slate-400">
-                              Submitted {c.submittedToClientAt ? new Date(c.submittedToClientAt).toLocaleDateString() : "recently"}
-                            </span>
-                          </div>
-
-                          {/* Action Bar */}
-                          <div className="pt-1.5 flex items-center justify-between">
-                            <button
-                              onClick={() => router.push(`/cockpit/mandates/${c.mandate.id}`)}
-                              className="text-[11px] font-bold text-slate-600 hover:text-slate-900 hover:underline cursor-pointer"
-                            >
-                              View Mandate
-                            </button>
-
-                            {(isBreached || isWarning) && (
-                              <button
-                                onClick={() => handleChaseClient(c.mandate.id, c.candidate.fullName)}
-                                disabled={chasingMandateId === c.mandate.id}
-                                className={`inline-flex items-center space-x-1 px-2.5 py-1 rounded-lg text-xs font-black transition-all cursor-pointer shadow-2xs ${
-                                  isBreached
-                                    ? "bg-rose-600 hover:bg-rose-700 text-white"
-                                    : "bg-amber-500 hover:bg-amber-600 text-slate-900"
-                                }`}
-                              >
-                                {chasingMandateId === c.mandate.id ? (
-                                  <Loader2 className="h-3 w-3 animate-spin" />
-                                ) : (
-                                  <Zap className="h-3 w-3" />
-                                )}
-                                <span>{isBreached ? "⚡ Chase Client Now" : "⚡ Remind Client"}</span>
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* Column 3: Interviewing (<24h debrief) */}
-              <div className="bg-slate-50/80 rounded-2xl border border-slate-200 p-4 flex flex-col space-y-3 min-h-[500px]">
-                <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                  <div className="flex items-center space-x-2">
-                    <div className="h-2 w-2 rounded-full bg-blue-500"></div>
-                    <h3 className="text-xs font-black uppercase tracking-wide text-slate-700">Interviewing</h3>
-                    <span className="text-[10px] text-blue-700 font-bold">&lt;24h Debrief</span>
-                  </div>
-                  <span className="text-xs font-black bg-white px-2 py-0.5 rounded-full border border-slate-200 text-slate-700">
-                    {pipelineData?.columns.interviewing?.length || 0}
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-400 font-medium">Candidate interviews in progress and debrief tracking.</p>
-
-                <div className="space-y-2.5 overflow-y-auto flex-1 max-h-[600px] pr-1">
-                  {!pipelineData?.columns.interviewing || pipelineData.columns.interviewing.length === 0 ? (
-                    <div className="text-center py-12 text-xs text-slate-400 font-medium">
-                      No active interviews currently running.
-                    </div>
-                  ) : (
-                    pipelineData.columns.interviewing.map((c) => {
-                      const latestIv = c.interviews && c.interviews.length > 0 ? c.interviews[0] : null;
-                      const isScheduled = latestIv?.status === "SCHEDULED";
-                      const isCompleted = latestIv?.status === "COMPLETED";
-                      return (
-                        <div key={c.id} className="p-3.5 bg-white rounded-xl border border-slate-200/90 shadow-2xs hover:shadow-xs transition-all space-y-2">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <h4 className="text-xs font-black text-slate-900">{c.candidate.fullName}</h4>
-                              <p className="text-[11px] text-slate-600 font-medium">{c.candidate.currentTitle || "Profile"}</p>
-                            </div>
-                            <span
-                              className={`text-[9px] font-black px-1.5 py-0.5 rounded border ${
-                                isCompleted
-                                  ? "bg-purple-100 text-purple-900 border-purple-200"
-                                  : isScheduled
-                                  ? "bg-blue-100 text-blue-900 border-blue-200"
-                                  : "bg-emerald-100 text-emerald-900 border-emerald-200"
-                              }`}
-                            >
-                              {isCompleted ? "Debrief Pending" : isScheduled ? "Slot Locked" : "Shortlisted"}
-                            </span>
-                          </div>
-
-                          <div className="text-[11px] text-slate-500 font-medium truncate">
-                            Mandate: <span className="font-bold text-slate-700">{c.mandate.title}</span> ({c.mandate.client.name})
-                          </div>
-
-                          {latestIv && (
-                            <div className="p-2 rounded-lg bg-slate-50 border border-slate-100 text-[11px] space-y-1">
-                              <div className="flex items-center justify-between font-bold text-slate-700">
-                                <span>{latestIv.interviewType.replace(/_/g, " ")}</span>
-                                <span>{new Date(latestIv.scheduledAt).toLocaleDateString([], { month: "short", day: "numeric" })}</span>
-                              </div>
-                              <div className="flex items-center justify-between text-slate-500 text-[10px]">
-                                <span>Time: {new Date(latestIv.scheduledAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                <span>{latestIv.meetingLink ? "Link Attached ✓" : "⚠️ Link Needed"}</span>
-                              </div>
-                            </div>
-                          )}
-
-                          <div className="pt-1.5 flex items-center justify-between">
-                            <button
-                              onClick={() => router.push(`/cockpit/mandates/${c.mandate.id}`)}
-                              className="text-[11px] font-bold text-slate-700 hover:text-slate-900 hover:underline cursor-pointer"
-                            >
-                              Open Workspace →
-                            </button>
-                            {latestIv && !latestIv.meetingLink && (
-                              <button
-                                onClick={() => {
-                                  setMeetingLinkModal({
-                                    isOpen: true,
-                                    interviewId: latestIv.id,
-                                    candidateName: c.candidate.fullName,
-                                    mandateTitle: c.mandate.title,
-                                    currentLink: "",
-                                  });
-                                  setMeetingLinkInput("");
-                                }}
-                                className="text-[11px] font-bold text-amber-700 hover:underline cursor-pointer"
-                              >
-                                + Attach Link
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* ========================================================================= */}
+                {/* ========================================================================= */}
         {/* TAB 2: MANDATES & SLA RADAR (INBOUND APPROVALS & VELOCITY TRACKING)      */}
         {/* ========================================================================= */}
         {currentTab === "mandates" && (
@@ -1970,106 +1822,238 @@ export default function CockpitPage() {
               ) : (
                 <div className="divide-y divide-slate-100">
                   {filteredActiveMandates.map((m) => {
-                    const slaBadgeColors = {
-                      HEALTHY: "bg-emerald-100 text-emerald-800 border-emerald-300",
-                      WARNING: "bg-amber-100 text-amber-800 border-amber-300",
-                      BREACHED: "bg-rose-100 text-rose-800 border-rose-300 animate-pulse",
-                    };
+                    const initials = m.client.name
+                      ? m.client.name
+                          .split(" ")
+                          .map((w) => w[0])
+                          .filter(Boolean)
+                          .slice(0, 2)
+                          .join("")
+                          .toUpperCase()
+                      : "CO";
+
+                    const expText =
+                      m.minExp && m.maxExp
+                        ? `${m.minExp}-${m.maxExp} Yrs`
+                        : m.minExp
+                        ? `${m.minExp}+ Yrs`
+                        : "Any Exp";
+
+                    const ctcText =
+                      m.minCtc || m.maxCtc
+                        ? `${m.minCtc ? (m.minCtc / 100000).toFixed(0) : "0"} - ${m.maxCtc ? (m.maxCtc / 100000).toFixed(0) : "Open"} Lacs PA`
+                        : "CTC Negotiable";
+
+                    const cleanDescription = m.description
+                      ? m.description.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim()
+                      : "";
 
                     return (
                       <div
                         key={m.id}
                         onClick={() => router.push(`/cockpit/mandates/${m.id}`)}
-                        className="p-5 flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 hover:bg-slate-50/80 transition-colors cursor-pointer group"
+                        className="p-5 hover:bg-slate-50/70 transition-all cursor-pointer group relative"
                       >
-                        <div className="space-y-1.5 flex-1 min-w-0">
-                          <div className="flex items-center space-x-2 flex-wrap gap-y-1">
-                            <h3 className="font-extrabold text-slate-900 text-sm group-hover:text-blue-600 transition-colors">
-                              {m.title}
-                            </h3>
-                            <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">
-                              {m.client.name}
-                            </span>
-                            {m.hasShortlistSubmitted ? (
-                              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${
-                                m.calculatedSlaStatus === "BREACHED"
-                                  ? "bg-rose-100 text-rose-800 border-rose-300 animate-pulse"
-                                  : m.calculatedSlaStatus === "WARNING"
-                                  ? "bg-amber-100 text-amber-800 border-amber-300"
-                                  : "bg-blue-100 text-blue-800 border-blue-300"
-                              }`}>
-                                Client Review SLA: {m.calculatedSlaStatus} ({m.hoursInStage}h / {m.slaTargetHours}h)
-                              </span>
-                            ) : (
-                              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full border ${slaBadgeColors[m.calculatedSlaStatus]}`}>
-                                Sourcing SLA: {m.calculatedSlaStatus} ({m.hoursInStage}h / {m.slaTargetHours}h)
-                              </span>
-                            )}
+                        {/* Top Row: Title + Client + Relative Time + SLA badge on left; Client Monogram Box on right */}
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                              <h3 className="font-bold text-slate-900 text-base group-hover:text-blue-600 transition-colors leading-snug">
+                                {m.title}
+                              </h3>
+                            </div>
+
+                            <div className="mt-1 flex items-center flex-wrap gap-2 text-xs">
+                              <span className="font-semibold text-slate-700">{m.client.name}</span>
+                              <span className="text-slate-300">•</span>
+                              <span className="text-slate-400 font-normal">{formatRelativeTime(m.createdAt)}</span>
+                              <span className="text-slate-300">•</span>
+                              {m.calculatedSlaStatus === "BREACHED" ? (
+                                <span className="inline-flex items-center gap-1.5 text-xs text-slate-600 font-medium">
+                                  <span className="w-2 h-2 rounded-full bg-rose-500 shrink-0" />
+                                  <span>
+                                    {m.hasShortlistSubmitted ? "Client review SLA breached" : "Sourcing SLA breached"} ({m.hoursInStage}h / {m.slaTargetHours}h)
+                                  </span>
+                                </span>
+                              ) : m.calculatedSlaStatus === "WARNING" ? (
+                                <span className="inline-flex items-center gap-1.5 text-xs text-slate-600 font-medium">
+                                  <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+                                  <span>
+                                    {m.hasShortlistSubmitted ? "Client review pending" : "Sourcing pending"} ({m.hoursInStage}h / {m.slaTargetHours}h)
+                                  </span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 text-xs text-slate-600 font-medium">
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                                  <span>
+                                    {m.hasShortlistSubmitted ? "Client review on track" : "Sourcing on track"}
+                                  </span>
+                                </span>
+                              )}
+                            </div>
                           </div>
 
-                          <div className="text-xs text-slate-500 flex flex-wrap items-center gap-3">
-                            <span>{m.location || "Hybrid"}</span>
-                            <span>•</span>
-                            <span>Exp: <strong>{m.minExp && m.maxExp ? `${m.minExp}-${m.maxExp} yrs` : m.minExp ? `${m.minExp}+ yrs` : "Any"}</strong></span>
-                            {(m.minCtc || m.maxCtc) ? (
-                              <>
-                                <span>•</span>
-                                <span>CTC: <strong>{(m.minCtc ? `${(m.minCtc / 100000).toFixed(0)}L` : "") + (m.minCtc && m.maxCtc ? " - " : "") + (m.maxCtc ? `${(m.maxCtc / 100000).toFixed(0)}L` : "")}</strong></span>
-                              </>
-                            ) : null}
-                            <span>•</span>
-                            <span>Fee: <strong>{m.feePercentage}%</strong></span>
-                            <span>•</span>
-                            <span>Guarantee: <strong>{m.guaranteeDays}d</strong></span>
-                            <span>•</span>
-                            <span>Desk Lead: <strong>{m.assignedRecruiter?.name || "Solo Owner"}</strong></span>
-                          </div>
-
-                          <div className="flex flex-wrap gap-1 pt-0.5">
-                            {m.skills.slice(0, 4).map((skill, idx) => (
-                              <span key={idx} className="text-[10px] bg-slate-100 text-slate-700 font-medium px-2 py-0.5 rounded">
-                                {skill}
-                              </span>
-                            ))}
-                            {m.skills.length > 4 && (
-                              <span className="text-[10px] text-slate-400">+{m.skills.length - 4}</span>
-                            )}
+                          {/* Client Monogram / Logo Box (Naukri style) */}
+                          <div
+                            className="w-11 h-11 rounded-lg border border-slate-200 bg-slate-50 flex items-center justify-center font-black text-slate-600 text-xs shrink-0 shadow-2xs group-hover:border-slate-300 group-hover:bg-white transition-colors"
+                            title={m.client.name}
+                          >
+                            {initials}
                           </div>
                         </div>
 
-                        {/* Actions Suite */}
-                        <div className="flex items-center space-x-2 flex-wrap gap-y-2" onClick={(e) => e.stopPropagation()}>
-                          <button
-                            onClick={() => handleOpenSilverMatches(m)}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 font-bold rounded-xl text-xs transition-colors cursor-pointer"
-                          >
-                            <Zap className="h-3.5 w-3.5 text-amber-700" />
-                            <span>Silver Matches</span>
-                          </button>
+                        {/* Metrics Line (Naukri Quadruple: Exp, CTC, Location, Commercials) */}
+                        <div className="mt-2.5 flex flex-wrap items-center gap-y-1.5 text-xs text-slate-600">
+                          {/* Experience */}
+                          <div className="flex items-center space-x-1.5 pr-3">
+                            <Briefcase className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                            <span>{expText}</span>
+                          </div>
 
-                          <button
-                            onClick={() => router.push(`/cockpit/mandates/${m.id}`)}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-extrabold rounded-xl text-xs transition-all shadow-xs cursor-pointer"
-                          >
-                            <Send className="h-3.5 w-3.5" />
-                            <span>{m.hasShortlistSubmitted ? "Shared with Client" : "Submit to Client"}</span>
-                          </button>
+                          <span className="text-slate-300 pr-3">•</span>
 
-                          <button
-                            onClick={() => handleOpenDistribution(m)}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-xl text-xs transition-colors cursor-pointer"
-                          >
-                            <Share2 className="h-3.5 w-3.5 text-slate-600" />
-                            <span>Distribution</span>
-                          </button>
+                          {/* CTC */}
+                          <div className="flex items-center space-x-1 pr-3">
+                            <span className="font-semibold text-slate-500 text-xs">₹</span>
+                            <span>{ctcText}</span>
+                          </div>
 
-                          <button
-                            onClick={() => router.push(`/cockpit/mandates/${m.id}`)}
-                            className="inline-flex items-center space-x-1 px-2.5 py-1.5 bg-brand-surfaceLight hover:bg-brand-surface border border-brand-surfaceDark text-slate-800 font-bold rounded-xl text-xs transition-colors cursor-pointer"
-                          >
-                            <Briefcase className="h-3.5 w-3.5 text-slate-700" />
-                            <span>Open Workspace</span>
-                          </button>
+                          <span className="text-slate-300 pr-3">•</span>
+
+                          {/* Location & Mode */}
+                          <div className="flex items-center space-x-1.5 pr-3">
+                            <MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                            <span>
+                              {m.location || "Hybrid"} {m.workMode ? `(${m.workMode})` : ""}
+                            </span>
+                          </div>
+
+                          <span className="text-slate-300 pr-3">•</span>
+
+                          {/* Commercials */}
+                          <div className="flex items-center space-x-1">
+                            <DollarSign className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                            <span>
+                              {m.feePercentage}% Fee &bull; {m.guaranteeDays}d Guarantee
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Description Snippet (Naukri style) */}
+                        {cleanDescription && (
+                          <div className="mt-2 flex items-center space-x-1.5 text-xs text-slate-500">
+                            <FileText className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                            <p className="line-clamp-1 truncate">{cleanDescription}</p>
+                          </div>
+                        )}
+
+                        {/* Skills Line (Naukri dot-separated typography) */}
+                        {m.skills && m.skills.length > 0 && (
+                          <div className="mt-2 text-xs text-slate-500 flex flex-wrap items-center gap-1.5">
+                            {m.skills.slice(0, 6).map((skill, idx) => (
+                              <React.Fragment key={idx}>
+                                <span className="hover:text-slate-800 transition-colors font-medium">
+                                  {skill}
+                                </span>
+                                {idx < Math.min(m.skills.length, 6) - 1 && (
+                                  <span className="text-slate-300 font-bold">&bull;</span>
+                                )}
+                              </React.Fragment>
+                            ))}
+                            {m.skills.length > 6 && (
+                              <span className="text-[11px] text-slate-400 font-medium ml-0.5">
+                                +{m.skills.length - 6} more
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Bottom Utility Bar */}
+                        <div className="mt-3 pt-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+                          {/* Pipeline info & desk lead */}
+                          <div className="flex items-center space-x-2 text-xs text-slate-500 flex-wrap gap-y-1">
+                            <Users className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                            <span>
+                              <strong className="text-slate-800">{m._count?.submissions || 0}</strong> in pipeline
+                            </span>
+                            <span className="text-slate-300">•</span>
+                            <span>
+                              Lead: <strong className="text-slate-700">{m.assignedRecruiter?.name || "Solo Owner"}</strong>
+                            </span>
+                            {m.openings > 1 && (
+                              <>
+                                <span className="text-slate-300">•</span>
+                                <span>
+                                  <strong className="text-slate-700">{m.openings}</strong> openings
+                                </span>
+                              </>
+                            )}
+                          </div>
+
+                          {/* Kebab menu for tools */}
+                          <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              type="button"
+                              onClick={() => setActiveMenuMandateId(activeMenuMandateId === m.id ? null : m.id)}
+                              className="p-1.5 rounded-lg border border-slate-200 hover:border-slate-300 hover:bg-slate-100 text-slate-500 hover:text-slate-800 transition-colors cursor-pointer shadow-2xs"
+                              title="More Options"
+                              aria-label="More mandate actions"
+                            >
+                              <MoreVertical className="h-3.5 w-3.5" />
+                            </button>
+
+                            {activeMenuMandateId === m.id && (
+                              <div className="absolute right-0 bottom-full mb-1.5 z-30 min-w-[210px] bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-xs animate-in fade-in zoom-in-95 duration-100">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuMandateId(null);
+                                    handleOpenSilverMatches(m);
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-amber-900 hover:bg-amber-50 font-bold flex items-center space-x-2 transition-colors cursor-pointer"
+                                >
+                                  <Zap className="h-3.5 w-3.5 text-amber-600" />
+                                  <span>Matching Silver Medalists</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuMandateId(null);
+                                    handleOpenDistribution(m);
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-slate-700 hover:bg-slate-50 font-medium flex items-center space-x-2 transition-colors cursor-pointer"
+                                >
+                                  <Share2 className="h-3.5 w-3.5 text-slate-500" />
+                                  <span>Distribution &amp; Partner Split</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuMandateId(null);
+                                    handleOpenClientSubmit(m);
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-slate-700 hover:bg-slate-50 font-medium flex items-center space-x-2 transition-colors cursor-pointer"
+                                >
+                                  <Send className="h-3.5 w-3.5 text-slate-500" />
+                                  <span>{m.hasShortlistSubmitted ? "Shared with Client" : "Submit to Client"}</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuMandateId(null);
+                                    if (typeof window !== "undefined") {
+                                      navigator.clipboard.writeText(`${window.location.origin}/storefront/mandate/${m.id}`);
+                                      alert("Public mandate link copied to clipboard!");
+                                    }
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-slate-700 hover:bg-slate-50 font-medium flex items-center space-x-2 transition-colors cursor-pointer"
+                                >
+                                  <Copy className="h-3.5 w-3.5 text-slate-500" />
+                                  <span>Copy Public Link</span>
+                                </button>
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
