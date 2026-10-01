@@ -104,6 +104,26 @@ export async function POST(
       ];
     }
 
+    // Query fresh user details from DB to guarantee phone and sandbox mode are up-to-date
+    const freshUser = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { id: true, name: true, phone: true, isSandboxMode: true, agencyId: true },
+    });
+
+    let effectivePhone = freshUser?.phone || session.user?.phone;
+    const isUserSandbox = Boolean(freshUser?.isSandboxMode ?? session.user?.isSandboxMode ?? true);
+
+    // If sandbox is active and recruiter's phone is missing, fall back to agency owner's phone
+    if (isUserSandbox && !effectivePhone && (freshUser?.agencyId || session.user?.agencyId)) {
+      const agencyOwner = await prisma.user.findFirst({
+        where: { agencyId: (freshUser?.agencyId || session.user.agencyId)!, role: "AGENCY_OWNER" },
+        select: { phone: true },
+      });
+      if (agencyOwner?.phone) {
+        effectivePhone = agencyOwner.phone;
+      }
+    }
+
     const result = await sendWhatsAppInterviewSlotSelection(
       {
         candidateName: candidate.fullName,
@@ -115,9 +135,9 @@ export async function POST(
         slots: slotOptions,
       },
       {
-        isSandbox: session.user?.isSandboxMode ?? true,
-        userPhone: session.user?.phone,
-        userName: session.user?.name,
+        isSandbox: isUserSandbox,
+        userPhone: effectivePhone,
+        userName: freshUser?.name || session.user?.name,
       }
     );
 

@@ -84,6 +84,20 @@ export interface WhatsAppSandboxContext {
   userName?: string | null;
 }
 
+/**
+ * Format any raw phone number into clean E.164 digits for Meta Graph API.
+ * Ensures 10-digit Indian numbers receive the country code (91).
+ */
+export function formatE164Digits(phone?: string | null): string {
+  if (!phone) return "";
+  const digits = phone.replace(/[^0-9]/g, "");
+  if (!digits) return "";
+  if (digits.length === 10) {
+    return `91${digits}`;
+  }
+  return digits;
+}
+
 export async function sendWhatsAppInterviewBriefing(
   payload: WhatsAppInterviewPayload,
   sandboxContext?: WhatsAppSandboxContext
@@ -93,14 +107,14 @@ export async function sendWhatsAppInterviewBriefing(
   const phoneNumberId = config.phoneNumberId;
 
   const isSandbox = Boolean(sandboxContext?.isSandbox);
-  const sanitizedCandidatePhone = payload.candidatePhone.replace(/[^0-9]/g, "");
+  const sanitizedCandidatePhone = formatE164Digits(payload.candidatePhone);
 
   let recipientPhone = sanitizedCandidatePhone;
   let devNotice = "";
 
   if (isSandbox) {
-    const userTargetPhone = sandboxContext?.userPhone ? sandboxContext.userPhone.replace(/[^0-9]/g, "") : "";
-    const devPhone = userTargetPhone || config.devOverridePhone.replace(/[^0-9]/g, "") || "919818352440";
+    const userTargetPhone = formatE164Digits(sandboxContext?.userPhone);
+    const devPhone = userTargetPhone || formatE164Digits(config.devOverridePhone) || "919818352440";
     recipientPhone = devPhone;
     devNotice = `\n\n⚙️ *[QA DEMO SANDBOX]:* Intended candidate: ${payload.candidateName} (+${sanitizedCandidatePhone}). Delivered exclusively to demo device (+${devPhone}).`;
   }
@@ -188,12 +202,12 @@ export async function sendWhatsAppTextMessage(
   const phoneNumberId = config.phoneNumberId;
 
   const isSandbox = Boolean(sandboxContext?.isSandbox);
-  const sanitizedTo = toPhone.replace(/[^0-9]/g, "");
+  const sanitizedTo = formatE164Digits(toPhone);
 
   let recipientPhone = sanitizedTo;
   if (isSandbox) {
-    const userTargetPhone = sandboxContext?.userPhone ? sandboxContext.userPhone.replace(/[^0-9]/g, "") : "";
-    recipientPhone = userTargetPhone || config.devOverridePhone.replace(/[^0-9]/g, "") || "919818352440";
+    const userTargetPhone = formatE164Digits(sandboxContext?.userPhone);
+    recipientPhone = userTargetPhone || formatE164Digits(config.devOverridePhone) || "919818352440";
   }
 
   if (token && phoneNumberId && token.trim().length > 10) {
@@ -257,14 +271,14 @@ export async function sendWhatsAppInterviewSlotSelection(
   const phoneNumberId = config.phoneNumberId;
 
   const isSandbox = sandboxContext?.isSandbox !== undefined ? sandboxContext.isSandbox : !config.isProductionMode;
-  const sanitizedCandidatePhone = payload.candidatePhone.replace(/[^0-9]/g, "");
+  const sanitizedCandidatePhone = formatE164Digits(payload.candidatePhone);
 
   let recipientPhone = sanitizedCandidatePhone;
   let devNotice = "";
 
   if (isSandbox) {
-    const userTargetPhone = sandboxContext?.userPhone ? sandboxContext.userPhone.replace(/[^0-9]/g, "") : "";
-    const devPhone = userTargetPhone || config.devOverridePhone.replace(/[^0-9]/g, "") || "919818352440";
+    const userTargetPhone = formatE164Digits(sandboxContext?.userPhone);
+    const devPhone = userTargetPhone || formatE164Digits(config.devOverridePhone) || "919818352440";
     recipientPhone = devPhone;
     devNotice = `\n\n⚙️ *[QA DEMO SANDBOX]:* Intended candidate: ${payload.candidateName} (+${sanitizedCandidatePhone}). Delivered to demo device (+${devPhone}).`;
   }

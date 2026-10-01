@@ -121,7 +121,26 @@ export async function POST(req: Request) {
       return interview;
     });
 
-    const isUserSandbox = Boolean(session.user.isSandboxMode);
+    // Query fresh user details from DB to guarantee phone and sandbox mode are up-to-date
+    const freshUser = await prisma.user.findUnique({
+      where: { id: session.user.id },
+      select: { id: true, name: true, email: true, phone: true, isSandboxMode: true, agencyId: true },
+    });
+
+    let effectivePhone = freshUser?.phone || session.user.phone;
+    const isUserSandbox = Boolean(freshUser?.isSandboxMode ?? session.user.isSandboxMode);
+
+    // If sandbox is active and recruiter's phone is missing, fall back to agency owner's phone
+    if (isUserSandbox && !effectivePhone && (freshUser?.agencyId || session.user.agencyId)) {
+      const agencyOwner = await prisma.user.findFirst({
+        where: { agencyId: (freshUser?.agencyId || session.user.agencyId)!, role: "AGENCY_OWNER" },
+        select: { phone: true },
+      });
+      if (agencyOwner?.phone) {
+        effectivePhone = agencyOwner.phone;
+      }
+    }
+
     const candidatePhone = submission.candidate.phone || "";
     const candidateEmail = submission.candidate.email || "";
 
@@ -141,13 +160,13 @@ export async function POST(req: Request) {
             meetingLink: meetingLink.trim(),
             panelistNames: Array.isArray(panelistNames) ? panelistNames : [],
             agencyName: submission.mandate.agency.name,
-            recruiterName: session.user.name || "Search Lead",
+            recruiterName: freshUser?.name || session.user.name || "Search Lead",
             instructions: instructions?.trim() || undefined,
           },
           {
             isSandbox: isUserSandbox,
-            userPhone: session.user.phone,
-            userName: session.user.name,
+            userPhone: effectivePhone,
+            userName: freshUser?.name || session.user.name,
           }
         );
 
@@ -180,8 +199,8 @@ export async function POST(req: Request) {
           keySkills: submission.mandate.skills || [],
           sandboxContext: {
             isSandbox: isUserSandbox,
-            userEmail: session.user.email,
-            userName: session.user.name,
+            userEmail: freshUser?.email || session.user.email,
+            userName: freshUser?.name || session.user.name,
           },
         });
       } catch (mailErr) {

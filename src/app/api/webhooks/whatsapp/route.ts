@@ -160,15 +160,24 @@ export async function POST(req: NextRequest) {
             }
           }
 
-          // Strategy C: QA Sandbox / Demo fallback: If message arrived from the dev override phone,
-          // match the most recently active submission that has proposed slots
+          // Strategy C: QA Sandbox / Demo fallback: Check if message arrived from any active sandbox user
+          // or the global dev override phone, and match the most recently active submission
           if (!submission) {
-            const setting = await prisma.platformSetting.findUnique({ where: { id: "global" } });
-            const devPhone = setting?.whatsappDevOverridePhone?.replace(/[^0-9]/g, "") || "919818352440";
             const cleanDigits = senderPhone.replace(/[^0-9]/g, "");
-            if (cleanDigits.endsWith(devPhone.slice(-10))) {
+            const last10 = cleanDigits.slice(-10);
+
+            // 1. Check if sender matches any user marked as isSandboxMode
+            const sandboxUser = await prisma.user.findFirst({
+              where: {
+                isSandboxMode: true,
+                phone: { contains: last10 },
+              },
+            });
+
+            if (sandboxUser && sandboxUser.agencyId) {
               submission = await prisma.candidateSubmission.findFirst({
                 where: {
+                  agencyId: sandboxUser.agencyId,
                   OR: [
                     { preferredInterviewTimes: { not: null } },
                     { clientDecision: "SHORTLISTED_FOR_INTERVIEW" },
@@ -189,8 +198,41 @@ export async function POST(req: NextRequest) {
               if (submission) {
                 candidate = submission.candidate;
                 console.log(
-                  `⚙️ [WHATSAPP WEBHOOK QA DEMO] Matched candidate ${candidate.fullName} via demo phone fallback (${devPhone})`
+                  `⚙️ [WHATSAPP WEBHOOK QA DEMO] Matched candidate ${candidate.fullName} for sandbox owner ${sandboxUser.email} (${senderPhone})`
                 );
+              }
+            }
+
+            // 2. Fallback to platform global dev override phone
+            if (!submission) {
+              const setting = await prisma.platformSetting.findUnique({ where: { id: "global" } });
+              const devPhone = setting?.whatsappDevOverridePhone?.replace(/[^0-9]/g, "") || "919818352440";
+              if (cleanDigits.endsWith(devPhone.slice(-10))) {
+                submission = await prisma.candidateSubmission.findFirst({
+                  where: {
+                    OR: [
+                      { preferredInterviewTimes: { not: null } },
+                      { clientDecision: "SHORTLISTED_FOR_INTERVIEW" },
+                    ],
+                  },
+                  include: {
+                    candidate: true,
+                    mandate: {
+                      include: {
+                        client: true,
+                      },
+                    },
+                  },
+                  orderBy: {
+                    updatedAt: "desc",
+                  },
+                });
+                if (submission) {
+                  candidate = submission.candidate;
+                  console.log(
+                    `⚙️ [WHATSAPP WEBHOOK QA DEMO] Matched candidate ${candidate.fullName} via global demo phone fallback (${devPhone})`
+                  );
+                }
               }
             }
           }

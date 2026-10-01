@@ -184,15 +184,32 @@ export async function POST(req: Request, { params }: { params: { token: string }
         }
 
         if (slotOptions.length > 0) {
-          await sendWhatsAppInterviewSlotSelection({
-            candidateName: submission.candidate.fullName,
-            candidatePhone: submission.candidate.phone,
-            roleTitle: portalShare.mandate.title,
-            clientOrgName: portalShare.clientOrgName,
-            agencyName: portalShare.agency.name,
-            submissionId: submission.id,
-            slots: slotOptions,
-          });
+          // Resolve mandate's assigned recruiter or the agency owner to check if account is in Sandbox Mode
+          let recruiter = portalShare.mandate?.assignedRecruiter;
+          if (!recruiter && portalShare.agencyId) {
+            recruiter = await prisma.user.findFirst({
+              where: { agencyId: portalShare.agencyId, role: "AGENCY_OWNER" },
+            });
+          }
+
+          const isSandbox = Boolean(recruiter?.isSandboxMode);
+
+          await sendWhatsAppInterviewSlotSelection(
+            {
+              candidateName: submission.candidate.fullName,
+              candidatePhone: submission.candidate.phone,
+              roleTitle: portalShare.mandate.title,
+              clientOrgName: portalShare.clientOrgName,
+              agencyName: portalShare.agency.name,
+              submissionId: submission.id,
+              slots: slotOptions,
+            },
+            {
+              isSandbox,
+              userPhone: recruiter?.phone,
+              userName: recruiter?.name,
+            }
+          );
         }
       } catch (waErr) {
         console.warn("⚠️ Non-fatal: Failed to dispatch candidate WhatsApp slot selection:", waErr);
