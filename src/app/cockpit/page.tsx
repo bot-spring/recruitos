@@ -55,6 +55,9 @@ import {
   ChevronDown,
   MapPin,
   MoreVertical,
+  Archive,
+  RotateCcw,
+  Trash2,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CockpitHeader } from "@/components/CockpitHeader";
@@ -456,11 +459,26 @@ export default function CockpitPage() {
 
   // Mandates List State (Tab 2: Mandates & SLA Radar)
   const [activeMandates, setActiveMandates] = useState<ActiveMandate[]>([]);
+  const [closedMandates, setClosedMandates] = useState<ActiveMandate[]>([]);
+  const [mandateViewMode, setMandateViewMode] = useState<"active" | "closed">("active");
   const [inboundMandates, setInboundMandates] = useState<InboundMandate[]>([]);
   const [recruiters, setRecruiters] = useState<RecruiterUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [scopeFilter, setScopeFilter] = useState<"all" | "my">("all");
   const [searchQuery, setSearchQuery] = useState("");
+
+  // Mandate Lifecycle Actions (Close & Delete Modals)
+  const [mandateToClose, setMandateToClose] = useState<ActiveMandate | null>(null);
+  const [closeMandateStatus, setCloseMandateStatus] = useState<"CLOSED_FULFILLED" | "CLOSED_CANCELLED" | "CLOSED_ON_HOLD">("CLOSED_FULFILLED");
+  const [closeMandateReason, setCloseMandateReason] = useState("");
+  const [recycleFinalists, setRecycleFinalists] = useState(true);
+  const [closingMandate, setClosingMandate] = useState(false);
+  const [mandateToDelete, setMandateToDelete] = useState<ActiveMandate | null>(null);
+  const [deletingMandate, setDeletingMandate] = useState(false);
+
+  // Command Center Dismissals
+  const [dismissedChaseIds, setDismissedChaseIds] = useState<string[]>([]);
+  const [dismissedNoticeIds, setDismissedNoticeIds] = useState<string[]>([]);
 
   // Approval Modal State
   const [selectedInbound, setSelectedInbound] = useState<InboundMandate | null>(null);
@@ -557,10 +575,18 @@ export default function CockpitPage() {
   const fetchMandatesData = async () => {
     try {
       setLoading(true);
-      const mandatesRes = await fetch(`/api/mandates?scope=${scopeFilter}`);
+      const [mandatesRes, closedRes] = await Promise.all([
+        fetch(`/api/mandates?scope=${scopeFilter}&status=active`),
+        fetch(`/api/mandates?scope=${scopeFilter}&status=closed`),
+      ]);
+
       if (mandatesRes.ok) {
         const data = await mandatesRes.json();
         setActiveMandates(data.mandates || []);
+      }
+      if (closedRes.ok) {
+        const closedData = await closedRes.json();
+        setClosedMandates(closedData.mandates || []);
       }
 
       if (isManagement) {
@@ -631,6 +657,17 @@ export default function CockpitPage() {
       if (res.ok) {
         setChaseSuccessMessage(`1-Click SLA reminder sent to client${candidateName ? ` regarding ${candidateName}` : ""}!`);
         setTimeout(() => setChaseSuccessMessage(null), 5000);
+
+        // Find matching submission IDs to persist dismissal to localStorage
+        const chasedSubs = (pipelineData?.chasesDue || []).filter((c: any) => {
+          if (c.mandate?.id === mandateId) {
+            if (candidateName) return c.candidate?.fullName === candidateName;
+            return true;
+          }
+          return false;
+        });
+        chasedSubs.forEach((s: any) => handleDismissChase(s.id));
+
         fetchPipelineData(selectedPipelineMandateId);
       } else {
         alert(data.error || "Failed to dispatch client reminder.");
@@ -639,6 +676,99 @@ export default function CockpitPage() {
       alert(err?.message || "Failed to dispatch client reminder.");
     } finally {
       setChasingMandateId(null);
+    }
+  };
+
+  // Dismiss cards from Command Center (persisted across page reloads)
+  const handleDismissChase = (submissionId: string) => {
+    setDismissedChaseIds((prev) => {
+      const next = Array.from(new Set([...prev, submissionId]));
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("recruitos_dismissed_chases", JSON.stringify(next));
+        } catch {}
+      }
+      return next;
+    });
+  };
+
+  const handleDismissNotice = (submissionId: string) => {
+    setDismissedNoticeIds((prev) => {
+      const next = Array.from(new Set([...prev, submissionId]));
+      if (typeof window !== "undefined") {
+        try {
+          localStorage.setItem("recruitos_dismissed_notices", JSON.stringify(next));
+        } catch {}
+      }
+      return next;
+    });
+  };
+
+  // Close / Retire Mandate
+  const handleExecuteCloseMandate = async () => {
+    if (!mandateToClose) return;
+    setClosingMandate(true);
+    try {
+      const res = await fetch(`/api/mandates/${mandateToClose.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: closeMandateStatus,
+          closeReason: closeMandateReason,
+          recycleCandidates: recycleFinalists,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to close mandate.");
+
+      setSuccessMessage(data.message || "Mandate archived successfully.");
+      setMandateToClose(null);
+      fetchMandatesData();
+    } catch (err: any) {
+      alert(err.message || "Failed to close mandate.");
+    } finally {
+      setClosingMandate(false);
+    }
+  };
+
+  // Re-open Mandate
+  const handleReopenMandate = async (id: string) => {
+    try {
+      const res = await fetch(`/api/mandates/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "ACTIVE_ASSIGNED" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to re-open mandate.");
+
+      setSuccessMessage("Mandate re-opened to Active Searches.");
+      fetchMandatesData();
+    } catch (err: any) {
+      alert(err.message || "Failed to re-open mandate.");
+    }
+  };
+
+  // Delete Mandate to MandateTrashBin
+  const handleExecuteDeleteMandate = async () => {
+    if (!mandateToDelete) return;
+    setDeletingMandate(true);
+    try {
+      const res = await fetch(`/api/mandates/${mandateToDelete.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "User deleted mandate from Cockpit Mandates tab" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to delete mandate.");
+
+      setSuccessMessage("Mandate moved to Trash Bin.");
+      setMandateToDelete(null);
+      fetchMandatesData();
+    } catch (err: any) {
+      alert(err.message || "Failed to delete mandate.");
+    } finally {
+      setDeletingMandate(false);
     }
   };
 
@@ -678,6 +808,15 @@ export default function CockpitPage() {
       const tab = params.get("tab");
       if (tab === "pipeline" || tab === "mandates" || tab === "dashboard") {
         setCurrentTab(tab);
+      }
+
+      try {
+        const savedChases = JSON.parse(localStorage.getItem("recruitos_dismissed_chases") || "[]");
+        const savedNotices = JSON.parse(localStorage.getItem("recruitos_dismissed_notices") || "[]");
+        if (Array.isArray(savedChases)) setDismissedChaseIds(savedChases);
+        if (Array.isArray(savedNotices)) setDismissedNoticeIds(savedNotices);
+      } catch (e) {
+        console.error("Failed to load dismissed items from localStorage", e);
       }
     }
   }, [scopeFilter]);
@@ -1038,7 +1177,8 @@ export default function CockpitPage() {
     );
   });
 
-  const filteredActiveMandates = activeMandates.filter((m) => {
+  const currentMandatesList = mandateViewMode === "active" ? activeMandates : closedMandates;
+  const filteredActiveMandates = currentMandatesList.filter((m) => {
     const q = searchQuery.toLowerCase().trim();
     if (!q) return true;
     return (
@@ -1402,183 +1542,213 @@ export default function CockpitPage() {
             {/* 3. TWO-COLUMN ACTION RADARS: RC-03 CLIENT CHASE QUEUE & RC-05 NOTICE PERIOD WATCH */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
               {/* Left Column: RC-03 Client SLA Chase Queue */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col space-y-3">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                  <div className="flex items-center space-x-2">
-                    <Clock className="h-4 w-4 text-amber-600" />
-                    <div>
-                      <h2 className="text-sm font-black text-slate-900">Client Feedback Chase Queue</h2>
-                      <p className="text-[11px] text-slate-400 font-medium">Submissions awaiting client review (&gt;48h SLA)</p>
+              {(() => {
+                const displayedChases = (pipelineData?.chasesDue || []).filter((c) => !dismissedChaseIds.includes(c.id));
+                return (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col space-y-3">
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                      <div className="flex items-center space-x-2">
+                        <Clock className="h-4 w-4 text-amber-600" />
+                        <div>
+                          <h2 className="text-sm font-black text-slate-900">Client Feedback Chase Queue</h2>
+                          <p className="text-[11px] text-slate-400 font-medium">Submissions awaiting client review (&gt;48h SLA)</p>
+                        </div>
+                      </div>
+                      <span className="text-xs font-black bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 rounded-full">
+                        {displayedChases.length} Pending
+                      </span>
                     </div>
-                  </div>
-                  <span className="text-xs font-black bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 rounded-full">
-                    {pipelineData?.chasesDue?.length || 0} Pending
-                  </span>
-                </div>
 
-                <div className="space-y-2.5 overflow-y-auto max-h-[420px] pr-1">
-                  {!pipelineData?.chasesDue || pipelineData.chasesDue.length === 0 ? (
-                    <div className="py-10 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
-                      <CheckCircle2 className="h-7 w-7 text-emerald-500 mx-auto mb-1.5" />
-                      <p className="text-xs font-bold text-slate-700">All Client SLAs are Healthy!</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">No submissions waiting on client review over 48 hours.</p>
-                    </div>
-                  ) : (
-                    pipelineData.chasesDue.map((c) => {
-                      const isBreached = c.slaStatus === "BREACHED";
-                      const isWarning = c.slaStatus === "WARNING";
-                      return (
-                        <div
-                          key={c.id}
-                          className={`p-3.5 bg-white rounded-xl border transition-all shadow-2xs hover:shadow-sm space-y-2.5 ${
-                            isBreached
-                              ? "border-l-4 border-l-rose-500 border-slate-200"
-                              : isWarning
-                              ? "border-l-4 border-l-amber-500 border-slate-200"
-                              : "border-slate-200"
-                          }`}
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center space-x-2.5 min-w-0">
-                              <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-800 flex items-center justify-center font-black text-xs flex-shrink-0 border border-slate-200">
-                                {getInitials(c.candidate.fullName)}
-                              </div>
-                              <div className="min-w-0">
-                                <h4 className="text-xs font-black text-slate-900 truncate leading-tight">
-                                  {c.candidate.fullName}
-                                </h4>
-                                <p className="text-[11px] text-slate-500 truncate">
-                                  {c.mandate.client.name} • {c.mandate.title}
-                                </p>
-                              </div>
-                            </div>
-
-                            <span
-                              className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                    <div className="space-y-2.5 overflow-y-auto max-h-[420px] pr-1">
+                      {displayedChases.length === 0 ? (
+                        <div className="py-10 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
+                          <CheckCircle2 className="h-7 w-7 text-emerald-500 mx-auto mb-1.5" />
+                          <p className="text-xs font-bold text-slate-700">All Client SLAs are Healthy!</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">No submissions waiting on client review over 48 hours.</p>
+                        </div>
+                      ) : (
+                        displayedChases.map((c) => {
+                          const isBreached = c.slaStatus === "BREACHED";
+                          const isWarning = c.slaStatus === "WARNING";
+                          return (
+                            <div
+                              key={c.id}
+                              className={`p-3.5 bg-white rounded-xl border transition-all shadow-2xs hover:shadow-sm space-y-2.5 ${
                                 isBreached
-                                  ? "bg-rose-100 text-rose-800 border border-rose-200"
+                                  ? "border-l-4 border-l-rose-500 border-slate-200"
                                   : isWarning
-                                  ? "bg-amber-100 text-amber-800 border border-amber-200"
-                                  : "bg-slate-100 text-slate-700 border border-slate-200"
+                                  ? "border-l-4 border-l-amber-500 border-slate-200"
+                                  : "border-slate-200"
                               }`}
                             >
-                              {c.hoursWaiting}h waiting
-                            </span>
-                          </div>
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center space-x-2.5 min-w-0">
+                                  <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-800 flex items-center justify-center font-black text-xs flex-shrink-0 border border-slate-200">
+                                    {getInitials(c.candidate.fullName)}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <h4 className="text-xs font-black text-slate-900 truncate leading-tight">
+                                      {c.candidate.fullName}
+                                    </h4>
+                                    <p className="text-[11px] text-slate-500 truncate">
+                                      {c.mandate.client.name} • {c.mandate.title}
+                                    </p>
+                                  </div>
+                                </div>
 
-                          <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
-                            <span className="text-[10px] text-slate-400">
-                              Notice: <strong>{c.candidate.noticePeriodDays}d</strong> • Exp: <strong>{c.candidate.totalExpYears}y</strong>
-                            </span>
-
-                            <button
-                              onClick={() => handleChaseClient(c.mandate.id, c.candidate.fullName)}
-                              disabled={chasingMandateId === c.mandate.id}
-                              className="inline-flex items-center space-x-1.5 px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold rounded-lg text-xs transition-colors cursor-pointer disabled:opacity-50"
-                            >
-                              {chasingMandateId === c.mandate.id ? (
-                                <Loader2 className="h-3 w-3 animate-spin text-amber-700" />
-                              ) : (
-                                <Zap className="h-3 w-3 text-amber-600" />
-                              )}
-                              <span>1-Click Chase</span>
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
-
-              {/* Right Column: RC-05 Notice Period Watch (Drop-off Radar) */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col space-y-3">
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                  <div className="flex items-center space-x-2">
-                    <ShieldCheck className="h-4 w-4 text-purple-600" />
-                    <div>
-                      <h2 className="text-sm font-black text-slate-900">Notice Period & Retention Radar</h2>
-                      <p className="text-[11px] text-slate-400 font-medium">Pre-joined offer holders (RC-05 Drop-off mitigation)</p>
-                    </div>
-                  </div>
-                  <span className="text-xs font-black bg-purple-50 text-purple-800 border border-purple-200 px-2.5 py-0.5 rounded-full">
-                    {pipelineData?.noticePeriodWatch?.length || 0} In Notice
-                  </span>
-                </div>
-
-                <div className="space-y-2.5 overflow-y-auto max-h-[420px] pr-1">
-                  {!pipelineData?.noticePeriodWatch || pipelineData.noticePeriodWatch.length === 0 ? (
-                    <div className="py-10 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
-                      <ShieldCheck className="h-7 w-7 text-purple-300 mx-auto mb-1.5" />
-                      <p className="text-xs font-bold text-slate-700">No Candidates Currently Serving Notice</p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">
-                        Candidates who accept offers and enter notice periods appear here for active check-ins.
-                      </p>
-                    </div>
-                  ) : (
-                    pipelineData.noticePeriodWatch.map((c) => {
-                      const phoneClean = c.candidate.phone ? c.candidate.phone.replace(/[^0-9]/g, "") : "";
-                      const whatsappText = encodeURIComponent(
-                        `Hi ${c.candidate.fullName}, hope you're having a great week! Just wanted to check in on how your notice period is going. Let me know if you need anything from our end.`
-                      );
-                      const whatsappUrl = phoneClean
-                        ? `https://wa.me/${phoneClean}?text=${whatsappText}`
-                        : null;
-
-                      return (
-                        <div
-                          key={c.id}
-                          className="p-3.5 bg-white rounded-xl border border-slate-200 hover:border-purple-200 shadow-2xs hover:shadow-sm transition-all space-y-2.5"
-                        >
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="flex items-center space-x-2.5 min-w-0">
-                              <div className="w-8 h-8 rounded-full bg-purple-50 text-purple-900 flex items-center justify-center font-black text-xs flex-shrink-0 border border-purple-200">
-                                {getInitials(c.candidate.fullName)}
+                                <div className="flex items-center space-x-1.5 shrink-0">
+                                  <span
+                                    className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
+                                      isBreached
+                                        ? "bg-rose-100 text-rose-800 border border-rose-200"
+                                        : isWarning
+                                        ? "bg-amber-100 text-amber-800 border border-amber-200"
+                                        : "bg-slate-100 text-slate-700 border border-slate-200"
+                                    }`}
+                                  >
+                                    {c.hoursWaiting}h waiting
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDismissChase(c.id)}
+                                    className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                                    title="Dismiss from Chase Queue"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </div>
                               </div>
-                              <div className="min-w-0">
-                                <h4 className="text-xs font-black text-slate-900 truncate leading-tight">
-                                  {c.candidate.fullName}
-                                </h4>
-                                <p className="text-[11px] text-slate-500 truncate">
-                                  Joining {c.mandate.client.name} • {c.mandate.title}
-                                </p>
+
+                              <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
+                                <span className="text-[10px] text-slate-400">
+                                  Notice: <strong>{c.candidate.noticePeriodDays}d</strong> • Exp: <strong>{c.candidate.totalExpYears}y</strong>
+                                </span>
+
+                                <button
+                                  onClick={() => handleChaseClient(c.mandate.id, c.candidate.fullName)}
+                                  disabled={chasingMandateId === c.mandate.id}
+                                  className="inline-flex items-center space-x-1.5 px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold rounded-lg text-xs transition-colors cursor-pointer disabled:opacity-50"
+                                >
+                                  {chasingMandateId === c.mandate.id ? (
+                                    <Loader2 className="h-3 w-3 animate-spin text-amber-700" />
+                                  ) : (
+                                    <Zap className="h-3 w-3 text-amber-600" />
+                                  )}
+                                  <span>1-Click Chase</span>
+                                </button>
                               </div>
                             </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
 
-                            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-50 text-purple-800 border border-purple-200">
-                              {c.daysRemaining} days left
-                            </span>
-                          </div>
-
-                          <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
-                            <span className="text-[10px] text-slate-400">
-                              Notice: <strong>{c.daysInNotice}d</strong> • Accepted <strong>{c.daysSinceAccepted}d ago</strong>
-                            </span>
-
-                            {whatsappUrl ? (
-                              <a
-                                href={whatsappUrl}
-                                target="_blank"
-                                rel="noreferrer"
-                                className="inline-flex items-center space-x-1.5 px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 font-bold rounded-lg text-xs transition-colors cursor-pointer"
-                              >
-                                <span>💬 WhatsApp Pulse</span>
-                              </a>
-                            ) : (
-                              <button
-                                onClick={() => router.push(`/cockpit/mandates/${c.mandate.id}`)}
-                                className="text-xs font-bold text-slate-600 hover:text-slate-900"
-                              >
-                                View Profile
-                              </button>
-                            )}
-                          </div>
+              {/* Right Column: RC-05 Notice Period Watch (Drop-off Radar) */}
+              {(() => {
+                const displayedNoticeWatch = (pipelineData?.noticePeriodWatch || []).filter((c) => !dismissedNoticeIds.includes(c.id));
+                return (
+                  <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col space-y-3">
+                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                      <div className="flex items-center space-x-2">
+                        <ShieldCheck className="h-4 w-4 text-purple-600" />
+                        <div>
+                          <h2 className="text-sm font-black text-slate-900">Notice Period & Retention Radar</h2>
+                          <p className="text-[11px] text-slate-400 font-medium">Pre-joined offer holders (RC-05 Drop-off mitigation)</p>
                         </div>
-                      );
-                    })
-                  )}
-                </div>
-              </div>
+                      </div>
+                      <span className="text-xs font-black bg-purple-50 text-purple-800 border border-purple-200 px-2.5 py-0.5 rounded-full">
+                        {displayedNoticeWatch.length} In Notice
+                      </span>
+                    </div>
+
+                    <div className="space-y-2.5 overflow-y-auto max-h-[420px] pr-1">
+                      {displayedNoticeWatch.length === 0 ? (
+                        <div className="py-10 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
+                          <ShieldCheck className="h-7 w-7 text-purple-300 mx-auto mb-1.5" />
+                          <p className="text-xs font-bold text-slate-700">No Candidates Currently Serving Notice</p>
+                          <p className="text-[11px] text-slate-400 mt-0.5">
+                            Candidates who accept offers and enter notice periods appear here for active check-ins.
+                          </p>
+                        </div>
+                      ) : (
+                        displayedNoticeWatch.map((c) => {
+                          const phoneClean = c.candidate.phone ? c.candidate.phone.replace(/[^0-9]/g, "") : "";
+                          const whatsappText = encodeURIComponent(
+                            `Hi ${c.candidate.fullName}, hope you're having a great week! Just wanted to check in on how your notice period is going. Let me know if you need anything from our end.`
+                          );
+                          const whatsappUrl = phoneClean
+                            ? `https://wa.me/${phoneClean}?text=${whatsappText}`
+                            : null;
+
+                          return (
+                            <div
+                              key={c.id}
+                              className="p-3.5 bg-white rounded-xl border border-slate-200 hover:border-purple-200 shadow-2xs hover:shadow-sm transition-all space-y-2.5"
+                            >
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="flex items-center space-x-2.5 min-w-0">
+                                  <div className="w-8 h-8 rounded-full bg-purple-50 text-purple-900 flex items-center justify-center font-black text-xs flex-shrink-0 border border-purple-200">
+                                    {getInitials(c.candidate.fullName)}
+                                  </div>
+                                  <div className="min-w-0">
+                                    <h4 className="text-xs font-black text-slate-900 truncate leading-tight">
+                                      {c.candidate.fullName}
+                                    </h4>
+                                    <p className="text-[11px] text-slate-500 truncate">
+                                      Joining {c.mandate.client.name} • {c.mandate.title}
+                                    </p>
+                                  </div>
+                                </div>
+
+                                <div className="flex items-center space-x-1.5 shrink-0">
+                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-50 text-purple-800 border border-purple-200">
+                                    {c.daysRemaining} days left
+                                  </span>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDismissNotice(c.id)}
+                                    className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                                    title="Dismiss from Command Center"
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
+                                <span className="text-[10px] text-slate-400">
+                                  Notice: <strong>{c.daysInNotice}d</strong> • Accepted <strong>{c.daysSinceAccepted}d ago</strong>
+                                </span>
+
+                                {whatsappUrl ? (
+                                  <a
+                                    href={whatsappUrl}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="inline-flex items-center space-x-1.5 px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 font-bold rounded-lg text-xs transition-colors cursor-pointer"
+                                  >
+                                    <span>💬 WhatsApp Pulse</span>
+                                  </a>
+                                ) : (
+                                  <button
+                                    onClick={() => router.push(`/cockpit/mandates/${c.mandate.id}`)}
+                                    className="text-xs font-bold text-slate-600 hover:text-slate-900"
+                                  >
+                                    View Profile
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* 4. ACTIVE SEARCH MANDATES VELOCITY DECK (STREAMLINED EXECUTIVE LIST) */}
@@ -1794,31 +1964,61 @@ export default function CockpitPage() {
               </div>
             )}
 
-            {/* Active Mandates List with 72h SLA Radar */}
+            {/* Active / Closed Mandates List with 72h SLA Radar */}
             <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
               <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 bg-slate-50/50">
-                <div className="relative rounded-lg shadow-sm flex-1 max-w-md">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Search className="h-3.5 w-3.5 text-slate-400" />
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 flex-1">
+                  {/* Segmented Pill Toggle: Active Searches vs Closed & Archived */}
+                  <div className="inline-flex p-1 bg-slate-200/70 rounded-xl text-xs font-bold shrink-0">
+                    <button
+                      type="button"
+                      onClick={() => setMandateViewMode("active")}
+                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                        mandateViewMode === "active"
+                          ? "bg-white text-slate-900 shadow-xs font-black"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      Active Searches ({activeMandates.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMandateViewMode("closed")}
+                      className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                        mandateViewMode === "closed"
+                          ? "bg-white text-slate-900 shadow-xs font-black"
+                          : "text-slate-600 hover:text-slate-900"
+                      }`}
+                    >
+                      Closed & Archived ({closedMandates.length})
+                    </button>
                   </div>
-                  <input
-                    type="text"
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search mandate title, company, skills..."
-                    className="block w-full pl-9 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-1 focus:ring-brand-surfaceDark bg-white text-slate-900"
-                  />
+
+                  <div className="relative rounded-lg shadow-sm flex-1 max-w-sm">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <Search className="h-3.5 w-3.5 text-slate-400" />
+                    </div>
+                    <input
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      placeholder={mandateViewMode === "active" ? "Search active mandates, clients, skills..." : "Search closed mandates, clients..."}
+                      className="block w-full pl-9 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-1 focus:ring-brand-surfaceDark bg-white text-slate-900"
+                    />
+                  </div>
                 </div>
 
                 <div className="text-xs text-slate-500 font-medium">
-                  Showing <strong>{filteredActiveMandates.length}</strong> active searches
+                  Showing <strong>{filteredActiveMandates.length}</strong> {mandateViewMode === "active" ? "active" : "closed"} searches
                 </div>
               </div>
 
               {loading ? (
-                <div className="p-12 text-center text-slate-400 text-xs">Loading active mandates...</div>
+                <div className="p-12 text-center text-slate-400 text-xs">Loading mandates...</div>
               ) : filteredActiveMandates.length === 0 ? (
-                <div className="p-12 text-center text-slate-500 text-xs">No active search mandates found.</div>
+                <div className="p-12 text-center text-slate-500 text-xs">
+                  {mandateViewMode === "active" ? "No active search mandates found." : "No closed or archived search mandates found."}
+                </div>
               ) : (
                 <div className="divide-y divide-slate-100">
                   {filteredActiveMandates.map((m) => {
@@ -2050,6 +2250,43 @@ export default function CockpitPage() {
                                 >
                                   <Copy className="h-3.5 w-3.5 text-slate-500" />
                                   <span>Copy Public Link</span>
+                                </button>
+                                <div className="border-t border-slate-100 my-1" />
+                                {mandateViewMode === "active" ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveMenuMandateId(null);
+                                      setMandateToClose(m);
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-amber-800 hover:bg-amber-50 font-medium flex items-center space-x-2 transition-colors cursor-pointer"
+                                  >
+                                    <Archive className="h-3.5 w-3.5 text-amber-600" />
+                                    <span>Close / Retire Mandate</span>
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveMenuMandateId(null);
+                                      handleReopenMandate(m.id);
+                                    }}
+                                    className="w-full text-left px-3 py-2 text-emerald-800 hover:bg-emerald-50 font-medium flex items-center space-x-2 transition-colors cursor-pointer"
+                                  >
+                                    <RotateCcw className="h-3.5 w-3.5 text-emerald-600" />
+                                    <span>Re-open Mandate</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setActiveMenuMandateId(null);
+                                    setMandateToDelete(m);
+                                  }}
+                                  className="w-full text-left px-3 py-2 text-rose-600 hover:bg-rose-50 font-medium flex items-center space-x-2 transition-colors cursor-pointer"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                                  <span>Delete to Trash Bin</span>
                                 </button>
                               </div>
                             )}
@@ -2807,6 +3044,216 @@ export default function CockpitPage() {
                 {savingMeetingLink && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                 <span>Save Meeting Link</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: CLOSE / RETIRE MANDATE                                             */}
+      {/* ========================================================================= */}
+      {mandateToClose && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-amber-50 px-6 py-4 border-b border-amber-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Archive className="h-5 w-5 text-amber-700" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Close / Retire Mandate</h3>
+                  <p className="text-[10px] text-amber-800">Archive this search and recycle unplaced candidates</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setMandateToClose(null)}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <span className="font-bold text-slate-900 text-sm block mb-1">
+                  Mandate: {mandateToClose.title}
+                </span>
+                <p className="text-slate-500 text-[11px]">{mandateToClose.client.name}</p>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-800 mb-2">Select Close Status *</label>
+                <div className="space-y-2">
+                  <label className={`flex items-start space-x-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
+                    closeMandateStatus === "CLOSED_FULFILLED" ? "bg-emerald-50/80 border-emerald-300" : "bg-white border-slate-200 hover:bg-slate-50"
+                  }`}>
+                    <input
+                      type="radio"
+                      name="cockpitCloseStatus"
+                      value="CLOSED_FULFILLED"
+                      checked={closeMandateStatus === "CLOSED_FULFILLED"}
+                      onChange={() => setCloseMandateStatus("CLOSED_FULFILLED")}
+                      className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-900 block">Position Fulfilled / Closed</span>
+                      <span className="text-[11px] text-slate-500">Successfully placed candidate(s) for this position.</span>
+                    </div>
+                  </label>
+
+                  <label className={`flex items-start space-x-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
+                    closeMandateStatus === "CLOSED_CANCELLED" ? "bg-rose-50/80 border-rose-300" : "bg-white border-slate-200 hover:bg-slate-50"
+                  }`}>
+                    <input
+                      type="radio"
+                      name="cockpitCloseStatus"
+                      value="CLOSED_CANCELLED"
+                      checked={closeMandateStatus === "CLOSED_CANCELLED"}
+                      onChange={() => setCloseMandateStatus("CLOSED_CANCELLED")}
+                      className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-900 block">Search Cancelled by Client</span>
+                      <span className="text-[11px] text-slate-500">Hiring freeze or budget cancelled by client.</span>
+                    </div>
+                  </label>
+
+                  <label className={`flex items-start space-x-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
+                    closeMandateStatus === "CLOSED_ON_HOLD" ? "bg-amber-50/80 border-amber-300" : "bg-white border-slate-200 hover:bg-slate-50"
+                  }`}>
+                    <input
+                      type="radio"
+                      name="cockpitCloseStatus"
+                      value="CLOSED_ON_HOLD"
+                      checked={closeMandateStatus === "CLOSED_ON_HOLD"}
+                      onChange={() => setCloseMandateStatus("CLOSED_ON_HOLD")}
+                      className="mt-0.5 text-amber-600 focus:ring-amber-500"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-900 block">Put Mandate On-Hold</span>
+                      <span className="text-[11px] text-slate-500">Temporarily paused by client; may resume later.</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-800 mb-1">Notes / Context (Optional)</label>
+                <textarea
+                  rows={2}
+                  value={closeMandateReason}
+                  onChange={(e) => setCloseMandateReason(e.target.value)}
+                  placeholder="e.g. Search fulfilled on time. Placed senior candidate."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:ring-2 focus:ring-amber-400 outline-none"
+                />
+              </div>
+
+              <div className="pt-1">
+                <label className="flex items-center space-x-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={recycleFinalists}
+                    onChange={(e) => setRecycleFinalists(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+                  />
+                  <span className="text-slate-700 text-xs">
+                    Tag unplaced candidates as <strong>Silver Medalists</strong> in Talent Bank
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setMandateToClose(null)}
+                  disabled={closingMandate}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteCloseMandate}
+                  disabled={closingMandate}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-xs cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                >
+                  {closingMandate ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Archiving...</span>
+                    </>
+                  ) : (
+                    <span>Confirm & Archive</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: DELETE MANDATE TO TRASH BIN                                        */}
+      {/* ========================================================================= */}
+      {mandateToDelete && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-rose-50 px-6 py-4 border-b border-rose-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Move Mandate to Trash Bin</h3>
+                  <p className="text-[10px] text-rose-700">Safely archives search mandate and releases child relations</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setMandateToDelete(null)}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="font-bold text-slate-900 text-sm">
+                Move mandate <strong>{mandateToDelete.title}</strong> ({mandateToDelete.client.name}) to Trash Bin?
+              </p>
+
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-800 text-[11px] leading-relaxed">
+                <strong>Notice:</strong>
+                <ul className="list-disc list-inside mt-1 space-y-0.5">
+                  <li>Mandate will be removed from Active and Closed lists.</li>
+                  <li>Candidate records remain safe in your Talent Bank.</li>
+                  <li>Mandates with verified paid placement invoices cannot be deleted.</li>
+                </ul>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setMandateToDelete(null)}
+                  disabled={deletingMandate}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteDeleteMandate}
+                  disabled={deletingMandate}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-xs cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                >
+                  {deletingMandate ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Moving to Bin...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Move Mandate to Bin</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

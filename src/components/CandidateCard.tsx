@@ -15,6 +15,7 @@ import {
   PauseCircle,
   ThumbsDown,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import { CALL_DISPOSITIONS } from "./CandidateDetailModal";
 
@@ -110,6 +111,8 @@ export interface CandidateCardProps {
   onClientHold?: (candidate: any) => void;
   onClientReject?: (candidate: any) => void;
   onClientViewCv?: (candidate: any) => void;
+  onRemoveFromMandate?: (candidate: any) => void;
+  onDeleteCandidate?: (candidate: any) => void;
 }
 
 const getCallbackBadge = (callbackAtStr?: string | null) => {
@@ -156,6 +159,8 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
   onClientHold,
   onClientReject,
   onClientViewCv,
+  onRemoveFromMandate,
+  onDeleteCandidate,
 }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -686,6 +691,40 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
                       <User className="h-3.5 w-3.5 text-slate-500" />
                       <span>View Full Candidate Dossier</span>
                     </button>
+
+                    {(onRemoveFromMandate || onDeleteCandidate) && (
+                      <div className="h-px bg-slate-100 my-1" />
+                    )}
+
+                    {onRemoveFromMandate && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onRemoveFromMandate(candidate);
+                        }}
+                        className="w-full text-left px-3 py-1.5 text-rose-600 hover:bg-rose-50 font-bold flex items-center space-x-2 transition-colors cursor-pointer"
+                        title="Remove candidate from this mandate pipeline"
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                        <span>Remove from Mandate</span>
+                      </button>
+                    )}
+
+                    {onDeleteCandidate && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onDeleteCandidate(candidate);
+                        }}
+                        className="w-full text-left px-3 py-1.5 text-rose-600 hover:bg-rose-50 font-bold flex items-center space-x-2 transition-colors cursor-pointer"
+                        title="Delete candidate profile from Talent Bank"
+                      >
+                        <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                        <span>Delete Candidate Profile</span>
+                      </button>
+                    )}
                   </div>
                 )}
               </div>

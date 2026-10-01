@@ -17,6 +17,7 @@ import {
   X,
   ChevronDown,
   ChevronUp,
+  Trash2,
 } from "lucide-react";
 
 export const CALL_DISPOSITIONS = [
@@ -82,6 +83,8 @@ export interface CandidateDetailModalProps {
   }>;
   onCallLogged?: (result: any) => void;
   onOpenSchedule?: (candidate: any, submissionId: string, mandateTitle: string) => void;
+  onRemoveFromMandate?: (candidate: any) => void;
+  onDeleteCandidate?: (candidate: any) => void;
 }
 
 export function CandidateDetailModal({
@@ -92,6 +95,8 @@ export function CandidateDetailModal({
   availableMandates = [],
   onCallLogged,
   onOpenSchedule,
+  onRemoveFromMandate,
+  onDeleteCandidate,
 }: CandidateDetailModalProps) {
   // Active Tab for Right Dossier Pane: Default to "history" as per recruiter mental model
   const [activeTab, setActiveTab] = useState<"history" | "profile">("history");
@@ -1155,16 +1160,48 @@ export function CandidateDetailModal({
         {/* ========================================================================= */}
         {/* 3. MODAL FOOTER STATUS BAR                                                */}
         {/* ========================================================================= */}
-        <div className="px-6 py-2.5 border-t border-slate-200 bg-white flex items-center justify-between flex-shrink-0 text-xs text-slate-500">
-          <span className="truncate max-w-md">
-            {mandateContext
-              ? `Mandate: ${mandateContext.title} • Client: ${mandateContext.clientName}`
-              : `Talent Bank • ${
-                  candidate.submissions && candidate.submissions.length > 0
-                    ? `Active on ${candidate.submissions[0].mandate.title}`
-                    : "General Pool"
-                }`}
-          </span>
+        <div className="px-6 py-2.5 border-t border-slate-200 bg-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 flex-shrink-0 text-xs text-slate-500">
+          <div className="flex items-center space-x-3 flex-wrap gap-y-1">
+            <span className="truncate max-w-sm">
+              {mandateContext
+                ? `Mandate: ${mandateContext.title} • Client: ${mandateContext.clientName}`
+                : `Talent Bank • ${
+                    candidate.submissions && candidate.submissions.length > 0
+                      ? `Active on ${candidate.submissions[0].mandate.title}`
+                      : "General Pool"
+                  }`}
+            </span>
+
+            {onRemoveFromMandate && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onRemoveFromMandate(candidate);
+                }}
+                className="text-xs font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer flex items-center space-x-1 ml-2"
+                title="Remove candidate from this mandate pipeline"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Remove from Mandate</span>
+              </button>
+            )}
+
+            {onDeleteCandidate && (
+              <button
+                type="button"
+                onClick={() => {
+                  onClose();
+                  onDeleteCandidate(candidate);
+                }}
+                className="text-xs font-bold text-rose-600 hover:text-rose-800 hover:underline cursor-pointer flex items-center space-x-1 ml-2"
+                title="Delete candidate profile from Talent Bank"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Delete Profile</span>
+              </button>
+            )}
+          </div>
           <span className="text-[11px] text-slate-400">
             RecruitOS Telemetry • Press <kbd className="px-1 py-0.5 bg-slate-100 border border-slate-200 rounded text-[10px] font-mono">Esc</kbd> to exit
           </span>

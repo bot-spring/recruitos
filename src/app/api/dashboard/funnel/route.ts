@@ -16,9 +16,19 @@ export async function GET(req: Request) {
 
     const agencyId = session.user.agencyId;
 
+    const { searchParams } = new URL(req.url);
+    const statusParam = searchParams.get("status"); // "active" (default) | "closed" | "all"
+
+    const whereClause: any = { agencyId };
+    if (statusParam === "closed") {
+      whereClause.status = { in: ["CLOSED_FULFILLED", "CLOSED_CANCELLED", "CLOSED_ON_HOLD"] };
+    } else if (statusParam !== "all") {
+      whereClause.status = { notIn: ["UNREVIEWED_INBOUND", "CLOSED_FULFILLED", "CLOSED_CANCELLED", "CLOSED_ON_HOLD"] };
+    }
+
     // 1. Fetch all mandates in agency with their submissions, candidate details, and interview schedules
     const mandates = await prisma.jobMandate.findMany({
-      where: { agencyId },
+      where: whereClause,
       include: {
         client: true,
         contact: true,

@@ -43,6 +43,10 @@ import {
   ShieldCheck,
   RefreshCw,
   MapPin,
+  MoreVertical,
+  Trash2,
+  Archive,
+  Loader2,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CandidateDetailModal, CALL_DISPOSITIONS } from "@/components/CandidateDetailModal";
@@ -212,6 +216,23 @@ export default function MandateWorkspacePage() {
   // Centered Call Screening Modal State
   const [selectedCandidate, setSelectedCandidate] = useState<AttachedCandidate | null>(null);
   const [scheduleCandidate, setScheduleCandidate] = useState<AttachedCandidate | null>(null);
+
+  // Candidate Lifecycle Actions (Remove from Mandate / Delete to Trash Bin)
+  const [candidateToRemove, setCandidateToRemove] = useState<AttachedCandidate | null>(null);
+  const [removingFromMandate, setRemovingFromMandate] = useState(false);
+  const [candidateToDelete, setCandidateToDelete] = useState<AttachedCandidate | null>(null);
+  const [deletingCandidate, setDeletingCandidate] = useState(false);
+
+  // Mandate Lifecycle Actions (Close / Retire / Delete Mandate)
+  const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
+  const [isCloseMandateModalOpen, setIsCloseMandateModalOpen] = useState(false);
+  const [closeStatus, setCloseStatus] = useState<"CLOSED_FULFILLED" | "CLOSED_CANCELLED" | "CLOSED_ON_HOLD">("CLOSED_FULFILLED");
+  const [closeReason, setCloseReason] = useState("");
+  const [recycleCandidates, setRecycleCandidates] = useState(true);
+  const [updatingMandateStatus, setUpdatingMandateStatus] = useState(false);
+
+  const [isDeleteMandateModalOpen, setIsDeleteMandateModalOpen] = useState(false);
+  const [deletingMandate, setDeletingMandate] = useState(false);
 
   // Helper to format scheduled callback badge
   const getCallbackBadge = (callbackAtStr: string | null) => {
@@ -413,6 +434,104 @@ export default function MandateWorkspacePage() {
       alert(err.message || "Failed to attach candidate");
     } finally {
       setAttachingId(null);
+    }
+  };
+
+  // Candidate Lifecycle: Remove from this Mandate
+  const handleExecuteRemoveFromMandate = async () => {
+    if (!candidateToRemove || !mandate) return;
+    setRemovingFromMandate(true);
+    try {
+      const res = await fetch(`/api/mandates/${mandate.id}/candidates?submissionId=${candidateToRemove.submissionId}`, {
+        method: "DELETE",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to remove candidate from search.");
+
+      setSuccessMessage(`Candidate '${candidateToRemove.fullName}' removed from this search mandate.`);
+      setCandidates((prev) => prev.filter((c) => c.submissionId !== candidateToRemove.submissionId));
+      if (selectedCandidate?.submissionId === candidateToRemove.submissionId) {
+        setSelectedCandidate(null);
+      }
+      setCandidateToRemove(null);
+    } catch (err: any) {
+      alert(err.message || "Failed to remove candidate.");
+    } finally {
+      setRemovingFromMandate(false);
+    }
+  };
+
+  // Candidate Lifecycle: Delete to Trash Bin
+  const handleExecuteDeleteCandidate = async () => {
+    if (!candidateToDelete) return;
+    setDeletingCandidate(true);
+    try {
+      const res = await fetch(`/api/candidates/${candidateToDelete.candidateId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "User deleted profile from Mandate Workspace" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to delete candidate.");
+
+      setSuccessMessage(`Candidate '${candidateToDelete.fullName}' moved to Trash Bin.`);
+      setCandidates((prev) => prev.filter((c) => c.candidateId !== candidateToDelete.candidateId));
+      if (selectedCandidate?.candidateId === candidateToDelete.candidateId) {
+        setSelectedCandidate(null);
+      }
+      setCandidateToDelete(null);
+    } catch (err: any) {
+      alert(err.message || "Failed to delete candidate.");
+    } finally {
+      setDeletingCandidate(false);
+    }
+  };
+
+  // Mandate Lifecycle: Close or Re-open Mandate
+  const handleExecuteCloseMandate = async (targetStatus?: string) => {
+    if (!mandate) return;
+    setUpdatingMandateStatus(true);
+    try {
+      const statusToSet = targetStatus || closeStatus;
+      const res = await fetch(`/api/mandates/${mandate.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: statusToSet,
+          closeReason,
+          recycleCandidates,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to update mandate status.");
+
+      setSuccessMessage(data.message || `Mandate status updated to ${statusToSet.replace(/_/g, " ")}.`);
+      setIsCloseMandateModalOpen(false);
+      fetchWorkspace();
+    } catch (err: any) {
+      alert(err.message || "Failed to close mandate.");
+    } finally {
+      setUpdatingMandateStatus(false);
+    }
+  };
+
+  // Mandate Lifecycle: Delete Mandate to MandateTrashBin
+  const handleExecuteDeleteMandate = async () => {
+    if (!mandate) return;
+    setDeletingMandate(true);
+    try {
+      const res = await fetch(`/api/mandates/${mandate.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "User deleted mandate from Mandate Workspace" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to delete mandate.");
+
+      router.push("/cockpit?tab=mandates");
+    } catch (err: any) {
+      alert(err.message || "Failed to delete mandate.");
+      setDeletingMandate(false);
     }
   };
 
@@ -725,6 +844,29 @@ export default function MandateWorkspacePage() {
           </div>
         )}
 
+        {/* Closed Mandate Notice Banner */}
+        {mandate.status && (mandate.status === "CLOSED_FULFILLED" || mandate.status === "CLOSED_CANCELLED" || mandate.status === "CLOSED_ON_HOLD") && (
+          <div className="bg-amber-50/90 border border-amber-300 rounded-xl p-3.5 flex items-center justify-between text-xs text-amber-950 shadow-xs animate-in fade-in">
+            <div className="flex items-center space-x-2.5">
+              <Archive className="h-4 w-4 text-amber-700 shrink-0" />
+              <div>
+                <span className="font-extrabold uppercase tracking-wide">Archived Search:</span>
+                <span className="ml-1 text-slate-800">
+                  This mandate is currently marked as <strong>{mandate.status.replace(/_/g, " ")}</strong>. Active recruiting is closed.
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => handleExecuteCloseMandate("ACTIVE_ASSIGNED")}
+              disabled={updatingMandateStatus}
+              className="px-3 py-1.5 bg-white hover:bg-amber-100 border border-amber-300 font-bold rounded-lg text-amber-900 shadow-xs cursor-pointer text-xs shrink-0 flex items-center space-x-1"
+            >
+              <RotateCcw className="h-3 w-3" />
+              <span>Re-open Search</span>
+            </button>
+          </div>
+        )}
+
         {/* ========================================================================= */}
         {/* MANDATE HERO STRIP WITH CONSOLIDATED JOB ACTIONS (ASHBY PATTERN)         */}
         {/* ========================================================================= */}
@@ -776,7 +918,7 @@ export default function MandateWorkspacePage() {
               </div>
             </div>
 
-            {/* Right: Sourcing Actions (Only 2 Clean Buttons) */}
+            {/* Right: Sourcing Actions */}
             <div className="flex items-center space-x-2 flex-wrap gap-y-2">
               {/* 1. Talent Pool */}
               <button
@@ -805,6 +947,59 @@ export default function MandateWorkspacePage() {
                 <UploadCloud className="h-3.5 w-3.5" />
                 <span>+ Ingest Resumes</span>
               </button>
+
+              {/* 3. Mandate Lifecycle Options (Kebab Menu) */}
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setIsActionsMenuOpen(!isActionsMenuOpen)}
+                  className="p-2 border border-slate-200 hover:bg-slate-100 rounded-xl text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
+                  title="Mandate Actions"
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </button>
+                {isActionsMenuOpen && (
+                  <div className="absolute right-0 mt-1 w-52 bg-white rounded-xl shadow-xl border border-slate-200 py-1 z-30 animate-in fade-in zoom-in-95 duration-100 text-xs">
+                    {mandate.status !== "CLOSED_FULFILLED" && mandate.status !== "CLOSED_CANCELLED" && mandate.status !== "CLOSED_ON_HOLD" ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsActionsMenuOpen(false);
+                          setIsCloseMandateModalOpen(true);
+                        }}
+                        className="w-full text-left px-3.5 py-2 hover:bg-amber-50 text-slate-700 hover:text-amber-900 flex items-center space-x-2 font-medium cursor-pointer"
+                      >
+                        <Archive className="h-3.5 w-3.5 text-amber-600" />
+                        <span>Close / Retire Mandate</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsActionsMenuOpen(false);
+                          handleExecuteCloseMandate("ACTIVE_ASSIGNED");
+                        }}
+                        className="w-full text-left px-3.5 py-2 hover:bg-emerald-50 text-slate-700 hover:text-emerald-900 flex items-center space-x-2 font-medium cursor-pointer"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5 text-emerald-600" />
+                        <span>Re-open Mandate</span>
+                      </button>
+                    )}
+                    <div className="border-t border-slate-100 my-1" />
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsActionsMenuOpen(false);
+                        setIsDeleteMandateModalOpen(true);
+                      }}
+                      className="w-full text-left px-3.5 py-2 hover:bg-rose-50 text-rose-600 hover:text-rose-700 flex items-center space-x-2 font-medium cursor-pointer"
+                    >
+                      <Trash2 className="h-3.5 w-3.5 text-rose-500" />
+                      <span>Delete to Trash Bin</span>
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
 
@@ -1081,6 +1276,8 @@ export default function MandateWorkspacePage() {
                   statusOptions={CANDIDATE_STATUSES}
                   currentStatus={c.status}
                   onStatusChange={(_, newStatus) => handleUpdateStatus(c.submissionId, newStatus)}
+                  onRemoveFromMandate={() => setCandidateToRemove(c)}
+                  onDeleteCandidate={() => setCandidateToDelete(c)}
                 />
               ))}
             </div>
@@ -1124,6 +1321,14 @@ export default function MandateWorkspacePage() {
         onOpenSchedule={(cand) => {
           setSelectedCandidate(null);
           setScheduleCandidate(cand);
+        }}
+        onRemoveFromMandate={() => {
+          setCandidateToRemove(selectedCandidate);
+          setSelectedCandidate(null);
+        }}
+        onDeleteCandidate={() => {
+          setCandidateToDelete(selectedCandidate);
+          setSelectedCandidate(null);
         }}
       />
 
@@ -2013,6 +2218,344 @@ export default function MandateWorkspacePage() {
                 <UploadCloud className="h-3.5 w-3.5" />
                 <span>+ Ingest Resumes</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 1. REMOVE CANDIDATE FROM MANDATE MODAL                                    */}
+      {/* ========================================================================= */}
+      {candidateToRemove && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-amber-50 px-6 py-4 border-b border-amber-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <AlertTriangle className="h-5 w-5 text-amber-600" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Remove from Search Mandate</h3>
+                  <p className="text-[10px] text-amber-800">Detaches candidate from this specific pipeline</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCandidateToRemove(null)}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="font-bold text-slate-900 text-sm">
+                Remove <strong>{candidateToRemove.fullName}</strong> from <em>{mandate?.title}</em>?
+              </p>
+
+              <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-slate-700 text-[11px] leading-relaxed">
+                <strong>Safety guarantee:</strong>
+                <ul className="list-disc list-inside mt-1 space-y-0.5">
+                  <li>Candidate profile stays safe in your master <strong>Talent Bank pool</strong>.</li>
+                  <li>Can be redeployed or attached to other searches anytime.</li>
+                  <li>Any scheduled interview rounds for this mandate will be cancelled.</li>
+                </ul>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCandidateToRemove(null)}
+                  disabled={removingFromMandate}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteRemoveFromMandate}
+                  disabled={removingFromMandate}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-xs cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                >
+                  {removingFromMandate ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Removing...</span>
+                    </>
+                  ) : (
+                    <span>Remove from Search</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 2. MOVE CANDIDATE TO TRASH BIN MODAL                                      */}
+      {/* ========================================================================= */}
+      {candidateToDelete && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-rose-50 px-6 py-4 border-b border-rose-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Move Candidate to Trash Bin</h3>
+                  <p className="text-[10px] text-rose-700">Safely archives candidate profile and releases unique identifiers</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCandidateToDelete(null)}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="font-bold text-slate-900 text-sm">
+                Are you sure you want to permanently delete <strong>{candidateToDelete.fullName}</strong>?
+              </p>
+
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-800 text-[11px] leading-relaxed">
+                <strong>What happens next:</strong>
+                <ul className="list-disc list-inside mt-1 space-y-0.5">
+                  <li>Profile and timeline are moved to the <strong>Trash Bin</strong>.</li>
+                  <li>Email and phone constraints are freed for future re-entries.</li>
+                  <li>You can restore this profile anytime from the Trash Bin.</li>
+                </ul>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCandidateToDelete(null)}
+                  disabled={deletingCandidate}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteDeleteCandidate}
+                  disabled={deletingCandidate}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-xs cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                >
+                  {deletingCandidate ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Moving to Bin...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Move to Trash Bin</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 3. CLOSE / RETIRE MANDATE MODAL                                           */}
+      {/* ========================================================================= */}
+      {isCloseMandateModalOpen && mandate && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-amber-50 px-6 py-4 border-b border-amber-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Archive className="h-5 w-5 text-amber-700" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Close / Retire Mandate</h3>
+                  <p className="text-[10px] text-amber-800">Archive this search and recycle candidates</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsCloseMandateModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block font-bold text-slate-800 mb-2">Select Close Reason / Status *</label>
+                <div className="space-y-2">
+                  <label className={`flex items-start space-x-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
+                    closeStatus === "CLOSED_FULFILLED" ? "bg-emerald-50/80 border-emerald-300" : "bg-white border-slate-200 hover:bg-slate-50"
+                  }`}>
+                    <input
+                      type="radio"
+                      name="closeStatus"
+                      value="CLOSED_FULFILLED"
+                      checked={closeStatus === "CLOSED_FULFILLED"}
+                      onChange={() => setCloseStatus("CLOSED_FULFILLED")}
+                      className="mt-0.5 text-emerald-600 focus:ring-emerald-500"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-900 block">Position Fulfilled / Closed</span>
+                      <span className="text-[11px] text-slate-500">Successfully hired candidate(s) for this position.</span>
+                    </div>
+                  </label>
+
+                  <label className={`flex items-start space-x-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
+                    closeStatus === "CLOSED_CANCELLED" ? "bg-rose-50/80 border-rose-300" : "bg-white border-slate-200 hover:bg-slate-50"
+                  }`}>
+                    <input
+                      type="radio"
+                      name="closeStatus"
+                      value="CLOSED_CANCELLED"
+                      checked={closeStatus === "CLOSED_CANCELLED"}
+                      onChange={() => setCloseStatus("CLOSED_CANCELLED")}
+                      className="mt-0.5 text-rose-600 focus:ring-rose-500"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-900 block">Search Cancelled by Client</span>
+                      <span className="text-[11px] text-slate-500">Hiring freeze, budget cancelled, or closed internally.</span>
+                    </div>
+                  </label>
+
+                  <label className={`flex items-start space-x-2.5 p-3 rounded-xl border cursor-pointer transition-all ${
+                    closeStatus === "CLOSED_ON_HOLD" ? "bg-amber-50/80 border-amber-300" : "bg-white border-slate-200 hover:bg-slate-50"
+                  }`}>
+                    <input
+                      type="radio"
+                      name="closeStatus"
+                      value="CLOSED_ON_HOLD"
+                      checked={closeStatus === "CLOSED_ON_HOLD"}
+                      onChange={() => setCloseStatus("CLOSED_ON_HOLD")}
+                      className="mt-0.5 text-amber-600 focus:ring-amber-500"
+                    />
+                    <div>
+                      <span className="font-bold text-slate-900 block">Put Mandate On-Hold</span>
+                      <span className="text-[11px] text-slate-500">Temporarily paused by client; may resume later.</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="block font-bold text-slate-800 mb-1">Notes / Context (Optional)</label>
+                <textarea
+                  rows={2}
+                  value={closeReason}
+                  onChange={(e) => setCloseReason(e.target.value)}
+                  placeholder="e.g. Candidate joined on Sep 28. Search completed on target SLA."
+                  className="w-full px-3 py-2 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 focus:ring-2 focus:ring-amber-400 outline-none"
+                />
+              </div>
+
+              <div className="pt-1">
+                <label className="flex items-center space-x-2.5 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={recycleCandidates}
+                    onChange={(e) => setRecycleCandidates(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-300 text-amber-500 focus:ring-amber-400"
+                  />
+                  <span className="text-slate-700 text-xs">
+                    Tag unplaced candidates as <strong>Silver Medalists</strong> in Talent Bank
+                  </span>
+                </label>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-3">
+                <button
+                  type="button"
+                  onClick={() => setIsCloseMandateModalOpen(false)}
+                  disabled={updatingMandateStatus}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleExecuteCloseMandate()}
+                  disabled={updatingMandateStatus}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-xs cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                >
+                  {updatingMandateStatus ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Updating...</span>
+                    </>
+                  ) : (
+                    <span>Confirm & Archive</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 4. MOVE MANDATE TO TRASH BIN MODAL                                        */}
+      {/* ========================================================================= */}
+      {isDeleteMandateModalOpen && mandate && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-rose-50 px-6 py-4 border-b border-rose-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Move Mandate to Trash Bin</h3>
+                  <p className="text-[10px] text-rose-700">Safely archives search mandate and releases child relations</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setIsDeleteMandateModalOpen(false)}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="font-bold text-slate-900 text-sm">
+                Move mandate <strong>{mandate.title}</strong> ({mandate.client.name}) to Trash Bin?
+              </p>
+
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-800 text-[11px] leading-relaxed">
+                <strong>Notice:</strong>
+                <ul className="list-disc list-inside mt-1 space-y-0.5">
+                  <li>Mandate will be removed from Active and Closed lists.</li>
+                  <li>Candidate records remain safe in your Talent Bank.</li>
+                  <li>Mandates with verified paid placement invoices cannot be deleted.</li>
+                </ul>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsDeleteMandateModalOpen(false)}
+                  disabled={deletingMandate}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteDeleteMandate}
+                  disabled={deletingMandate}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-xs cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                >
+                  {deletingMandate ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Moving to Bin...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Move Mandate to Bin</span>
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

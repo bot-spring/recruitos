@@ -37,6 +37,8 @@ enum MandateStatus {
   PLACEMENT_CONFIRMED   // Candidate accepted and joined
   PROBATION_TRACKING    // Active 90-day replacement guarantee window
   CLOSED_FULFILLED      // Completed successfully
+  CLOSED_CANCELLED      // Cancelled by client or budget frozen
+  CLOSED_ON_HOLD        // Lapsed / indefinitely paused
   REPLACEMENT_ACTIVE    // Early exit during probation, $0 replacement mandate
 }
 
@@ -180,6 +182,8 @@ model Agency {
   placementInvoices  PlacementInvoice[]
   auditLogs          AuditLog[]
   callLogs           CallLog[]
+  candidateTrashBins CandidateTrashBin[]
+  mandateTrashBins   MandateTrashBin[]
 
   @@map("agencies")
 }
@@ -674,4 +678,47 @@ model PlatformSetting {
   updatedAt                   DateTime @updatedAt @map("updated_at")
 
   @@map("platform_settings")
+}
+
+// Soft-deleted / Bin models to preserve historical records and enable 1-click restore
+model CandidateTrashBin {
+  id                   String   @id @default(uuid())
+  agencyId             String   @map("agency_id")
+  originalCandidateId String   @map("original_candidate_id")
+  fullName             String   @map("full_name")
+  email                String
+  phone                String
+  phoneNormalized      String   @map("phone_normalized")
+  candidateSnapshot    Json     @map("candidate_snapshot")
+  deletedByUserId      String?  @map("deleted_by_user_id")
+  deletedByUserName    String?  @map("deleted_by_user_name")
+  deletionReason       String?  @map("deletion_reason")
+  deletedAt            DateTime @default(now()) @map("deleted_at")
+
+  agency               Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@index([email])
+  @@index([phoneNormalized])
+  @@index([deletedAt])
+  @@map("candidate_trash_bins")
+}
+
+model MandateTrashBin {
+  id                String   @id @default(uuid())
+  agencyId          String   @map("agency_id")
+  originalMandateId String   @map("original_mandate_id")
+  title             String
+  clientName        String   @map("client_name")
+  mandateSnapshot   Json     @map("mandate_snapshot")
+  deletedByUserId   String?  @map("deleted_by_user_id")
+  deletedByUserName String?  @map("deleted_by_user_name")
+  deletionReason    String?  @map("deletion_reason")
+  deletedAt         DateTime @default(now()) @map("deleted_at")
+
+  agency            Agency   @relation(fields: [agencyId], references: [id], onDelete: Cascade)
+
+  @@index([agencyId])
+  @@index([deletedAt])
+  @@map("mandate_trash_bins")
 }

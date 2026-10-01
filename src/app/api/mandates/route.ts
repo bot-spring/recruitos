@@ -16,14 +16,36 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const scope = searchParams.get("scope"); // "my" or "all"
+    const statusFilter = searchParams.get("status"); // "active" | "closed" | "all"
 
     const isDeskRecruiter = session.user.role === "RECRUITER";
     const whereClause: any = {
       agencyId: session.user.agencyId,
-      status: {
-        not: MandateStatus.UNREVIEWED_INBOUND, // Exclude unreviewed from main board
-      },
     };
+
+    if (statusFilter === "closed") {
+      whereClause.status = {
+        in: [
+          MandateStatus.CLOSED_FULFILLED,
+          MandateStatus.CLOSED_CANCELLED,
+          MandateStatus.CLOSED_ON_HOLD,
+        ],
+      };
+    } else if (statusFilter === "all") {
+      whereClause.status = {
+        not: MandateStatus.UNREVIEWED_INBOUND,
+      };
+    } else {
+      // Default: Active searches only
+      whereClause.status = {
+        notIn: [
+          MandateStatus.UNREVIEWED_INBOUND,
+          MandateStatus.CLOSED_FULFILLED,
+          MandateStatus.CLOSED_CANCELLED,
+          MandateStatus.CLOSED_ON_HOLD,
+        ],
+      };
+    }
 
     // If desk recruiter and not explicitly requesting all, filter by assigned
     if (isDeskRecruiter && scope !== "all") {

@@ -43,6 +43,8 @@ import {
   Shield,
   RefreshCw,
   ExternalLink,
+  Trash2,
+  Loader2,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CockpitHeader } from "@/components/CockpitHeader";
@@ -242,6 +244,35 @@ export default function CandidateBankPage() {
       return updated;
     });
     setNewSkillInput("");
+  };
+
+  // Delete Candidate Modal State (Recycle Bin)
+  const [candidateToDelete, setCandidateToDelete] = useState<CandidateRecord | null>(null);
+  const [deletingCandidate, setDeletingCandidate] = useState(false);
+
+  const handleExecuteDeleteCandidate = async () => {
+    if (!candidateToDelete) return;
+    setDeletingCandidate(true);
+    try {
+      const res = await fetch(`/api/candidates/${candidateToDelete.id}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason: "User deleted profile from Talent Bank" }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to delete candidate.");
+
+      setSuccessMessage(`Candidate '${candidateToDelete.fullName}' moved to Trash Bin.`);
+      setCandidates((prev) => prev.filter((c) => c.id !== candidateToDelete.id));
+      if (selectedCandidate?.id === candidateToDelete.id) {
+        setSelectedCandidate(null);
+      }
+      setCandidateToDelete(null);
+    } catch (err: any) {
+      setParseError(err.message || "Failed to delete candidate.");
+    } finally {
+      setDeletingCandidate(false);
+    }
   };
 
   // Silver Medalist Tagging Modal State (RC-07)
@@ -1178,6 +1209,7 @@ export default function CandidateBankPage() {
                   }}
                   onRetentionPulse={handleOpenPulseModal}
                   onConfirmJoining={handleOpenJoiningModal}
+                  onDeleteCandidate={(cand) => setCandidateToDelete(cand as any)}
                 />
               ))}
             </div>
@@ -2470,7 +2502,80 @@ export default function CandidateBankPage() {
           setSelectedCandidate(null);
           handleOpenScheduleModal(cand);
         }}
+        onDeleteCandidate={(cand) => setCandidateToDelete(cand as any)}
       />
+
+      {/* Delete Candidate Confirmation Modal */}
+      {candidateToDelete && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-rose-50 px-6 py-4 border-b border-rose-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">Move Candidate to Trash Bin</h3>
+                  <p className="text-[10px] text-rose-700">Safely archives candidate profile and releases unique identifiers</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setCandidateToDelete(null)}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <p className="font-bold text-slate-900 text-sm mb-1">
+                  Are you sure you want to remove {candidateToDelete.fullName}?
+                </p>
+                <p className="text-slate-500 text-[11px]">
+                  {candidateToDelete.currentTitle || "Candidate"} • {candidateToDelete.email || "No email"}
+                </p>
+              </div>
+
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-800 text-[11px] leading-relaxed">
+                <strong>What happens next:</strong>
+                <ul className="list-disc list-inside mt-1 space-y-0.5">
+                  <li>Candidate and timeline will be moved to the <strong>Trash Bin</strong>.</li>
+                  <li>Email and phone numbers are freed if you wish to re-add later.</li>
+                  <li>You can restore this profile anytime from the Trash Bin.</li>
+                </ul>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setCandidateToDelete(null)}
+                  disabled={deletingCandidate}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteDeleteCandidate}
+                  disabled={deletingCandidate}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-xs cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                >
+                  {deletingCandidate ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Moving to Bin...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Move to Trash Bin</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
