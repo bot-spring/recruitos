@@ -19,6 +19,11 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     const body = await req.json();
     const { status, closeReason, recycleCandidates } = body;
 
+    let targetStatus: MandateStatus = status as MandateStatus;
+    if (status === "ACTIVE" || status === "ACTIVE_ASSIGNED" || status === "OPEN") {
+      targetStatus = MandateStatus.ACTIVE_ASSIGNED;
+    }
+
     const mandate = await prisma.jobMandate.findFirst({
       where: { id: mandateId, agencyId },
       include: {
