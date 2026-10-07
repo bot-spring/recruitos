@@ -278,21 +278,23 @@ export default function MandateWorkspacePage() {
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [savingBatch, setSavingBatch] = useState(false);
+  const [expandedEditIndex, setExpandedEditIndex] = useState<number | null>(null);
   const [parseProgress, setParseProgress] = useState({
     current: 0,
     total: 0,
     currentFileName: "",
     percent: 0,
+    stageText: "Preparing document...",
   });
 
-  const updateActiveParsedField = (field: string, value: any) => {
+  const updateCandidateField = (index: number, field: string, value: any) => {
     setBatchResults((prev) => {
       const updated = [...prev];
-      if (updated[activeBatchIndex]?.parsed) {
-        updated[activeBatchIndex] = {
-          ...updated[activeBatchIndex],
+      if (updated[index]?.parsed) {
+        updated[index] = {
+          ...updated[index],
           parsed: {
-            ...updated[activeBatchIndex].parsed,
+            ...updated[index].parsed,
             [field]: value,
           },
         };
@@ -301,13 +303,17 @@ export default function MandateWorkspacePage() {
     });
   };
 
-  const handleRemoveSkill = (skillToRemove: string) => {
+  const updateActiveParsedField = (field: string, value: any) => {
+    updateCandidateField(activeBatchIndex, field, value);
+  };
+
+  const handleRemoveSkill = (skillToRemove: string, index = activeBatchIndex) => {
     setBatchResults((prev) => {
       const updated = [...prev];
-      const curr = updated[activeBatchIndex]?.parsed;
+      const curr = updated[index]?.parsed;
       if (curr && Array.isArray(curr.skills)) {
-        updated[activeBatchIndex] = {
-          ...updated[activeBatchIndex],
+        updated[index] = {
+          ...updated[index],
           parsed: {
             ...curr,
             skills: curr.skills.filter((s: string) => s !== skillToRemove),
@@ -318,17 +324,17 @@ export default function MandateWorkspacePage() {
     });
   };
 
-  const handleAddSkill = () => {
+  const handleAddSkill = (index = activeBatchIndex) => {
     if (!newSkillInput.trim()) return;
     const skillToAdd = newSkillInput.trim();
     setBatchResults((prev) => {
       const updated = [...prev];
-      const curr = updated[activeBatchIndex]?.parsed;
+      const curr = updated[index]?.parsed;
       if (curr) {
         const existing = Array.isArray(curr.skills) ? curr.skills : [];
         if (!existing.includes(skillToAdd)) {
-          updated[activeBatchIndex] = {
-            ...updated[activeBatchIndex],
+          updated[index] = {
+            ...updated[index],
             parsed: {
               ...curr,
               skills: [...existing, skillToAdd],
@@ -339,6 +345,15 @@ export default function MandateWorkspacePage() {
       return updated;
     });
     setNewSkillInput("");
+  };
+
+  const handleRemoveBatchItem = (index: number) => {
+    setBatchResults((prev) => prev.filter((_, i) => i !== index));
+    if (expandedEditIndex === index) {
+      setExpandedEditIndex(null);
+    } else if (expandedEditIndex !== null && expandedEditIndex > index) {
+      setExpandedEditIndex(expandedEditIndex - 1);
+    }
   };
 
   // Client Portal Share Modal State
@@ -556,27 +571,62 @@ export default function MandateWorkspacePage() {
     setParseError(null);
     setBatchResults([]);
     setActiveBatchIndex(0);
+    setExpandedEditIndex(null);
     setParseProgress({
       current: 1,
       total: fileList.length,
       currentFileName: fileList[0].name,
-      percent: 5,
+      percent: 8,
+      stageText: "Uploading & storing document in cloud...",
     });
 
-    const accumulatedResults: any[] = [];
+    const accumulatedResults: any[] = new Array(fileList.length);
+    const concurrency = 5;
+    let completedCount = 0;
+    let nextIndexToProcess = 0;
 
-    try {
-      for (let i = 0; i < fileList.length; i++) {
+    // Smooth stage-aware progress ticker
+    const progressInterval = setInterval(() => {
+      setParseProgress((prev) => {
+        const baseFloor = (completedCount / fileList.length) * 100;
+        const currentTargetCeiling = Math.min(94, Math.round(baseFloor + (94 - baseFloor) * 0.9));
+        if (prev.percent >= currentTargetCeiling) {
+          return prev;
+        }
+        const step = Math.max(1, Math.round((currentTargetCeiling - prev.percent) * 0.08));
+        const nextVal = Math.min(currentTargetCeiling, prev.percent + step);
+
+        let stage = "Uploading & storing document in cloud...";
+        if (nextVal >= 25 && nextVal < 70) {
+          stage = "AI extracting candidate profile & qualifications...";
+        } else if (nextVal >= 70) {
+          stage = "Checking duplicate records & mandate pipeline...";
+        }
+
+        return {
+          ...prev,
+          percent: nextVal,
+          stageText: stage,
+        };
+      });
+    }, 200);
+
+    const worker = async () => {
+      while (nextIndexToProcess < fileList.length) {
+        const i = nextIndexToProcess++;
         const file = fileList[i];
-        setParseProgress({
-          current: i + 1,
-          total: fileList.length,
+
+        setParseProgress((prev) => ({
+          ...prev,
+          current: Math.min(completedCount + 1, fileList.length),
           currentFileName: file.name,
-          percent: Math.max(5, Math.round((i / fileList.length) * 100)),
-        });
+        }));
 
         const formData = new FormData();
         formData.append("file", file);
+        if (mandateId) {
+          formData.append("mandateId", mandateId);
+        }
 
         try {
           const res = await fetch("/api/candidates/parse", {
@@ -586,41 +636,72 @@ export default function MandateWorkspacePage() {
 
           const data = await res.json();
           if (res.ok && data.results && data.results[0]) {
-            accumulatedResults.push(data.results[0]);
+            accumulatedResults[i] = data.results[0];
           } else if (res.ok && data.parsed) {
-            accumulatedResults.push({
+            accumulatedResults[i] = {
               fileName: file.name,
+              fileSize: file.size,
               success: true,
               parsed: data.parsed,
               resumeUrl: data.resumeUrl,
               rawResumeText: data.rawResumeText,
-            });
+              isDuplicate: Boolean(data.isDuplicate),
+              existingCandidateId: data.existingCandidateId || null,
+              isMandateDuplicate: Boolean(data.isMandateDuplicate),
+              existingStage: data.existingStage || null,
+              existingJobStatus: data.existingJobStatus || null,
+            };
           } else {
-            accumulatedResults.push({
+            accumulatedResults[i] = {
               fileName: file.name,
+              fileSize: file.size,
               success: false,
               error: data.error || "Failed to extract entities",
-            });
+            };
           }
         } catch (itemErr: any) {
-          accumulatedResults.push({
+          accumulatedResults[i] = {
             fileName: file.name,
+            fileSize: file.size,
             success: false,
             error: itemErr.message || "Network error while parsing",
-          });
+          };
         }
 
-        setBatchResults([...accumulatedResults]);
-        setParseProgress({
-          current: i + 1,
-          total: fileList.length,
-          currentFileName: file.name,
-          percent: Math.round(((i + 1) / fileList.length) * 100),
+        completedCount++;
+        setBatchResults([...accumulatedResults.filter(Boolean)]);
+        setParseProgress((prev) => {
+          const newFloor = Math.round((completedCount / fileList.length) * 100);
+          return {
+            ...prev,
+            current: Math.min(completedCount + 1, fileList.length),
+            currentFileName: file.name,
+            percent: Math.max(prev.percent, newFloor > 94 ? 94 : newFloor),
+          };
         });
       }
+    };
+
+    try {
+      const workers = Array.from(
+        { length: Math.min(concurrency, fileList.length) },
+        () => worker()
+      );
+      await Promise.all(workers);
+      clearInterval(progressInterval);
+      setParseProgress((prev) => ({
+        ...prev,
+        current: fileList.length,
+        percent: 100,
+        stageText: "Parsing complete!",
+      }));
+      // Smooth visual transition
+      await new Promise((r) => setTimeout(r, 350));
     } catch (err: any) {
-      setParseError(err.message || "Failed to parse resumes with Gemini AI.");
+      clearInterval(progressInterval);
+      setParseError(err.message || "Failed to parse resumes with AI.");
     } finally {
+      clearInterval(progressInterval);
       setParsing(false);
     }
   };
@@ -633,6 +714,8 @@ export default function MandateWorkspacePage() {
 
     try {
       let savedCount = 0;
+      let newlyAttachedCount = 0;
+      let alreadyActiveCount = 0;
       let lastErrorMessage = "";
 
       for (const item of batchResults) {
@@ -664,6 +747,16 @@ export default function MandateWorkspacePage() {
 
         if (res.ok) {
           savedCount++;
+          try {
+            const resData = await res.json();
+            if (resData.isNewSubmission) {
+              newlyAttachedCount++;
+            } else {
+              alreadyActiveCount++;
+            }
+          } catch (_) {
+            newlyAttachedCount++;
+          }
         } else {
           try {
             const errData = await res.json();
@@ -675,10 +768,19 @@ export default function MandateWorkspacePage() {
       }
 
       if (savedCount > 0) {
-        setSuccessMessage(`Successfully ingested and attached ${savedCount} candidate(s) to this job!`);
+        let msg = "";
+        if (newlyAttachedCount > 0 && alreadyActiveCount > 0) {
+          msg = `✓ ${newlyAttachedCount} new candidate(s) attached to pipeline. ${alreadyActiveCount} candidate(s) were already active in this job (profiles & resumes refreshed).`;
+        } else if (newlyAttachedCount > 0) {
+          msg = `✓ Successfully attached ${newlyAttachedCount} new candidate(s) to '${mandate?.title || "job"}'!`;
+        } else {
+          msg = `ℹ️ All ${alreadyActiveCount} candidate(s) were already in this job mandate — updated their profile & resume records.`;
+        }
+        setSuccessMessage(msg);
         setIsIngestModalOpen(false);
         setUploadFiles([]);
         setBatchResults([]);
+        setExpandedEditIndex(null);
         await fetchWorkspace();
       } else {
         setParseError(`Failed to save candidates: ${lastErrorMessage || "Unable to save to database."}`);
@@ -1437,29 +1539,27 @@ export default function MandateWorkspacePage() {
       {isIngestModalOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4">
           <div
-            className={`bg-white rounded-3xl shadow-2xl border border-slate-200 ${
+            className={`bg-white rounded-2xl shadow-2xl border border-slate-200 ${
               batchResults.length > 0 && !parsing ? "max-w-5xl" : "max-w-2xl"
             } w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs flex flex-col max-h-[92vh]`}
           >
-            {/* Modal Header with Botspring Gold (#fce17c) */}
-            <div className="bg-[#fce17c] px-6 py-4 border-b border-[#ebd06b] flex items-center justify-between text-slate-900 flex-shrink-0">
-              <div className="flex items-center space-x-2.5">
-                <div className="w-8 h-8 rounded-xl bg-white/80 border border-[#e8c757] flex items-center justify-center text-slate-900 shadow-2xs font-black">
-                  <Sparkles className="h-4 w-4 text-amber-700" />
+            {/* Modal Header - Clean Enterprise White */}
+            <div className="bg-white px-6 py-4 border-b border-slate-200 flex items-center justify-between text-slate-900 flex-shrink-0">
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700">
+                  <UploadCloud className="h-4 w-4" />
                 </div>
                 <div>
                   <div className="flex items-center space-x-2">
-                    <h3 className="font-black text-slate-900 text-sm tracking-tight">
-                      CV Intake Engine for '{mandate.title}' (RC-02)
+                    <h3 className="font-bold text-slate-900 text-sm">
+                      CV Intake Engine
                     </h3>
-                    <span className="bg-white/90 text-slate-900 text-[10px] font-black px-2 py-0.5 rounded border border-[#ebd06b] uppercase">
+                    <span className="bg-slate-100 text-slate-700 text-[10px] font-semibold px-2 py-0.5 rounded border border-slate-200">
                       Mandate Direct
                     </span>
                   </div>
-                  <p className="text-[11px] text-slate-800 font-medium">
-                    {batchResults.length > 0 && !parsing
-                      ? "Split-screen review: Inspect extracted fields, adjust skills & attach directly to this mandate"
-                      : "Drag and drop up to 5 resumes for automated entity extraction & mandate attachment"}
+                  <p className="text-[11px] text-slate-500">
+                    {mandate.title} ({mandate.client.name})
                   </p>
                 </div>
               </div>
@@ -1469,9 +1569,9 @@ export default function MandateWorkspacePage() {
                   setBatchResults([]);
                   setUploadFiles([]);
                   setParseError(null);
-                  setActiveBatchIndex(0);
+                  setExpandedEditIndex(null);
                 }}
-                className="text-slate-700 hover:text-slate-900 text-xl font-bold leading-none cursor-pointer w-7 h-7 rounded-lg hover:bg-black/10 flex items-center justify-center transition-colors"
+                className="text-slate-400 hover:text-slate-700 text-xl font-bold leading-none cursor-pointer w-7 h-7 rounded-lg hover:bg-slate-100 flex items-center justify-center transition-colors"
               >
                 &times;
               </button>
@@ -1491,22 +1591,22 @@ export default function MandateWorkspacePage() {
               {/* State 1: Dropzone */}
               {batchResults.length === 0 && !parsing && (
                 <div className="space-y-4">
-                  <div className="bg-amber-50/60 p-4 rounded-2xl border border-amber-200/80 flex items-center justify-between">
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex items-center justify-between">
                     <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 rounded-xl bg-[#fce17c] border border-[#ebd06b] flex items-center justify-center text-slate-900 font-bold">
+                      <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 font-bold">
                         <Briefcase className="h-4 w-4" />
                       </div>
                       <div>
-                        <span className="text-[11px] font-bold text-amber-900 uppercase tracking-wider block">Target Job Mandate</span>
-                        <span className="text-xs font-black text-slate-900">{mandate.title} ({mandate.client.name})</span>
+                        <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">Target Job Mandate</span>
+                        <span className="text-xs font-bold text-slate-900">{mandate.title} ({mandate.client.name})</span>
                       </div>
                     </div>
-                    <span className="bg-white text-emerald-800 border border-emerald-300 text-[10px] font-extrabold px-2.5 py-1 rounded-full shadow-2xs">
+                    <span className="bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] font-bold px-2.5 py-1 rounded-full">
                       ✓ Auto-Attach Enabled
                     </span>
                   </div>
 
-                  <div className="border-2 border-dashed border-amber-300 hover:border-amber-400 rounded-3xl p-10 text-center bg-amber-50/20 hover:bg-amber-50/40 transition-all">
+                  <div className="border-2 border-dashed border-slate-300 hover:border-slate-400 rounded-2xl p-10 text-center bg-slate-50/50 hover:bg-slate-50 transition-all">
                     <input
                       type="file"
                       multiple
@@ -1516,19 +1616,19 @@ export default function MandateWorkspacePage() {
                       className="hidden"
                     />
                     <label htmlFor="mandate-resume-upload-batch" className="cursor-pointer block">
-                      <div className="w-16 h-16 rounded-2xl bg-[#fce17c]/40 border border-[#ebd06b] flex items-center justify-center text-slate-900 mx-auto mb-3 shadow-2xs">
-                        <UploadCloud className="h-8 w-8 text-slate-800" />
+                      <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-700 mx-auto mb-3 shadow-xs">
+                        <UploadCloud className="h-7 w-7 text-slate-700" />
                       </div>
-                      <span className="font-black text-slate-900 text-sm hover:underline block">
+                      <span className="font-bold text-slate-900 text-sm hover:underline block">
                         Click to Select Resumes (PDF, DOCX)
                       </span>
-                      <p className="text-xs text-slate-500 mt-1.5 max-w-md mx-auto font-medium">
+                      <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
                         Select <strong>up to 5 resumes</strong> at once. Each file must be under <strong>10MB</strong>.
                       </p>
-                      <div className="mt-4 inline-flex items-center space-x-2 text-[11px] font-bold text-slate-700 bg-white px-3.5 py-1.5 rounded-full border border-slate-200 shadow-2xs">
-                        <span>✓ Permanent CV document storage</span>
+                      <div className="mt-4 inline-flex items-center space-x-2 text-[11px] font-medium text-slate-600 bg-white px-3.5 py-1.5 rounded-full border border-slate-200 shadow-2xs">
+                        <span>✓ Concurrency optimized</span>
                         <span>•</span>
-                        <span>✓ Gemini AI entity extraction</span>
+                        <span>✓ Deduplication radar</span>
                         <span>•</span>
                         <span>✓ Auto-attach to pipeline</span>
                       </div>
@@ -1539,387 +1639,395 @@ export default function MandateWorkspacePage() {
 
               {/* State 2: Active Parsing Progress Indicator */}
               {parsing && (
-                <div className="p-8 bg-slate-50/80 rounded-3xl border border-slate-200 text-center space-y-4">
-                  <div className="w-10 h-10 border-3 border-amber-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
-
-                  <div className="space-y-1">
-                    <div className="flex items-center justify-center space-x-2 text-sm font-black text-slate-900">
-                      <span>Parsing Resume {parseProgress.current} of {parseProgress.total}</span>
-                      <span className="text-xs font-bold text-amber-700 font-mono">({parseProgress.percent}%)</span>
-                    </div>
-                    <p className="text-xs text-slate-600 font-medium truncate max-w-md mx-auto">
-                      Extracting: <span className="font-mono text-slate-900 font-bold">{parseProgress.currentFileName}</span>
-                    </p>
-                    <p className="text-[11px] text-slate-400">
-                      Extracting candidate entities, qualifications & saving file copies to server
-                    </p>
+                <div className="p-8 bg-white rounded-2xl border border-slate-200 text-center space-y-4 shadow-xs">
+                  <div className="relative w-12 h-12 mx-auto flex items-center justify-center">
+                    <div className="w-12 h-12 border-3 border-slate-200 border-t-slate-900 rounded-full animate-spin"></div>
+                    <Sparkles className="w-5 h-5 text-slate-700 absolute inset-0 m-auto" />
                   </div>
 
-                  <div className="max-w-md mx-auto space-y-1.5">
-                    <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-center space-x-2 text-sm font-bold text-slate-900">
+                      <span>Processing {parseProgress.total === 1 ? "Resume" : `Resumes (${Math.min(parseProgress.current, parseProgress.total)} of ${parseProgress.total})`}</span>
+                      <span className="text-xs font-semibold text-slate-500 font-mono">({parseProgress.percent}%)</span>
+                    </div>
+                    <p className="text-xs text-slate-600 truncate max-w-md mx-auto">
+                      File: <span className="font-mono text-slate-900 font-semibold">{parseProgress.currentFileName}</span>
+                    </p>
+                    <div className="inline-flex items-center space-x-1.5 px-3 py-1 bg-slate-50 border border-slate-200 rounded-md text-xs font-medium text-slate-700">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-900 animate-pulse"></span>
+                      <span>{parseProgress.stageText || "AI extracting candidate profile & qualifications..."}</span>
+                    </div>
+                  </div>
+
+                  <div className="max-w-md mx-auto space-y-1.5 pt-1">
+                    <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden border border-slate-200">
                       <div
-                        className="h-full bg-[#fce17c] rounded-full transition-all duration-300 shadow-2xs border border-[#ebd06b]"
-                        style={{ width: `${Math.max(8, parseProgress.percent)}%` }}
+                        className="h-full bg-slate-900 rounded-full transition-all duration-300 ease-out"
+                        style={{ width: `${Math.max(6, parseProgress.percent)}%` }}
                       />
                     </div>
-                    <div className="flex justify-between text-[10px] text-slate-500 font-semibold">
-                      <span>File {parseProgress.current} of {parseProgress.total}</span>
+                    <div className="flex justify-between text-[11px] text-slate-500 font-medium font-mono">
+                      <span>{parseProgress.total === 1 ? "1 file" : `${Math.min(parseProgress.current, parseProgress.total)}/${parseProgress.total} processed`}</span>
                       <span>{parseProgress.percent}% Complete</span>
                     </div>
                   </div>
                 </div>
               )}
 
-              {/* State 3: Split-Screen Review & Human-Correction Drawer (RC-02) */}
+              {/* State 3: Executive Review Summary Table */}
               {batchResults.length > 0 && !parsing && (
-                <div className="space-y-4">
-                  {/* Top Batch Dossiers Selector Bar */}
-                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-50 p-3 rounded-2xl border border-slate-200">
-                    <div className="flex items-center space-x-2 overflow-x-auto pb-1 sm:pb-0">
-                      <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 mr-1 flex-shrink-0">
-                        Parsed Dossiers:
+                <div className="space-y-3">
+                  {/* Top Bar: Count & Actions */}
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                    <div className="flex items-center space-x-3">
+                      <span className="font-bold text-slate-900 text-xs">
+                        {batchResults.length} Candidate Profile{batchResults.length > 1 ? "s" : ""} Extracted
                       </span>
-                      {batchResults.map((r, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => setActiveBatchIndex(idx)}
-                          className={`px-3 py-1.5 rounded-xl font-bold text-xs flex items-center space-x-1.5 transition-all cursor-pointer flex-shrink-0 border ${
-                            activeBatchIndex === idx
-                              ? "bg-[#fce17c] text-slate-900 border-[#ebd06b] shadow-xs ring-1 ring-[#ebd06b]"
-                              : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
-                          }`}
-                        >
-                          <FileText className="h-3.5 w-3.5 text-slate-500" />
-                          <span className="truncate max-w-[120px] font-bold">
-                            {r.parsed?.fullName || r.fileName}
-                          </span>
-                          {r.success ? (
-                            <CheckCircle2 className="h-3 w-3 text-emerald-600 ml-0.5" />
-                          ) : (
-                            <AlertCircle className="h-3 w-3 text-rose-600 ml-0.5" />
-                          )}
-                        </button>
-                      ))}
+                      {batchResults.some((r) => r.isMandateDuplicate) && (
+                        <span className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-md font-medium">
+                          {batchResults.filter((r) => r.isMandateDuplicate).length} already in this job
+                        </span>
+                      )}
                     </div>
-
                     <button
                       type="button"
                       onClick={() => {
                         setBatchResults([]);
                         setUploadFiles([]);
                         setParseError(null);
-                        setActiveBatchIndex(0);
+                        setExpandedEditIndex(null);
                       }}
-                      className="text-xs text-blue-600 hover:underline font-bold flex-shrink-0 flex items-center space-x-1 cursor-pointer"
+                      className="text-xs text-slate-600 hover:text-slate-900 font-semibold flex items-center space-x-1 cursor-pointer"
                     >
                       <RotateCcw className="h-3 w-3" />
                       <span>Upload Different Files</span>
                     </button>
                   </div>
 
-                  {/* Active Candidate Split-Screen Container */}
-                  {batchResults[activeBatchIndex] && (
-                    <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-start">
-                      {/* LEFT PANE: Document Source & Raw Text Excerpt (5 cols) */}
-                      <div className="md:col-span-5 space-y-3">
-                        {/* Document Metadata Card */}
-                        <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-2">
-                          <div className="flex items-start justify-between">
-                            <div className="flex items-center space-x-2">
-                              <div className="w-8 h-8 rounded-xl bg-white border border-slate-200 flex items-center justify-center text-slate-700">
-                                <FileText className="h-4 w-4 text-slate-700" />
+                  {/* Candidate List Cards / Rows */}
+                  <div className="space-y-2">
+                    {batchResults.map((r, idx) => {
+                      const p = r.parsed || {};
+                      const isExpanded = expandedEditIndex === idx;
+
+                      return (
+                        <div
+                          key={idx}
+                          className={`rounded-xl border transition-all ${
+                            isExpanded
+                              ? "border-slate-800 bg-white shadow-xs"
+                              : "border-slate-200 bg-slate-50/50 hover:bg-white"
+                          }`}
+                        >
+                          {/* Row Summary */}
+                          <div className="p-3.5 flex flex-col md:flex-row md:items-center justify-between gap-3">
+                            {/* Candidate Identity */}
+                            <div className="flex items-start space-x-3 min-w-0 flex-1">
+                              <div className="w-9 h-9 rounded-xl bg-slate-100 border border-slate-200 flex items-center justify-center font-bold text-slate-700 text-xs shrink-0">
+                                {p.fullName
+                                  ? p.fullName
+                                      .split(" ")
+                                      .map((n: string) => n[0])
+                                      .join("")
+                                      .slice(0, 2)
+                                      .toUpperCase()
+                                  : "CV"}
                               </div>
-                              <div>
-                                <span className="font-bold text-slate-900 text-xs block truncate max-w-[180px]">
-                                  {batchResults[activeBatchIndex].fileName}
-                                </span>
-                                <span className="text-[10px] text-slate-400 font-mono">
-                                  {batchResults[activeBatchIndex].fileSize
-                                    ? `${Math.round(batchResults[activeBatchIndex].fileSize / 1024)} KB`
-                                    : "Document File"}
-                                </span>
-                              </div>
-                            </div>
-
-                            {batchResults[activeBatchIndex].resumeUrl && (
-                              <a
-                                href={batchResults[activeBatchIndex].resumeUrl}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center space-x-1 text-[11px] font-bold text-blue-600 hover:text-blue-800 bg-blue-50 border border-blue-200 px-2.5 py-1 rounded-lg transition-colors"
-                              >
-                                <span>View PDF</span>
-                                <ExternalLink className="h-3 w-3" />
-                              </a>
-                            )}
-                          </div>
-
-                          <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-2.5 flex items-center space-x-2 text-[11px] text-emerald-900 font-bold">
-                            <CheckCircle2 className="h-4 w-4 text-emerald-600 flex-shrink-0" />
-                            <span>Duplicate Check Passed — Record Ready</span>
-                          </div>
-                        </div>
-
-                        {/* Target Mandate Badge */}
-                        <div className="bg-white rounded-2xl p-3.5 border border-slate-200 space-y-1">
-                          <label className="block font-bold text-slate-700 text-xs">
-                            Mandate Pipeline Target
-                          </label>
-                          <div className="px-3 py-2 bg-slate-50 rounded-xl border border-slate-200 flex items-center space-x-2">
-                            <Briefcase className="h-3.5 w-3.5 text-slate-500" />
-                            <span className="font-bold text-slate-900 text-xs truncate">
-                              {mandate.title} ({mandate.client.name})
-                            </span>
-                          </div>
-                          <p className="text-[10px] text-slate-400">
-                            Candidate will be saved in master talent pool & submitted directly to this job.
-                          </p>
-                        </div>
-
-                        {/* Raw Resume Text Preview Box */}
-                        <div className="bg-white rounded-2xl p-3.5 border border-slate-200 space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">
-                              Original CV Text Excerpt
-                            </span>
-                            <span className="text-[10px] text-slate-400 font-mono">Cross-Verification</span>
-                          </div>
-                          <div className="max-h-56 overflow-y-auto bg-slate-900 text-slate-200 p-3 rounded-xl font-mono text-[10px] leading-relaxed select-text">
-                            {batchResults[activeBatchIndex].rawResumeText ||
-                              batchResults[activeBatchIndex].parsed?.summary ||
-                              "No raw text available. Review extracted attributes on right."}
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* RIGHT PANE: Human-Editable Form Fields (7 cols) */}
-                      <div className="md:col-span-7 bg-slate-50/70 rounded-2xl p-4 border border-slate-200 space-y-3.5">
-                        <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                          <h5 className="font-black text-slate-900 text-xs uppercase tracking-wider flex items-center space-x-1.5">
-                            <Sparkles className="h-3.5 w-3.5 text-amber-600" />
-                            <span>AI-Extracted Structured Attributes</span>
-                          </h5>
-                          <span className="text-[10px] text-slate-500 italic">Editable before saving</span>
-                        </div>
-
-                        {batchResults[activeBatchIndex].parsed ? (
-                          <div className="space-y-3">
-                            {/* Candidate Full Name */}
-                            <div>
-                              <label className="block font-bold text-slate-700 mb-0.5 text-[11px]">
-                                Full Legal Name *
-                              </label>
-                              <input
-                                type="text"
-                                required
-                                value={batchResults[activeBatchIndex].parsed.fullName || ""}
-                                onChange={(e) => updateActiveParsedField("fullName", e.target.value)}
-                                className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-bold focus:ring-2 focus:ring-[#fce17c] focus:outline-none"
-                              />
-                            </div>
-
-                            {/* Designation & Company */}
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
-                                  Current Designation
-                                </label>
-                                <input
-                                  type="text"
-                                  value={batchResults[activeBatchIndex].parsed.currentTitle || ""}
-                                  onChange={(e) => updateActiveParsedField("currentTitle", e.target.value)}
-                                  placeholder="Senior Software Engineer"
-                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
-                                  Current Company
-                                </label>
-                                <input
-                                  type="text"
-                                  value={batchResults[activeBatchIndex].parsed.currentCompany || ""}
-                                  onChange={(e) => updateActiveParsedField("currentCompany", e.target.value)}
-                                  placeholder="Swiggy"
-                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900"
-                                />
-                              </div>
-                            </div>
-
-                            {/* Experience & Notice Period */}
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
-                                  Total Experience (Years)
-                                </label>
-                                <input
-                                  type="number"
-                                  step="0.5"
-                                  value={batchResults[activeBatchIndex].parsed.totalExpYears ?? 0}
-                                  onChange={(e) =>
-                                    updateActiveParsedField("totalExpYears", parseFloat(e.target.value) || 0)
-                                  }
-                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-bold"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
-                                  Notice Period (Days)
-                                </label>
-                                <input
-                                  type="number"
-                                  value={batchResults[activeBatchIndex].parsed.noticePeriodDays ?? 30}
-                                  onChange={(e) =>
-                                    updateActiveParsedField("noticePeriodDays", parseInt(e.target.value, 10) || 0)
-                                  }
-                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-bold"
-                                />
-                              </div>
-                            </div>
-
-                            {/* Compensation Trajectory (CTC) */}
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
-                                  Current CTC (INR Annual)
-                                </label>
-                                <input
-                                  type="text"
-                                  value={batchResults[activeBatchIndex].parsed.currentCtc || ""}
-                                  onChange={(e) => updateActiveParsedField("currentCtc", e.target.value)}
-                                  placeholder="e.g. 2400000"
-                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-mono"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
-                                  Expected CTC (INR Annual)
-                                </label>
-                                <input
-                                  type="text"
-                                  value={batchResults[activeBatchIndex].parsed.expectedCtc || ""}
-                                  onChange={(e) => updateActiveParsedField("expectedCtc", e.target.value)}
-                                  placeholder="e.g. 3200000"
-                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-mono font-bold text-emerald-800"
-                                />
-                              </div>
-                            </div>
-
-                            {/* Mobile Phone & Email */}
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
-                                  Candidate Mobile / WhatsApp
-                                </label>
-                                <input
-                                  type="text"
-                                  value={batchResults[activeBatchIndex].parsed.phone || ""}
-                                  onChange={(e) => updateActiveParsedField("phone", e.target.value)}
-                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900 font-mono"
-                                />
-                              </div>
-
-                              <div>
-                                <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
-                                  Candidate Email
-                                </label>
-                                <input
-                                  type="email"
-                                  value={batchResults[activeBatchIndex].parsed.email || ""}
-                                  onChange={(e) => updateActiveParsedField("email", e.target.value)}
-                                  className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900"
-                                />
-                              </div>
-                            </div>
-
-                            {/* Qualification */}
-                            <div>
-                              <label className="block font-semibold text-slate-700 mb-0.5 text-[11px]">
-                                Highest Qualification / Degree
-                              </label>
-                              <input
-                                type="text"
-                                value={batchResults[activeBatchIndex].parsed.qualification || ""}
-                                onChange={(e) => updateActiveParsedField("qualification", e.target.value)}
-                                placeholder="B.Tech Computer Science, IIT Bombay"
-                                className="w-full px-3 py-1.5 border border-slate-300 rounded-xl text-xs bg-white text-slate-900"
-                              />
-                            </div>
-
-                            {/* Interactive Skills Tags */}
-                            <div>
-                              <label className="block font-semibold text-slate-700 mb-1 text-[11px]">
-                                Primary Skills Tags
-                              </label>
-                              <div className="flex flex-wrap gap-1.5 mb-2 bg-white p-2.5 rounded-xl border border-slate-200 min-h-[42px]">
-                                {Array.isArray(batchResults[activeBatchIndex].parsed.skills) &&
-                                batchResults[activeBatchIndex].parsed.skills.length > 0 ? (
-                                  batchResults[activeBatchIndex].parsed.skills.map((sk: string, sIdx: number) => (
-                                    <span
-                                      key={sIdx}
-                                      className="bg-[#fce17c]/40 text-slate-900 border border-[#ebd06b] text-[10px] font-bold px-2 py-0.5 rounded-lg flex items-center space-x-1"
-                                    >
-                                      <span>{sk}</span>
-                                      <button
-                                        type="button"
-                                        onClick={() => handleRemoveSkill(sk)}
-                                        className="text-slate-600 hover:text-slate-900 cursor-pointer ml-1 leading-none font-black"
-                                      >
-                                        &times;
-                                      </button>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                                  <span className="font-bold text-slate-900 text-xs truncate">
+                                    {p.fullName || r.fileName}
+                                  </span>
+                                  {/* Dynamic Duplicate Badge */}
+                                  {r.isMandateDuplicate ? (
+                                    <span className="bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-medium px-2 py-0.5 rounded-md inline-flex items-center space-x-1">
+                                      <span>⚠️ Duplicate in this Job ({r.existingStage ? r.existingStage.replace(/_/g, " ") : "Active"})</span>
                                     </span>
-                                  ))
-                                ) : (
-                                  <span className="text-slate-400 text-[11px] italic">No skill tags extracted yet</span>
-                                )}
+                                  ) : r.isDuplicate ? (
+                                    <span className="bg-slate-100 text-slate-700 border border-slate-200 text-[10px] font-medium px-2 py-0.5 rounded-md inline-flex items-center space-x-1">
+                                      <span>Duplicate Entry Detected (Profile will update)</span>
+                                    </span>
+                                  ) : r.success ? (
+                                    <span className="bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-medium px-2 py-0.5 rounded-md inline-flex items-center space-x-1">
+                                      <span>✓ New Candidate</span>
+                                    </span>
+                                  ) : (
+                                    <span className="bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-medium px-2 py-0.5 rounded-md inline-flex items-center space-x-1">
+                                      <span>Failed to Parse</span>
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[11px] text-slate-500 mt-0.5 flex items-center space-x-2 flex-wrap">
+                                  <span className="font-medium text-slate-700">
+                                    {p.currentTitle || "Title not specified"}
+                                    {p.currentCompany ? ` @ ${p.currentCompany}` : ""}
+                                  </span>
+                                  {p.totalExpYears !== undefined && (
+                                    <>
+                                      <span>•</span>
+                                      <span>{p.totalExpYears} yrs exp</span>
+                                    </>
+                                  )}
+                                  {p.phone && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="font-mono">{p.phone}</span>
+                                    </>
+                                  )}
+                                  {p.email && (
+                                    <>
+                                      <span>•</span>
+                                      <span className="truncate max-w-[160px]">{p.email}</span>
+                                    </>
+                                  )}
+                                </div>
                               </div>
+                            </div>
 
-                              <div className="flex space-x-2">
-                                <input
-                                  type="text"
-                                  value={newSkillInput}
-                                  onChange={(e) => setNewSkillInput(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      handleAddSkill();
-                                    }
-                                  }}
-                                  placeholder="Add skill tag (press Enter)..."
-                                  className="flex-1 px-3 py-1 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
-                                />
+                            {/* Row Action Buttons */}
+                            <div className="flex items-center space-x-2 shrink-0 self-end md:self-center">
+                              {r.resumeUrl && (
+                                <a
+                                  href={r.resumeUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-[11px] font-semibold text-slate-600 hover:text-slate-900 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 inline-flex items-center space-x-1 transition-colors"
+                                  title="View Original CV"
+                                >
+                                  <FileText className="h-3.5 w-3.5" />
+                                  <span>CV</span>
+                                  <ExternalLink className="h-3 w-3" />
+                                </a>
+                              )}
+                              {r.success && (
                                 <button
                                   type="button"
-                                  onClick={handleAddSkill}
-                                  className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold rounded-lg text-xs transition-colors cursor-pointer"
+                                  onClick={() => setExpandedEditIndex(isExpanded ? null : idx)}
+                                  className={`text-[11px] font-semibold px-2.5 py-1.5 rounded-lg border transition-colors cursor-pointer inline-flex items-center space-x-1 ${
+                                    isExpanded
+                                      ? "bg-slate-900 text-white border-slate-900"
+                                      : "bg-white text-slate-700 border-slate-200 hover:bg-slate-100"
+                                  }`}
                                 >
-                                  + Add Skill
+                                  <span>{isExpanded ? "Close" : "Edit"}</span>
+                                  <ChevronDown className={`h-3 w-3 transition-transform ${isExpanded ? "rotate-180" : ""}`} />
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveBatchItem(idx)}
+                                className="text-slate-400 hover:text-rose-600 p-1.5 rounded-lg hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Remove from batch"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Expandable Inline Edit Form */}
+                          {isExpanded && r.parsed && (
+                            <div className="p-4 border-t border-slate-200 bg-slate-50/80 rounded-b-xl space-y-3">
+                              <div className="flex items-center justify-between pb-1">
+                                <span className="font-bold text-slate-800 text-[11px] uppercase tracking-wider">
+                                  Quick Edit Extracted Fields
+                                </span>
+                                <span className="text-[10px] text-slate-400">
+                                  Original file: {r.fileName}
+                                </span>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                                    Full Name *
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={p.fullName || ""}
+                                    onChange={(e) => updateCandidateField(idx, "fullName", e.target.value)}
+                                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-bold focus:ring-1 focus:ring-slate-400 focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                                    Current Title
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={p.currentTitle || ""}
+                                    onChange={(e) => updateCandidateField(idx, "currentTitle", e.target.value)}
+                                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:ring-1 focus:ring-slate-400 focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                                    Current Company
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={p.currentCompany || ""}
+                                    onChange={(e) => updateCandidateField(idx, "currentCompany", e.target.value)}
+                                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:ring-1 focus:ring-slate-400 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                                    Total Exp (Yrs)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    step="0.5"
+                                    value={p.totalExpYears ?? 0}
+                                    onChange={(e) => updateCandidateField(idx, "totalExpYears", parseFloat(e.target.value) || 0)}
+                                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-slate-400 focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                                    Notice Period (Days)
+                                  </label>
+                                  <input
+                                    type="number"
+                                    value={p.noticePeriodDays ?? 30}
+                                    onChange={(e) => updateCandidateField(idx, "noticePeriodDays", parseInt(e.target.value, 10) || 0)}
+                                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-semibold focus:ring-1 focus:ring-slate-400 focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                                    Current CTC
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={p.currentCtc || ""}
+                                    onChange={(e) => updateCandidateField(idx, "currentCtc", e.target.value)}
+                                    placeholder="e.g. 24,00,000"
+                                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-mono focus:ring-1 focus:ring-slate-400 focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                                    Expected CTC
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={p.expectedCtc || ""}
+                                    onChange={(e) => updateCandidateField(idx, "expectedCtc", e.target.value)}
+                                    placeholder="e.g. 32,00,000"
+                                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-mono font-bold text-emerald-800 focus:ring-1 focus:ring-slate-400 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+
+                              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                                    Phone / WhatsApp
+                                  </label>
+                                  <input
+                                    type="text"
+                                    value={p.phone || ""}
+                                    onChange={(e) => updateCandidateField(idx, "phone", e.target.value)}
+                                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-mono focus:ring-1 focus:ring-slate-400 focus:outline-none"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="block text-[11px] font-semibold text-slate-600 mb-0.5">
+                                    Email
+                                  </label>
+                                  <input
+                                    type="email"
+                                    value={p.email || ""}
+                                    onChange={(e) => updateCandidateField(idx, "email", e.target.value)}
+                                    className="w-full px-2.5 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:ring-1 focus:ring-slate-400 focus:outline-none"
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Skills */}
+                              <div>
+                                <label className="block text-[11px] font-semibold text-slate-600 mb-1">
+                                  Skills
+                                </label>
+                                <div className="flex flex-wrap gap-1.5 mb-2 bg-white p-2 rounded-lg border border-slate-200 min-h-[36px]">
+                                  {Array.isArray(p.skills) && p.skills.length > 0 ? (
+                                    p.skills.map((sk: string, sIdx: number) => (
+                                      <span
+                                        key={sIdx}
+                                        className="bg-slate-100 text-slate-800 border border-slate-200 text-[10px] font-medium px-2 py-0.5 rounded flex items-center space-x-1"
+                                      >
+                                        <span>{sk}</span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRemoveSkill(sk, idx)}
+                                          className="text-slate-400 hover:text-slate-700 cursor-pointer ml-1 leading-none font-bold"
+                                        >
+                                          &times;
+                                        </button>
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="text-slate-400 text-[11px] italic">No skill tags extracted</span>
+                                  )}
+                                </div>
+                                <div className="flex space-x-2">
+                                  <input
+                                    type="text"
+                                    value={newSkillInput}
+                                    onChange={(e) => setNewSkillInput(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        handleAddSkill(idx);
+                                      }
+                                    }}
+                                    placeholder="Add skill tag (press Enter)..."
+                                    className="flex-1 px-2.5 py-1 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 focus:ring-1 focus:ring-slate-400 focus:outline-none"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => handleAddSkill(idx)}
+                                    className="px-3 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
+                                  >
+                                    + Add
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="flex justify-end pt-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedEditIndex(null)}
+                                  className="px-3 py-1 bg-slate-200 hover:bg-slate-300 text-slate-800 font-semibold rounded-lg text-xs transition-colors cursor-pointer"
+                                >
+                                  Done Editing
                                 </button>
                               </div>
                             </div>
-                          </div>
-                        ) : (
-                          <div className="p-6 text-center text-rose-700 bg-rose-50 rounded-xl border border-rose-200">
-                            <AlertCircle className="h-5 w-5 mx-auto mb-1 text-rose-600" />
-                            <p className="font-bold text-xs">{batchResults[activeBatchIndex].error || "Parse failed"}</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  )}
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
 
                   {/* Modal Action Footer */}
-                  <div className="flex flex-col sm:flex-row items-center justify-between pt-3 border-t border-slate-200 gap-2">
-                    <span className="text-[11px] text-slate-500 flex items-center space-x-1">
-                      <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
-                      <span>{batchResults.filter((r) => r.success).length} Profile(s) ready to attach to '{mandate.title}'</span>
-                    </span>
+                  <div className="flex flex-col sm:flex-row items-center justify-between pt-4 border-t border-slate-200 gap-3">
+                    <div className="text-[11px] text-slate-600 flex items-center space-x-1.5">
+                      <ShieldCheck className="h-4 w-4 text-emerald-600 shrink-0" />
+                      <span>
+                        {batchResults.filter((r) => r.success).length} Profile(s) ready to attach to '{mandate.title}'
+                        {batchResults.some((r) => r.isMandateDuplicate) && (
+                          <span className="text-amber-700 ml-1">
+                            ({batchResults.filter((r) => r.isMandateDuplicate).length} existing profiles will be updated)
+                          </span>
+                        )}
+                      </span>
+                    </div>
 
-                    <div className="flex items-center space-x-3 w-full sm:w-auto justify-end">
+                    <div className="flex items-center space-x-2.5 w-full sm:w-auto justify-end">
                       <button
                         type="button"
                         onClick={() => {
@@ -1927,8 +2035,9 @@ export default function MandateWorkspacePage() {
                           setBatchResults([]);
                           setUploadFiles([]);
                           setParseError(null);
+                          setExpandedEditIndex(null);
                         }}
-                        className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer text-xs"
+                        className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-semibold hover:bg-slate-100 cursor-pointer text-xs"
                       >
                         Cancel
                       </button>
@@ -1936,16 +2045,16 @@ export default function MandateWorkspacePage() {
                         type="button"
                         onClick={handleSaveBatchIngest}
                         disabled={savingBatch || batchResults.filter((r) => r.success).length === 0}
-                        className="px-5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-extrabold rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center space-x-1.5 border border-[#e5bf00] text-xs"
+                        className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-xs transition-colors cursor-pointer disabled:opacity-50 flex items-center space-x-1.5 text-xs"
                       >
                         {savingBatch ? (
                           <>
-                            <RefreshCw className="h-3.5 w-3.5 animate-spin text-slate-800" />
-                            <span>Saving to Mandate...</span>
+                            <RefreshCw className="h-3.5 w-3.5 animate-spin text-white" />
+                            <span>Attaching to Pipeline...</span>
                           </>
                         ) : (
                           <span>
-                            Save & Attach {batchResults.filter((r) => r.success).length} Candidate(s)
+                            Attach {batchResults.filter((r) => r.success).length} Candidate(s) to Mandate
                           </span>
                         )}
                       </button>

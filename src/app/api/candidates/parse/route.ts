@@ -22,6 +22,7 @@ export async function POST(req: Request) {
     }
 
     const formData = await req.formData();
+    const mandateId = (formData.get("mandateId") as string) || null;
     let files = formData.getAll("files") as File[];
     if (!files || files.length === 0) {
       const singleFile = formData.get("file") as File | null;
@@ -102,14 +103,38 @@ export async function POST(req: Request) {
         });
       }
 
+      // 6. Check if candidate is already attached to this specific job mandate
+      let existingSubmission = null;
+      if (existingCandidate && mandateId && mandateId.trim() !== "") {
+        existingSubmission = await prisma.candidateSubmission.findUnique({
+          where: {
+            candidateId_mandateId: {
+              candidateId: existingCandidate.id,
+              mandateId: mandateId.trim(),
+            },
+          },
+          select: {
+            id: true,
+            stage: true,
+            candidateJobStatus: true,
+            createdAt: true,
+          },
+        });
+      }
+
       results.push({
         fileName: file.name,
+        fileSize: file.size,
         success: true,
         parsed,
         resumeUrl,
         rawResumeText: rawText,
-        isDuplicate: !!existingCandidate,
+        isDuplicate: Boolean(existingCandidate),
         existingCandidateId: existingCandidate?.id || null,
+        existingCandidateName: existingCandidate?.fullName || null,
+        isMandateDuplicate: Boolean(existingSubmission),
+        existingStage: existingSubmission?.stage || null,
+        existingJobStatus: existingSubmission?.candidateJobStatus || null,
         rawTextSummary: rawText.substring(0, 800),
       });
     }
@@ -126,6 +151,9 @@ export async function POST(req: Request) {
       rawResumeText: primary.rawResumeText,
       isDuplicate: primary.isDuplicate,
       existingCandidateId: primary.existingCandidateId,
+      isMandateDuplicate: primary.isMandateDuplicate,
+      existingStage: primary.existingStage,
+      existingJobStatus: primary.existingJobStatus,
       rawTextSummary: primary.rawTextSummary,
     });
   } catch (error: any) {

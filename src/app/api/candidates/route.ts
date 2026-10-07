@@ -161,7 +161,9 @@ export async function POST(req: Request) {
         });
       }
 
+      let isNewCandidate = false;
       if (candidate) {
+        isNewCandidate = false;
         candidate = await tx.candidate.update({
           where: { id: candidate.id },
           data: {
@@ -185,6 +187,7 @@ export async function POST(req: Request) {
           },
         });
       } else {
+        isNewCandidate = true;
         candidate = await tx.candidate.create({
           data: {
             agencyId: session.user.agencyId!,
@@ -212,23 +215,32 @@ export async function POST(req: Request) {
 
       // 2. If mandateId provided, link candidate to mandate
       let submission = null;
+      let isNewSubmission = false;
       if (mandateId && mandateId.trim() !== "") {
-        submission = await tx.candidateSubmission.upsert({
+        const existingSub = await tx.candidateSubmission.findUnique({
           where: {
             candidateId_mandateId: {
               candidateId: candidate.id,
               mandateId,
             },
           },
-          update: {},
-          create: {
-            agencyId: session.user.agencyId!,
-            candidateId: candidate.id,
-            mandateId,
-            submittedByUserId: session.user.id,
-            stage: SubmissionStage.PARSED_RAW,
-          },
         });
+
+        if (existingSub) {
+          submission = existingSub;
+          isNewSubmission = false;
+        } else {
+          submission = await tx.candidateSubmission.create({
+            data: {
+              agencyId: session.user.agencyId!,
+              candidateId: candidate.id,
+              mandateId,
+              submittedByUserId: session.user.id,
+              stage: SubmissionStage.PARSED_RAW,
+            },
+          });
+          isNewSubmission = true;
+        }
       }
 
       // 3. Log Audit
@@ -243,11 +255,12 @@ export async function POST(req: Request) {
             candidateName: candidate.fullName,
             email: candidate.email,
             mandateId: mandateId || null,
+            isNewSubmission,
           },
         },
       });
 
-      return { candidate, submission };
+      return { candidate, submission, isNewCandidate, isNewSubmission };
     });
 
     return NextResponse.json(
@@ -255,6 +268,8 @@ export async function POST(req: Request) {
         message: "Candidate saved successfully.",
         candidate: result.candidate,
         submission: result.submission,
+        isNewCandidate: result.isNewCandidate,
+        isNewSubmission: result.isNewSubmission,
       },
       { status: 201 }
     );

@@ -34,16 +34,16 @@ export function normalizePhoneNumber(rawPhone: string): string {
   return cleaned;
 }
 
-// Flagship Groq LPU model (ultra-fast <1s inference). Smaller 20B/27B models excluded to prevent degraded extraction.
-const GROQ_MODELS = [
-  "openai/gpt-oss-120b",
+// Flagship Gemini models (Google AI Studio: Gemini 2.5 Flash primary for highest accuracy, Gemini 2.0 Flash secondary)
+const GEMINI_MODELS = [
+  "gemini-2.5-flash",
+  "gemini-2.0-flash",
 ];
 
-// Active, high-quota Gemini models (500 RPD & 15 RPM on Google AI Studio)
-const GEMINI_MODELS = [
-  "gemini-3.5-flash-lite", // Primary high-intelligence fallback (500 RPD, 15 RPM)
-  "gemini-3.1-flash-lite", // Secondary high-quota fallback (500 RPD, 15 RPM)
-  "gemini-2.5-flash",      // Tertiary fallback (20 RPD)
+// High-speed Groq LPU models (Fallback: Llama 3.3 70B versatile, Llama 3.1 8B instant)
+const GROQ_MODELS = [
+  "llama-3.3-70b-versatile",
+  "llama-3.1-8b-instant",
 ];
 
 /**
@@ -53,7 +53,7 @@ async function callGroqChatCompletion(
   messages: Array<{ role: string; content: string }>,
   jsonMode = true
 ): Promise<string | null> {
-  const apiKey = process.env.GROQ_API_KEY?.trim();
+  const apiKey = process.env.GROQ_API_KEY?.replace(/^["']|["']$/g, "").trim();
   if (!apiKey || apiKey === "" || apiKey === "your_groq_api_key_here") {
     return null;
   }
@@ -94,8 +94,8 @@ async function callGroqChatCompletion(
 }
 
 /**
- * Parses unstructured resume text into a structured candidate profile using Groq AI (primary),
- * Google Gemini API (secondary fallback), and an intelligent deterministic engine (offline fallback).
+ * Parses unstructured resume text into a structured candidate profile using Gemini AI (primary),
+ * Groq AI (secondary fallback), and an intelligent deterministic engine (offline fallback).
  */
 export async function parseResumeWithGemini(
   rawResumeText: string,
@@ -115,12 +115,126 @@ export async function parseResumeWithGemini(
     }
   }
 
-  const hasGroqKey = Boolean(process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.trim() !== "");
-  console.log(`[Resume-Parser] Processing '${fileName || "document"}': textLength=${effectiveText.length}, hasGroqKey=${hasGroqKey}`);
+  // 1. Primary AI Engine: Gemini 2.5 Flash -> Gemini 2.0 Flash
+  const apiKey = process.env.GEMINI_API_KEY?.replace(/^["']|["']$/g, "").trim();
+  if (apiKey && apiKey !== "" && apiKey !== "your_gemini_api_key_here") {
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const isPdf = Boolean(
+      pdfBuffer &&
+      (mimeType === "application/pdf" || fileName?.toLowerCase().endsWith(".pdf"))
+    );
 
-  // 1. Primary AI Engine: Groq Ultra-Fast Inference (120B / 20B models)
+    const prompt = `
+You are an expert recruitment parser. Extract candidate details from the following resume into strict JSON matching this exact schema:
+
+{
+  "fullName": "string (Candidate's first and last name - ignore words like RESUME, CV, CURRICULUM VITAE, NAUKRI)",
+  "email": "string (Primary email address)",
+  "phone": "string (Primary phone / mobile number with country code)",
+  "currentCompany": "string or null (Current or most recent company/employer)",
+  "currentTitle": "string or null (Current or most recent job title)",
+  "totalExpYears": number (Total years of work experience as number e.g. 5.5, or 0 if unknown),
+  "currentCtc": number or null (Current annual CTC in absolute numbers e.g. 2400000, or null),
+  "expectedCtc": number or null (Expected annual CTC in absolute numbers e.g. 3200000, or null),
+  "currency": "string (e.g. INR, USD, default INR)",
+  "noticePeriodDays": number (Notice period in days e.g. 15, 30, 60, 90. Default 30 if not mentioned),
+  "location": "string or null (City / Location)",
+  "qualification": "string or null (Candidate's highest educational degree, branch/specialization, and college/institute if mentioned. E.g. 'BTech - Electronics Engineering, MIT Academy Of Engineering Pune' or 'B.E. Computer Science' or 'MBA' or 'BCA' or 'MCA')",
+  "skills": ["string"] (Array of specific technical, domain, or tool skills),
+  "summary": "string or null (2-3 sentence executive professional summary)",
+  "workHistory": [
+    {
+      "company": "string",
+      "title": "string",
+      "duration": "string"
+    }
+  ]
+}
+`;
+
+    for (const modelName of GEMINI_MODELS) {
+      try {
+        console.log(`[Resume-Parser] Invoking Gemini model '${modelName}' for '${fileName}'...`);
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            responseMimeType: "application/json",
+            temperature: 0.1,
+          },
+        });
+
+        let contents: any;
+        if (isPdf && pdfBuffer) {
+          contents = [
+            {
+              inlineData: {
+                data: pdfBuffer.toString("base64"),
+                mimeType: "application/pdf",
+              },
+            },
+            { text: prompt },
+          ];
+        } else {
+          contents = `${prompt}\n\nResume Text:\n"""\n${(effectiveText || rawResumeText).substring(0, 15000)}\n"""`;
+        }
+
+        const result = await model.generateContent(contents);
+        const responseText = result.response.text();
+        const parsedData = JSON.parse(responseText);
+
+        const phone = cleanStr(parsedData.phone) || "";
+        const phoneNormalized = normalizePhoneNumber(phone);
+        const fullName = cleanStr(sanitizeCandidateName(parsedData.fullName, fileName, effectiveText || rawResumeText)) || "Candidate";
+        const email = (cleanStr(parsedData.email) || "").toLowerCase().trim();
+
+        const hasContactInfo = Boolean(email || phone);
+        const hasValidName = Boolean(fullName && fullName.toLowerCase() !== "candidate" && fullName.toLowerCase() !== "resume");
+
+        if (hasValidName && hasContactInfo) {
+          console.log(`[Resume-Parser] Gemini model '${modelName}' successfully parsed high-confidence candidate details for '${fileName}'!`);
+          let totalExpYears = 0;
+          if (typeof parsedData.totalExpYears === "number") {
+            totalExpYears = parsedData.totalExpYears;
+          } else if (typeof parsedData.totalExpYears === "string") {
+            const numMatch = parsedData.totalExpYears.match(/([\d.]+)/);
+            if (numMatch) totalExpYears = parseFloat(numMatch[1]) || 0;
+          }
+
+          return {
+            fullName,
+            email,
+            phone,
+            phoneNormalized,
+            currentCompany: cleanStr(parsedData.currentCompany),
+            currentTitle: cleanStr(parsedData.currentTitle),
+            totalExpYears,
+            currentCtc: parsedData.currentCtc ? parseFloat(parsedData.currentCtc) : null,
+            expectedCtc: parsedData.expectedCtc ? parseFloat(parsedData.expectedCtc) : null,
+            currency: cleanStr(parsedData.currency) || "INR",
+            noticePeriodDays: parsedData.noticePeriodDays ? parseInt(parsedData.noticePeriodDays, 10) : 30,
+            location: cleanStr(parsedData.location),
+            qualification: cleanStr(parsedData.qualification),
+            skills: Array.isArray(parsedData.skills)
+              ? parsedData.skills.map((s: any) => cleanStr(s)).filter(Boolean)
+              : [],
+            summary: cleanStr(parsedData.summary),
+            workHistory: parsedData.workHistory || [],
+          };
+        } else {
+          console.warn(
+            `[Resume-Parser] Gemini '${modelName}' extracted low-confidence for '${fileName}'. Trying next model...`
+          );
+        }
+      } catch (err: any) {
+        console.warn(`[Resume-Parser] Gemini model '${modelName}' failed for '${fileName}': ${err.message || err}. Trying next model...`);
+      }
+    }
+  }
+
+  // 2. Secondary AI Engine Fallback: Groq Ultra-Fast Inference (Llama 3.3 70B -> Llama 3.1 8B)
+  const hasGroqKey = Boolean(process.env.GROQ_API_KEY && process.env.GROQ_API_KEY.trim() !== "");
   if (hasGroqKey && effectiveText.length > 10) {
-    console.log(`[Resume-Parser] Invoking Groq AI Engine for '${fileName}'...`);
+    console.log(`[Resume-Parser] Falling back to Groq AI Engine for '${fileName}'...`);
     try {
       const groqPrompt = `You are an expert recruitment parser. Extract candidate details from the following resume into strict JSON matching this exact schema:
 
@@ -153,12 +267,11 @@ export async function parseResumeWithGemini(
         const fullName = cleanStr(sanitizeCandidateName(parsedData.fullName, fileName, effectiveText)) || "Candidate";
         const email = (cleanStr(parsedData.email) || "").toLowerCase().trim();
 
-        // Quality Guardrail: If Groq extracted an incomplete profile (missing name or missing both email & phone), fail over to Gemini
         const hasContactInfo = Boolean(email || phone);
         const hasValidName = Boolean(fullName && fullName.toLowerCase() !== "candidate" && fullName.toLowerCase() !== "resume");
 
         if (hasValidName && hasContactInfo) {
-          console.log(`[Resume-Parser] Groq successfully parsed high-confidence candidate details for '${fileName}'!`);
+          console.log(`[Resume-Parser] Groq successfully parsed candidate details for '${fileName}'!`);
           let totalExpYears = 0;
           if (typeof parsedData.totalExpYears === "number") {
             totalExpYears = parsedData.totalExpYears;
@@ -187,119 +300,15 @@ export async function parseResumeWithGemini(
             summary: cleanStr(parsedData.summary),
             workHistory: parsedData.workHistory || [],
           };
-        } else {
-          console.warn(
-            `[Resume-Parser] Groq extraction incomplete or low-confidence for '${fileName}' (name='${fullName}', email='${email}', phone='${phone}'). Automatically failing over to Gemini 3.5 Flash Lite...`
-          );
         }
       }
     } catch (groqErr: any) {
       console.warn(`[Resume-Parser] Groq resume parsing failed for ${fileName}:`, groqErr.message);
     }
-  } else {
-    console.warn(`[Resume-Parser] Skipping Groq for '${fileName}': hasGroqKey=${hasGroqKey}, textLength=${effectiveText.length}`);
   }
 
-  // 2. Secondary AI Engine: Gemini Multimodal & Text Parser
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-
-  // If Gemini API Key is available, attempt AI Extraction with model fallback
-  if (apiKey && apiKey !== "" && apiKey !== "your_gemini_api_key_here") {
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const isPdf = Boolean(
-      pdfBuffer &&
-      (mimeType === "application/pdf" || fileName?.toLowerCase().endsWith(".pdf"))
-    );
-
-    for (const modelName of GEMINI_MODELS) {
-      try {
-        const model = genAI.getGenerativeModel({
-          model: modelName,
-          generationConfig: {
-            responseMimeType: "application/json",
-            temperature: 0.1,
-          },
-        });
-
-        const prompt = `
-You are an expert recruitment parser. Extract candidate details from the following resume into strict JSON matching this exact schema:
-
-{
-  "fullName": "string (Candidate's first and last name - ignore words like RESUME, CV, CURRICULUM VITAE, NAUKRI)",
-  "email": "string (Primary email address)",
-  "phone": "string (Primary phone / mobile number with country code)",
-  "currentCompany": "string or null (Current or most recent company/employer)",
-  "currentTitle": "string or null (Current or most recent job title)",
-  "totalExpYears": number (Total years of work experience as number e.g. 5.5, or 0 if unknown),
-  "currentCtc": number or null (Current annual CTC in absolute numbers e.g. 2400000, or null),
-  "expectedCtc": number or null (Expected annual CTC in absolute numbers e.g. 3200000, or null),
-  "currency": "string (e.g. INR, USD, default INR)",
-  "noticePeriodDays": number (Notice period in days e.g. 15, 30, 60, 90. Default 30 if not mentioned),
-  "location": "string or null (City / Location)",
-  "qualification": "string or null (Candidate's highest educational degree, branch/specialization, and college/institute if mentioned. E.g. 'BTech - Electronics Engineering, MIT Academy Of Engineering Pune' or 'B.E. Computer Science' or 'MBA' or 'BCA' or 'MCA')",
-  "skills": ["string"] (Array of specific technical, domain, or tool skills),
-  "summary": "string or null (2-3 sentence executive professional summary)",
-  "workHistory": [
-    {
-      "company": "string",
-      "title": "string",
-      "duration": "string"
-    }
-  ]
-}
-`;
-
-        let contents: any;
-        if (isPdf && pdfBuffer) {
-          contents = [
-            {
-              inlineData: {
-                data: pdfBuffer.toString("base64"),
-                mimeType: "application/pdf",
-              },
-            },
-            { text: prompt },
-          ];
-        } else {
-          contents = `${prompt}\n\nResume Text:\n"""\n${rawResumeText.substring(0, 12000)}\n"""`;
-        }
-
-        const result = await model.generateContent(contents);
-        const responseText = result.response.text();
-        const parsedData = JSON.parse(responseText);
-
-        const cleanStr = (v: any) => (typeof v === "string" ? v.replace(/\0/g, "").trim() : null);
-        const phone = cleanStr(parsedData.phone) || "";
-        const phoneNormalized = normalizePhoneNumber(phone);
-
-        return {
-          fullName: cleanStr(sanitizeCandidateName(parsedData.fullName, fileName, rawResumeText)) || "Candidate",
-          email: (cleanStr(parsedData.email) || "").toLowerCase().trim(),
-          phone,
-          phoneNormalized,
-          currentCompany: cleanStr(parsedData.currentCompany),
-          currentTitle: cleanStr(parsedData.currentTitle),
-          totalExpYears: typeof parsedData.totalExpYears === "number" ? parsedData.totalExpYears : 0,
-          currentCtc: parsedData.currentCtc ? parseFloat(parsedData.currentCtc) : null,
-          expectedCtc: parsedData.expectedCtc ? parseFloat(parsedData.expectedCtc) : null,
-          currency: cleanStr(parsedData.currency) || "INR",
-          noticePeriodDays: parsedData.noticePeriodDays ? parseInt(parsedData.noticePeriodDays, 10) : 30,
-          location: cleanStr(parsedData.location),
-          qualification: cleanStr(parsedData.qualification),
-          skills: Array.isArray(parsedData.skills)
-            ? parsedData.skills.map((s: any) => cleanStr(s)).filter(Boolean)
-            : [],
-          summary: cleanStr(parsedData.summary),
-          workHistory: parsedData.workHistory || [],
-        };
-      } catch (err: any) {
-        console.warn(`Gemini model '${modelName}' failed: ${err.message || err}. Trying next model...`);
-      }
-    }
-  }
-
-  // Cost-effective Smart Deterministic (Non-AI) Parser Engine
-  return smartDeterministicResumeParser(rawResumeText, fileName);
+  // 3. Cost-effective Smart Deterministic (Non-AI) Parser Engine Fallback
+  return smartDeterministicResumeParser(effectiveText || rawResumeText, fileName);
 }
 
 /**
@@ -542,60 +551,8 @@ export async function parseJobDescriptionWithGemini(
     } catch (_) {}
   }
 
-  // 1. Primary AI Engine: Groq Ultra-Fast Inference (120B / 20B models)
-  if (process.env.GROQ_API_KEY && effectiveText.length > 10) {
-    try {
-      const groqPrompt = `You are an expert executive search recruiter. Extract structured hiring mandate details from the following Job Description text into strict JSON matching this exact schema:
-
-{
-  "title": "string (Exact Job / Role Title e.g. Full Stack Developer - Node.JS & Angular)",
-  "companyName": "string (Hiring company name if mentioned, otherwise empty string)",
-  "department": "string (Engineering, Product, Sales, etc. or empty string)",
-  "minExp": number (Minimum required years of experience e.g. 3, or 0 if unspecified),
-  "maxExp": number (Maximum years of experience e.g. 7, or minExp + 3 if only minExp is mentioned, or 0 if unspecified),
-  "minCtc": number or null (Minimum annual salary/budget in absolute numbers e.g. 4000000 for 40 LPA, or null if unspecified),
-  "maxCtc": number or null (Maximum annual salary/budget in absolute numbers e.g. 6000000 for 60 LPA, or null if unspecified),
-  "currency": "string (e.g. INR, USD, default INR)",
-  "location": "string (City / Location e.g. Bengaluru, Mumbai, or empty string)",
-  "workMode": "REMOTE" | "HYBRID" | "ONSITE" (default HYBRID),
-  "skills": ["string"] (Array of essential technical, domain, or soft skills mentioned),
-  "description": "string (Cleaned, well-structured full job description text)"
-}`;
-
-      const groqJson = await callGroqChatCompletion([
-        { role: "system", content: groqPrompt },
-        { role: "user", content: `Job Description Content:\n"""\n${effectiveText.substring(0, 15000)}\n"""` },
-      ]);
-
-      if (groqJson) {
-        const parsed = JSON.parse(groqJson);
-        const workModeUpper = (parsed.workMode || "").toUpperCase();
-        const validWorkMode = ["REMOTE", "HYBRID", "ONSITE"].includes(workModeUpper)
-          ? (workModeUpper as "REMOTE" | "HYBRID" | "ONSITE")
-          : "HYBRID";
-
-        return {
-          title: (parsed.title || "").trim() || "Open Position",
-          companyName: (parsed.companyName || "").trim(),
-          department: (parsed.department || "").trim(),
-          minExp: typeof parsed.minExp === "number" ? Math.max(0, parsed.minExp) : 0,
-          maxExp: typeof parsed.maxExp === "number" ? Math.max(0, parsed.maxExp) : 10,
-          minCtc: parsed.minCtc ? parseFloat(parsed.minCtc) : null,
-          maxCtc: parsed.maxCtc ? parseFloat(parsed.maxCtc) : null,
-          currency: parsed.currency || "INR",
-          location: (parsed.location || "").trim() || "Remote / Hybrid",
-          workMode: validWorkMode,
-          skills: Array.isArray(parsed.skills) ? parsed.skills.filter(Boolean) : [],
-          description: (parsed.description || effectiveText).trim(),
-        };
-      }
-    } catch (groqErr: any) {
-      console.warn("Groq JD parsing failed, falling back to Gemini:", groqErr.message);
-    }
-  }
-
-  // 2. Secondary AI Engine: Gemini
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  // 1. Primary AI Engine: Gemini (gemini-2.5-flash -> gemini-2.0-flash)
+  const apiKey = process.env.GEMINI_API_KEY?.replace(/^["']|["']$/g, "").trim();
 
   if (apiKey && apiKey !== "" && apiKey !== "your_gemini_api_key_here") {
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -674,7 +631,59 @@ You are an expert executive search recruiter. Extract structured hiring mandate 
     }
   }
 
-  // Deterministic fallback
+  // 2. Secondary AI Engine Fallback: Groq Ultra-Fast Inference
+  if (process.env.GROQ_API_KEY && effectiveText.length > 10) {
+    try {
+      const groqPrompt = `You are an expert executive search recruiter. Extract structured hiring mandate details from the following Job Description text into strict JSON matching this exact schema:
+
+{
+  "title": "string (Exact Job / Role Title e.g. Full Stack Developer - Node.JS & Angular)",
+  "companyName": "string (Hiring company name if mentioned, otherwise empty string)",
+  "department": "string (Engineering, Product, Sales, etc. or empty string)",
+  "minExp": number (Minimum required years of experience e.g. 3, or 0 if unspecified),
+  "maxExp": number (Maximum years of experience e.g. 7, or minExp + 3 if only minExp is mentioned, or 0 if unspecified),
+  "minCtc": number or null (Minimum annual salary/budget in absolute numbers e.g. 4000000 for 40 LPA, or null if unspecified),
+  "maxCtc": number or null (Maximum annual salary/budget in absolute numbers e.g. 6000000 for 60 LPA, or null if unspecified),
+  "currency": "string (e.g. INR, USD, default INR)",
+  "location": "string (City / Location e.g. Bengaluru, Mumbai, or empty string)",
+  "workMode": "REMOTE" | "HYBRID" | "ONSITE" (default HYBRID),
+  "skills": ["string"] (Array of essential technical, domain, or soft skills mentioned),
+  "description": "string (Cleaned, well-structured full job description text)"
+}`;
+
+      const groqJson = await callGroqChatCompletion([
+        { role: "system", content: groqPrompt },
+        { role: "user", content: `Job Description Content:\n"""\n${effectiveText.substring(0, 15000)}\n"""` },
+      ]);
+
+      if (groqJson) {
+        const parsed = JSON.parse(groqJson);
+        const workModeUpper = (parsed.workMode || "").toUpperCase();
+        const validWorkMode = ["REMOTE", "HYBRID", "ONSITE"].includes(workModeUpper)
+          ? (workModeUpper as "REMOTE" | "HYBRID" | "ONSITE")
+          : "HYBRID";
+
+        return {
+          title: (parsed.title || "").trim() || "Open Position",
+          companyName: (parsed.companyName || "").trim(),
+          department: (parsed.department || "").trim(),
+          minExp: typeof parsed.minExp === "number" ? Math.max(0, parsed.minExp) : 0,
+          maxExp: typeof parsed.maxExp === "number" ? Math.max(0, parsed.maxExp) : 10,
+          minCtc: parsed.minCtc ? parseFloat(parsed.minCtc) : null,
+          maxCtc: parsed.maxCtc ? parseFloat(parsed.maxCtc) : null,
+          currency: parsed.currency || "INR",
+          location: (parsed.location || "").trim() || "Remote / Hybrid",
+          workMode: validWorkMode,
+          skills: Array.isArray(parsed.skills) ? parsed.skills.filter(Boolean) : [],
+          description: (parsed.description || effectiveText).trim(),
+        };
+      }
+    } catch (groqErr: any) {
+      console.warn("Groq JD parsing failed, falling back to deterministic:", groqErr.message);
+    }
+  }
+
+  // 3. Deterministic fallback
   return smartDeterministicJobDescriptionParser(rawJdText);
 }
 
