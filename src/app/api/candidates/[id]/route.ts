@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { SubmissionStage, CandidateJobStatus } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -137,3 +138,116 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
     );
   }
 }
+
+// PATCH /api/candidates/[id] - Update candidate pipeline stage or details
+export async function PATCH(req: Request, { params }: { params: { id: string } }) {
+  try {
+    const session = await getServerSession(authOptions);
+    if (!session || !session.user.agencyId) {
+      return NextResponse.json({ error: "Unauthorized: Missing tenant session." }, { status: 401 });
+    }
+
+    const agencyId = session.user.agencyId;
+    const candidateId = params.id;
+    const body = await req.json();
+    const { status, submissionId } = body;
+
+    if (!status) {
+      return NextResponse.json({ error: "Status is required." }, { status: 400 });
+    }
+
+    // Determine target stage
+    const validStages = Object.values(SubmissionStage);
+    const targetStage = validStages.includes(status as SubmissionStage)
+      ? (status as SubmissionStage)
+      : SubmissionStage.SCREENED_QUALIFIED;
+
+    // Map to CandidateJobStatus if applicable
+    let jobStatus: CandidateJobStatus = CandidateJobStatus.NOT_SHARED;
+    if (targetStage === SubmissionStage.SUBMITTED_TO_CLIENT) {
+      jobStatus = CandidateJobStatus.SHARED_WITH_COMPANY;
+    } else if (targetStage === SubmissionStage.CLIENT_SHORTLISTED || targetStage === SubmissionStage.INTERVIEW_SCHEDULED) {
+      jobStatus = CandidateJobStatus.SELECTED_FOR_NEXT_ROUND;
+    } else if (targetStage === SubmissionStage.OFFER_ISSUED || targetStage === SubmissionStage.OFFER_ACCEPTED) {
+      jobStatus = CandidateJobStatus.OFFERED;
+    } else if (targetStage === SubmissionStage.STAGE_REJECTED) {
+      jobStatus = CandidateJobStatus.REJECTED;
+    } else if (targetStage === SubmissionStage.JOINED_DAY_1_ACTIVE) {
+      jobStatus = CandidateJobStatus.JOINED;
+    }
+
+    let updatedSubmission = null;
+
+    if (submissionId) {
+      const existing = await prisma.candidateSubmission.findFirst({
+        where: { id: submissionId, agencyId },
+      });
+      if (existing) {
+        updatedSubmission = await prisma.candidateSubmission.update({
+          where: { id: existing.id },
+          data: {
+            stage: targetStage,
+            candidateJobStatus: jobStatus,
+            updatedAt: new Date(),
+          },
+        });
+      }
+    } else {
+      // Find latest submission for this candidate in this agency
+      const latestSub = await prisma.candidateSubmission.findFirst({
+        where: { candidateId, agencyId },
+        orderBy: { updatedAt: "desc" },
+      });
+      if (latestSub) {
+        updatedSubmission = await prisma.candidateSubmission.update({
+          where: { id: latestSub.id },
+          data: {
+            stage: targetStage,
+            candidateJobStatus: jobStatus,
+            updatedAt: new Date(),
+          },
+        });
+      } else {
+        // If candidate doesn't have an active submission, attach to the most recent active mandate
+        const firstMandate = await prisma.jobMandate.findFirst({
+          where: {
+            agencyId,
+            status: { notIn: ["CLOSED_FULFILLED", "CLOSED_CANCELLED"] },
+          },
+          orderBy: { createdAt: "desc" },
+        });
+        if (firstMandate) {
+          updatedSubmission = await prisma.candidateSubmission.create({
+            data: {
+              agencyId,
+              candidateId,
+              mandateId: firstMandate.id,
+              submittedByUserId: session.user.id,
+              stage: targetStage,
+              candidateJobStatus: jobStatus,
+            },
+          });
+        }
+      }
+    }
+
+    // Touch candidate updatedAt
+    await prisma.candidate.update({
+      where: { id: candidateId },
+      data: { updatedAt: new Date() },
+    });
+
+    return NextResponse.json({
+      success: true,
+      stage: targetStage,
+      submission: updatedSubmission,
+    });
+  } catch (error: any) {
+    console.error("Error updating candidate status:", error);
+    return NextResponse.json(
+      { error: error.message || "Failed to update candidate status." },
+      { status: 500 }
+    );
+  }
+}
+

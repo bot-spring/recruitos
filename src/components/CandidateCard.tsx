@@ -236,19 +236,18 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
 
   const handleStatusSelect = (newStatus: string) => {
     if (!newStatus) return;
-    if (onStatusChange) {
-      onStatusChange(candidate, newStatus);
-      return;
-    }
     if (newStatus === "INTERVIEW_SCHEDULED" && onScheduleInterview) {
       onScheduleInterview(candidate);
       return;
     }
-    if (newStatus === "JOINED_DAY_1_ACTIVE" && onConfirmJoining) {
+    if ((newStatus === "JOINED_DAY_1_ACTIVE" || newStatus === "JOINED") && onConfirmJoining) {
       onConfirmJoining(candidate);
       return;
     }
-    onOpenModal(candidate);
+    if (onStatusChange) {
+      onStatusChange(candidate, newStatus);
+      return;
+    }
   };
 
   return (
@@ -298,6 +297,26 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
               <span className="text-base font-bold text-slate-900 group-hover:text-blue-600 transition-colors">
                 {candidate.fullName}
               </span>
+
+              {/* Recruiter Pipeline Status Dropdown on Left Header */}
+              {!clientPortalMode && (
+                <div onClick={(e) => e.stopPropagation()} className="relative inline-flex items-center">
+                  <select
+                    value={effectiveStatusValue}
+                    onChange={(e) => handleStatusSelect(e.target.value)}
+                    className="appearance-none py-0.5 pl-2.5 pr-6 text-[11px] font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-slate-400 transition-colors shadow-2xs"
+                    title="Change pipeline stage"
+                  >
+                    <option value="" disabled>Select status ⌵</option>
+                    {effectiveStatusOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown className="h-3 w-3 text-slate-500 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                </div>
+              )}
 
               {/* Client Portal Decision Badges */}
               {clientPortalMode ? (
@@ -552,32 +571,13 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
           </div>
         ) : (
           <div
-            className="w-full md:w-52 md:border-l border-slate-100 md:pl-5 flex flex-col justify-between items-end gap-3 flex-shrink-0 pt-1 md:pt-0"
+            className="w-full md:w-36 md:border-l border-slate-100 md:pl-4 flex flex-col justify-between items-end gap-3 flex-shrink-0 pt-1 md:pt-0"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Top: Clean Initials Avatar in Botspring Gold */}
-            <div className="w-11 h-11 rounded-full bg-[#fce17c] border border-[#f5d762] text-slate-900 font-black text-sm flex items-center justify-center shadow-2xs">
+            <div className="w-10 h-10 rounded-full bg-[#fce17c] border border-[#f5d762] text-slate-900 font-black text-xs flex items-center justify-center shadow-2xs">
               {candidate.fullName.substring(0, 2).toUpperCase()}
             </div>
-
-            {/* Middle & Bottom: Status Dropdown & Action Row */}
-            <div className="w-full space-y-2">
-              {/* Status Dropdown */}
-              <div className="relative w-full">
-                <select
-                  value={effectiveStatusValue}
-                  onChange={(e) => handleStatusSelect(e.target.value)}
-                  className="w-full appearance-none py-1.5 pl-3 pr-7 text-xs font-semibold text-slate-800 bg-white hover:bg-slate-50 border border-slate-300 rounded-lg cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-slate-400 transition-colors shadow-2xs"
-                >
-                  <option value="" disabled>Select status ⌵</option>
-                  {effectiveStatusOptions.map((opt) => (
-                    <option key={opt.value} value={opt.value}>
-                      {opt.label}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown className="h-3.5 w-3.5 text-slate-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
 
             {/* Action Row: View CV Ghost Button + Kebab Menu Button */}
             <div className="flex items-center space-x-1.5 w-full">
@@ -730,8 +730,7 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
       </div>
     </div>
   );

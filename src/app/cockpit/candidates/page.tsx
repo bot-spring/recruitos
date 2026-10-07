@@ -193,6 +193,14 @@ export default function CandidateBankPage() {
   });
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!successMessage) return;
+    const timer = setTimeout(() => {
+      setSuccessMessage(null);
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [successMessage]);
+
   const updateCandidateField = (index: number, field: string, value: any) => {
     setBatchResults((prev) => {
       const updated = [...prev];
@@ -385,9 +393,9 @@ export default function CandidateBankPage() {
   };
 
 
-  const fetchCandidates = async () => {
+  const fetchCandidates = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const res = await fetch(`/api/candidates?query=${encodeURIComponent(searchQuery)}&silver=${silverFilter}`);
       if (res.ok) {
         const text = await res.text();
@@ -420,13 +428,70 @@ export default function CandidateBankPage() {
     } catch (err) {
       console.error("Failed to load candidates", err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
     fetchCandidates();
   }, [searchQuery, silverFilter]);
+
+  // In-place candidate pipeline status update (optimistic, zero scroll jump)
+  const handleUpdateCandidateStatus = async (cand: any, newStatus: string) => {
+    const candidateId = cand.id;
+    const primarySub = cand.submissions?.[0];
+
+    // 1. Optimistic update
+    setCandidates((prev) =>
+      prev.map((c) => {
+        if (c.id === candidateId) {
+          const updatedSubs = c.submissions?.length
+            ? [{ ...c.submissions[0], stage: newStatus as any }, ...c.submissions.slice(1)]
+            : [];
+          return { ...c, status: newStatus as any, stage: newStatus as any, submissions: updatedSubs };
+        }
+        return c;
+      })
+    );
+
+    try {
+      const res = await fetch(`/api/candidates/${candidateId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: newStatus,
+          submissionId: primarySub?.id,
+        }),
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Failed to update status");
+      }
+
+      const data = await res.json();
+      if (data.submission) {
+        setCandidates((prev) =>
+          prev.map((c) => {
+            if (c.id === candidateId) {
+              const existingSubs = c.submissions || [];
+              const updatedSubs = existingSubs.length
+                ? [data.submission, ...existingSubs.filter((s: any) => s.id !== data.submission.id)]
+                : [data.submission];
+              return { ...c, status: newStatus as any, stage: newStatus as any, submissions: updatedSubs };
+            }
+            return c;
+          })
+        );
+      }
+
+      // 2. Silent background refresh preserves scroll position
+      fetchCandidates(true);
+    } catch (err: any) {
+      console.error("Status update error:", err.message);
+      fetchCandidates(true);
+    }
+  };
 
   // Filter candidates based on active view tab
   const displayedCandidates = candidates.filter((c) => {
@@ -711,7 +776,7 @@ export default function CandidateBankPage() {
         });
         if (res.ok) {
           setSuccessMessage(`Candidate '${candidate.fullName}' removed from Silver Medalist Vault.`);
-          fetchCandidates();
+          fetchCandidates(true);
         }
       } catch (err) {
         console.error("Error untagging silver medalist:", err);
@@ -734,7 +799,7 @@ export default function CandidateBankPage() {
       if (res.ok) {
         setSuccessMessage(`Candidate '${silverModalCandidate.fullName}' added to Silver Medalist Recycling Vault!`);
         setSilverModalCandidate(null);
-        fetchCandidates();
+        fetchCandidates(true);
       }
     } catch (err) {
       console.error("Error updating silver medalist:", err);
@@ -767,7 +832,7 @@ export default function CandidateBankPage() {
       setSuccessMessage(`⚡ '${redeployCandidate.fullName}' instantly redeployed to '${json.mandate.title}' in stage SCREENED QUALIFIED!`);
       setRedeployCandidate(null);
       setRedeployNotes("");
-      fetchCandidates();
+      fetchCandidates(true);
     } catch (err: any) {
       alert(err.message || "Redeployment failed.");
     } finally {
@@ -830,7 +895,7 @@ export default function CandidateBankPage() {
         `📅 Interview confirmed for '${scheduleModalCandidate.fullName}'. WhatsApp briefing & calendar invites dispatched!`
       );
       setScheduleModalCandidate(null);
-      fetchCandidates();
+      fetchCandidates(true);
     } catch (err: any) {
       alert(err.message || "Scheduling failed.");
     } finally {
@@ -881,7 +946,7 @@ export default function CandidateBankPage() {
         `📝 Debrief recorded for '${debriefCandidate.fullName}'. Candidate stage advanced to ${data.stage}!`
       );
       setDebriefCandidate(null);
-      fetchCandidates();
+      fetchCandidates(true);
     } catch (err: any) {
       alert(err.message || "Failed to save debrief.");
     } finally {
@@ -937,7 +1002,7 @@ export default function CandidateBankPage() {
       setSuccessMessage(
         `🎯 Offer locked for '${offerModalCandidate.fullName}' at ${(parseFloat(offerForm.offeredCtc) / 100000).toFixed(1)}L. Resignation draft generated!`
       );
-      fetchCandidates();
+      fetchCandidates(true);
     } catch (err: any) {
       alert(err.message || "Failed to lock offer.");
     } finally {
@@ -983,7 +1048,7 @@ export default function CandidateBankPage() {
         `🛡️ Notice period check-in logged for '${pulseModalCandidate.fullName}'. Counter-offer risk: ${pulseForm.counterOfferRiskLevel}.`
       );
       setPulseModalCandidate(null);
-      fetchCandidates();
+      fetchCandidates(true);
     } catch (err: any) {
       alert(err.message || "Failed to log pulse.");
     } finally {
@@ -1029,7 +1094,7 @@ export default function CandidateBankPage() {
       setSuccessMessage(
         `🎉 Day 1 Joining Confirmed for '${joiningCandidate.fullName}'. Tax invoice '${data.invoice?.invoiceNumber}' generated and 90-day guarantee started!`
       );
-      fetchCandidates();
+      fetchCandidates(true);
     } catch (err: any) {
       alert(err.message || "Failed to confirm joining.");
     } finally {
@@ -1066,7 +1131,7 @@ export default function CandidateBankPage() {
         `⚡ $0 Free Replacement Mandate '${data.replacementMandate.title}' activated! Silver Medalist Vault unlocked.`
       );
       setExitCandidate(null);
-      fetchCandidates();
+      fetchCandidates(true);
     } catch (err: any) {
       alert(err.message || "Failed to trigger replacement.");
     } finally {
@@ -1314,6 +1379,7 @@ export default function CandidateBankPage() {
                   key={c.id}
                   candidate={c as any}
                   index={idx}
+                  currentStatus={c.submissions?.[0]?.stage || (c as any).status || ""}
                   isSelected={selectedCandidateIds.includes(c.id)}
                   onToggleSelect={(id) => {
                     setSelectedCandidateIds((prev) =>
@@ -1328,6 +1394,7 @@ export default function CandidateBankPage() {
                   }}
                   onRetentionPulse={handleOpenPulseModal}
                   onConfirmJoining={handleOpenJoiningModal}
+                  onStatusChange={handleUpdateCandidateStatus}
                   onDeleteCandidate={(cand) => setCandidateToDelete(cand as any)}
                 />
               ))}
@@ -1348,7 +1415,7 @@ export default function CandidateBankPage() {
                     Confirm Day-1 Physical Joining & Generate Commercial Tax Invoice
                   </h3>
                   <p className="text-[10px] text-emerald-800">
-                    Candidate: <strong>{joiningCandidate.fullName}</strong> • {joiningCandidate.submissions[0].mandate.title}
+                    Candidate: <strong>{joiningCandidate.fullName}</strong> • {joiningCandidate.submissions[0]?.mandate?.title || "Active Mandate"}
                   </p>
                 </div>
               </div>
@@ -1790,7 +1857,7 @@ export default function CandidateBankPage() {
               data.dispatched?.whatsApp ? "WhatsApp candidate brief sent." : ""
             } ${data.dispatched?.email ? "Calendar invite dispatched." : ""}`
           );
-          fetchCandidates();
+          fetchCandidates(true);
         }}
       />
 
@@ -2626,7 +2693,7 @@ export default function CandidateBankPage() {
               submissions: updatedSubmissions,
             });
           }
-          fetchCandidates();
+          fetchCandidates(true);
         }}
         onOpenSchedule={(cand) => {
           setSelectedCandidate(null);

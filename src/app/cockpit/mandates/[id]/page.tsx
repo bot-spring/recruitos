@@ -47,6 +47,7 @@ import {
   Trash2,
   Archive,
   Loader2,
+  Receipt,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CandidateDetailModal, CALL_DISPOSITIONS } from "@/components/CandidateDetailModal";
@@ -185,17 +186,6 @@ interface PoolCandidate {
   matchedSkills: string[];
 }
 
-
-const CANDIDATE_STATUSES = [
-  { value: "NOT_SHARED", label: "Not Shared with Company", badge: "bg-slate-100 text-slate-800 border-slate-300" },
-  { value: "SHARED_WITH_COMPANY", label: "Shared with Company", badge: "bg-blue-100 text-blue-900 border-blue-300" },
-  { value: "SELECTED_FOR_NEXT_ROUND", label: "Selected for Next Round", badge: "bg-purple-100 text-purple-900 border-purple-300" },
-  { value: "OFFERED", label: "Offered", badge: "bg-amber-100 text-amber-900 border-amber-300 font-black" },
-  { value: "HOLD", label: "Hold", badge: "bg-yellow-100 text-yellow-900 border-yellow-300" },
-  { value: "REJECTED", label: "Rejected", badge: "bg-rose-100 text-rose-900 border-rose-300" },
-  { value: "JOINED", label: "Joined (Day 1)", badge: "bg-emerald-100 text-emerald-950 border-emerald-400 font-black" },
-];
-
 export default function MandateWorkspacePage() {
   const params = useParams();
   const router = useRouter();
@@ -213,9 +203,31 @@ export default function MandateWorkspacePage() {
   const [isJdDrawerOpen, setIsJdDrawerOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
+  // Auto-dismiss success notification
+  useEffect(() => {
+    if (!successMessage) return;
+    const timer = setTimeout(() => {
+      setSuccessMessage(null);
+    }, 3500);
+    return () => clearTimeout(timer);
+  }, [successMessage]);
+
   // Centered Call Screening Modal State
   const [selectedCandidate, setSelectedCandidate] = useState<AttachedCandidate | null>(null);
   const [scheduleCandidate, setScheduleCandidate] = useState<AttachedCandidate | null>(null);
+
+  // Day-1 Physical Joining & Invoicing Modal State
+  const [joiningCandidate, setJoiningCandidate] = useState<AttachedCandidate | null>(null);
+  const [joiningForm, setJoiningForm] = useState({
+    actualJoiningDate: new Date().toISOString().slice(0, 10),
+    agreedCtc: "",
+    clientBillingName: "",
+    clientBillingEmail: "billing@client.com",
+    clientGstin: "27AABCU9603R1ZM",
+    paymentTermsDays: 30,
+  });
+  const [confirmingPlacement, setConfirmingPlacement] = useState(false);
+  const [generatedInvoice, setGeneratedInvoice] = useState<any | null>(null);
 
   // Candidate Lifecycle Actions (Remove from Mandate / Delete to Trash Bin)
   const [candidateToRemove, setCandidateToRemove] = useState<AttachedCandidate | null>(null);
@@ -364,10 +376,10 @@ export default function MandateWorkspacePage() {
   const [copiedPortalUrl, setCopiedPortalUrl] = useState(false);
   const [chasingClient, setChasingClient] = useState(false);
 
-  // Fetch Mandate Workspace Data
-  const fetchWorkspace = async () => {
+  // Fetch Mandate Workspace Data (supports silent background refresh without unmounting UI)
+  const fetchWorkspace = async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       const res = await fetch(`/api/mandates/${mandateId}/workspace`);
       if (res.ok) {
         const data = await res.json();
@@ -384,7 +396,7 @@ export default function MandateWorkspacePage() {
     } catch (err) {
       console.error("Failed to load mandate workspace:", err);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
@@ -399,9 +411,17 @@ export default function MandateWorkspacePage() {
     setSelectedCandidate(cand);
   };
 
-
-  // Update Candidate Status
+  // Update Candidate Status (Optimistic in-place update, zero scroll jump)
   const handleUpdateStatus = async (submissionId: string, newStatus: string) => {
+    // 1. Instant optimistic update so UI reflects the new status immediately
+    setCandidates((prev) =>
+      prev.map((c) => (c.submissionId === submissionId ? { ...c, status: newStatus as any, stage: newStatus } : c))
+    );
+
+    if (selectedCandidate && selectedCandidate.submissionId === submissionId) {
+      setSelectedCandidate({ ...selectedCandidate, status: newStatus as any, stage: newStatus });
+    }
+
     try {
       const res = await fetch(`/api/mandates/${mandateId}/candidate-status`, {
         method: "PATCH",
@@ -417,14 +437,59 @@ export default function MandateWorkspacePage() {
         throw new Error(data.error || "Failed to update status");
       }
 
-      setSuccessMessage(`Candidate status updated to: ${newStatus.replace(/_/g, " ")}`);
-      fetchWorkspace();
-
-      if (selectedCandidate && selectedCandidate.submissionId === submissionId) {
-        setSelectedCandidate({ ...selectedCandidate, status: newStatus as any });
-      }
+      // 2. Silent background sync keeps exact scroll level without page unmount
+      fetchWorkspace(true);
     } catch (err: any) {
+      fetchWorkspace(true);
       alert(err.message || "Failed to update status");
+    }
+  };
+
+  // Open Day-1 Joining & Invoicing Modal (RC-07)
+  const handleOpenJoiningModal = (cand: AttachedCandidate) => {
+    setJoiningCandidate(cand);
+    setJoiningForm({
+      actualJoiningDate: new Date().toISOString().slice(0, 10),
+      agreedCtc: cand.expectedSalary
+        ? String(cand.expectedSalary)
+        : cand.expectedCtc
+        ? String(cand.expectedCtc)
+        : "3200000",
+      clientBillingName: mandate?.client?.name || "Client Accounts",
+      clientBillingEmail: "billing@client.com",
+      clientGstin: "27AABCU9603R1ZM",
+      paymentTermsDays: 30,
+    });
+    setGeneratedInvoice(null);
+  };
+
+  // Submit Day-1 Joining & Invoicing (RC-07)
+  const handleConfirmJoiningSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!joiningCandidate) return;
+    setConfirmingPlacement(true);
+
+    try {
+      const res = await fetch(`/api/placements/${joiningCandidate.submissionId}/confirm-joining`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(joiningForm),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to confirm placement.");
+      }
+
+      setGeneratedInvoice(data.invoice);
+      setSuccessMessage(
+        `🎉 Day 1 Joining Confirmed for '${joiningCandidate.fullName}'. Tax invoice '${data.invoice?.invoiceNumber}' generated and 90-day guarantee started!`
+      );
+      fetchWorkspace(true);
+    } catch (err: any) {
+      alert(err.message || "Failed to confirm joining.");
+    } finally {
+      setConfirmingPlacement(false);
     }
   };
 
@@ -842,7 +907,7 @@ export default function MandateWorkspacePage() {
         throw new Error(data.error || "Failed to dispatch reminder.");
       }
       setSuccessMessage(data.message || "Reminder email sent to hiring manager!");
-      fetchWorkspace();
+      fetchWorkspace(true);
     } catch (err: any) {
       alert(err.message || "Failed to dispatch client chase.");
     } finally {
@@ -871,7 +936,12 @@ export default function MandateWorkspacePage() {
         (c.currentTitle && c.currentTitle.toLowerCase().includes(q)) ||
         c.phone.includes(q);
 
-      const matchesStatus = statusFilter === "ALL" || c.status === statusFilter;
+      const stageOrStatus = c.stage || c.status;
+      const matchesStatus =
+        statusFilter === "ALL" ||
+        stageOrStatus === statusFilter ||
+        c.status === statusFilter ||
+        c.stage === statusFilter;
 
       let matchesTab = true;
       if (activeQuickTab === "CALLBACKS_TODAY") {
@@ -1281,14 +1351,13 @@ export default function MandateWorkspacePage() {
                 onChange={(e) => setStatusFilter(e.target.value)}
                 className="px-3 py-1.5 text-xs font-bold border border-slate-300 rounded-lg bg-white text-slate-700"
               >
-                <option value="ALL">All Statuses ({candidates.length})</option>
-                <option value="NOT_SHARED">Not Shared with Company</option>
-                <option value="SHARED_WITH_COMPANY">Shared with Company</option>
-                <option value="SELECTED_FOR_NEXT_ROUND">Selected for Next Round</option>
-                <option value="OFFERED">Offered</option>
-                <option value="HOLD">Hold</option>
-                <option value="REJECTED">Rejected</option>
-                <option value="JOINED">Joined</option>
+                <option value="ALL">All Stages ({candidates.length})</option>
+                <option value="SCREENED_QUALIFIED">Screened</option>
+                <option value="CLIENT_SHORTLISTED">Client Shortlisted</option>
+                <option value="INTERVIEW_SCHEDULED">Interview Scheduled</option>
+                <option value="OFFER_ISSUED">Offer Stage</option>
+                <option value="NOTICE_PERIOD_ACTIVE">Notice Period</option>
+                <option value="JOINED_DAY_1_ACTIVE">Joined Day 1</option>
               </select>
             </div>
 
@@ -1375,8 +1444,8 @@ export default function MandateWorkspacePage() {
                     setSelectedCandidate(null);
                     setScheduleCandidate(c);
                   }}
-                  statusOptions={CANDIDATE_STATUSES}
-                  currentStatus={c.status}
+                  onConfirmJoining={() => handleOpenJoiningModal(c)}
+                  currentStatus={c.stage || c.status}
                   onStatusChange={(_, newStatus) => handleUpdateStatus(c.submissionId, newStatus)}
                   onRemoveFromMandate={() => setCandidateToRemove(c)}
                   onDeleteCandidate={() => setCandidateToDelete(c)}
@@ -1418,7 +1487,7 @@ export default function MandateWorkspacePage() {
               thisJobCallLogs: [newLog, ...selectedCandidate.thisJobCallLogs],
             });
           }
-          fetchWorkspace();
+          fetchWorkspace(true);
         }}
         onOpenSchedule={(cand) => {
           setSelectedCandidate(null);
@@ -1447,9 +1516,157 @@ export default function MandateWorkspacePage() {
               data.dispatched?.whatsApp ? "WhatsApp candidate brief sent." : ""
             } ${data.dispatched?.email ? "Calendar invite dispatched." : ""}`
           );
-          fetchWorkspace();
+          fetchWorkspace(true);
         }}
       />
+
+      {/* MODAL: DAY-1 PHYSICAL JOINING & INVOICING (RC-07, PL-01) */}
+      {joiningCandidate && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-2xl w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-emerald-50 px-6 py-4 border-b border-emerald-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Receipt className="h-5 w-5 text-emerald-700" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">
+                    Confirm Day-1 Physical Joining & Generate Commercial Tax Invoice
+                  </h3>
+                  <p className="text-[10px] text-emerald-800">
+                    Candidate: <strong>{joiningCandidate.fullName}</strong> • {mandate?.title || "Active Mandate"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setJoiningCandidate(null)}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <form onSubmit={handleConfirmJoiningSubmit} className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block font-bold text-slate-900 mb-1">Actual Physical Start Date *</label>
+                    <input
+                      type="date"
+                      required
+                      value={joiningForm.actualJoiningDate}
+                      onChange={(e) => setJoiningForm({ ...joiningForm, actualJoiningDate: e.target.value })}
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-bold text-slate-900 mb-1">Final Agreed CTC (INR) *</label>
+                    <input
+                      type="number"
+                      required
+                      value={joiningForm.agreedCtc}
+                      onChange={(e) => setJoiningForm({ ...joiningForm, agreedCtc: e.target.value })}
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900 font-bold"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Client Accounts / Billing Contact Email *</label>
+                    <input
+                      type="email"
+                      required
+                      value={joiningForm.clientBillingEmail}
+                      onChange={(e) => setJoiningForm({ ...joiningForm, clientBillingEmail: e.target.value })}
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">Client GSTIN / Tax ID (Optional)</label>
+                    <input
+                      type="text"
+                      value={joiningForm.clientGstin}
+                      onChange={(e) => setJoiningForm({ ...joiningForm, clientGstin: e.target.value })}
+                      placeholder="27AABCU9603R1ZM"
+                      className="w-full px-3 py-1.5 border border-slate-300 rounded-lg text-xs bg-white text-slate-900"
+                    />
+                  </div>
+                </div>
+
+                {/* Instant Placement Invoicing Breakdown */}
+                {joiningForm.agreedCtc && (
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
+                    <span className="font-bold text-slate-900 text-xs block">Commercial Invoice Calculation Preview</span>
+                    <div className="grid grid-cols-3 gap-2 text-[11px]">
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                        <span className="text-slate-500 block text-[10px]">Agreed Placement Fee:</span>
+                        <strong className="text-slate-900">
+                          {mandate?.feePercentage || 8.33}% of Annual CTC
+                        </strong>
+                      </div>
+                      <div className="bg-white p-2.5 rounded-xl border border-slate-200">
+                        <span className="text-slate-500 block text-[10px]">Base Agency Fee:</span>
+                        <strong className="text-slate-900">
+                          ₹{(
+                            (parseFloat(joiningForm.agreedCtc) * (mandate?.feePercentage || 8.33)) /
+                            100
+                          ).toLocaleString()}
+                        </strong>
+                      </div>
+                      <div className="bg-emerald-50 p-2.5 rounded-xl border border-emerald-200">
+                        <span className="text-emerald-800 block text-[10px]">Total (+ 18% GST):</span>
+                        <strong className="text-emerald-950 text-xs">
+                          ₹{Math.round(
+                            ((parseFloat(joiningForm.agreedCtc) * (mandate?.feePercentage || 8.33)) /
+                              100) *
+                              1.18
+                          ).toLocaleString()}
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex justify-end space-x-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setJoiningCandidate(null)}
+                    className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={confirmingPlacement}
+                    className="px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-sm transition-all cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                  >
+                    <Receipt className="h-3.5 w-3.5" />
+                    <span>{confirmingPlacement ? "Generating Tax Invoice..." : "Confirm Joining & Dispatch Invoice"}</span>
+                  </button>
+                </div>
+              </form>
+
+              {/* Generated Invoice Card */}
+              {generatedInvoice && (
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl space-y-2 animate-in fade-in">
+                  <div className="flex items-center justify-between">
+                    <span className="font-extrabold text-emerald-900 text-xs flex items-center space-x-1.5">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      <span>Commercial Invoice Dispatched: {generatedInvoice.invoiceNumber}</span>
+                    </span>
+                    <span className="bg-emerald-200 text-emerald-900 font-bold text-[10px] px-2 py-0.5 rounded-full">
+                      Due in 30 Days
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-emerald-800">
+                    Total Invoiced Amount: <strong>₹{generatedInvoice.totalInvoiceAmount.toLocaleString()} INR</strong>. 90-Day replacement guarantee active until{" "}
+                    <strong>{new Date(Date.now() + 90 * 24 * 3600 * 1000).toLocaleDateString()}</strong>.
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* MODAL 1: BROWSE MATCHING CANDIDATES IN POOL (HIGH TO LOW SKILL MATCH)     */}

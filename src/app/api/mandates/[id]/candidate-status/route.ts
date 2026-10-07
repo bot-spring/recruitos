@@ -35,29 +35,50 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       return NextResponse.json({ error: "Candidate submission record not found." }, { status: 404 });
     }
 
-    // Map CandidateJobStatus to underlying pipeline SubmissionStage
+    // Support both SubmissionStage and legacy CandidateJobStatus values
+    const validStages = Object.values(SubmissionStage);
+    const validJobStatuses = Object.values(CandidateJobStatus);
+
     let nextStage: SubmissionStage = submission.stage;
-    if (status === CandidateJobStatus.NOT_SHARED) {
-      nextStage = SubmissionStage.SCREENED_QUALIFIED;
-    } else if (status === CandidateJobStatus.SHARED_WITH_COMPANY) {
-      nextStage = SubmissionStage.SUBMITTED_TO_CLIENT;
-    } else if (status === CandidateJobStatus.SELECTED_FOR_NEXT_ROUND) {
-      nextStage = SubmissionStage.CLIENT_SHORTLISTED;
-    } else if (status === CandidateJobStatus.OFFERED) {
-      nextStage = SubmissionStage.OFFER_ISSUED;
-    } else if (status === CandidateJobStatus.HOLD) {
-      nextStage = submission.stage; // Maintain stage, flag status
-    } else if (status === CandidateJobStatus.REJECTED) {
-      nextStage = SubmissionStage.STAGE_REJECTED;
-    } else if (status === CandidateJobStatus.JOINED) {
-      nextStage = SubmissionStage.JOINED_DAY_1_ACTIVE;
+    let jobStatus: CandidateJobStatus = submission.candidateJobStatus;
+
+    if (validStages.includes(status as SubmissionStage)) {
+      nextStage = status as SubmissionStage;
+      if (nextStage === SubmissionStage.SUBMITTED_TO_CLIENT) {
+        jobStatus = CandidateJobStatus.SHARED_WITH_COMPANY;
+      } else if (nextStage === SubmissionStage.CLIENT_SHORTLISTED || nextStage === SubmissionStage.INTERVIEW_SCHEDULED) {
+        jobStatus = CandidateJobStatus.SELECTED_FOR_NEXT_ROUND;
+      } else if (nextStage === SubmissionStage.OFFER_ISSUED || nextStage === SubmissionStage.OFFER_ACCEPTED) {
+        jobStatus = CandidateJobStatus.OFFERED;
+      } else if (nextStage === SubmissionStage.STAGE_REJECTED) {
+        jobStatus = CandidateJobStatus.REJECTED;
+      } else if (nextStage === SubmissionStage.JOINED_DAY_1_ACTIVE) {
+        jobStatus = CandidateJobStatus.JOINED;
+      } else if (nextStage === SubmissionStage.SCREENED_QUALIFIED) {
+        jobStatus = CandidateJobStatus.NOT_SHARED;
+      }
+    } else if (validJobStatuses.includes(status as CandidateJobStatus)) {
+      jobStatus = status as CandidateJobStatus;
+      if (jobStatus === CandidateJobStatus.NOT_SHARED) {
+        nextStage = SubmissionStage.SCREENED_QUALIFIED;
+      } else if (jobStatus === CandidateJobStatus.SHARED_WITH_COMPANY) {
+        nextStage = SubmissionStage.SUBMITTED_TO_CLIENT;
+      } else if (jobStatus === CandidateJobStatus.SELECTED_FOR_NEXT_ROUND) {
+        nextStage = SubmissionStage.CLIENT_SHORTLISTED;
+      } else if (jobStatus === CandidateJobStatus.OFFERED) {
+        nextStage = SubmissionStage.OFFER_ISSUED;
+      } else if (jobStatus === CandidateJobStatus.REJECTED) {
+        nextStage = SubmissionStage.STAGE_REJECTED;
+      } else if (jobStatus === CandidateJobStatus.JOINED) {
+        nextStage = SubmissionStage.JOINED_DAY_1_ACTIVE;
+      }
     }
 
     const result = await prisma.$transaction(async (tx) => {
       const updatedSubmission = await tx.candidateSubmission.update({
         where: { id: submission.id },
         data: {
-          candidateJobStatus: status as CandidateJobStatus,
+          candidateJobStatus: jobStatus,
           stage: nextStage,
           rejectionReason: rejectionReason?.trim() || submission.rejectionReason,
           updatedAt: new Date(),
