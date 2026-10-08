@@ -18,6 +18,7 @@ export async function GET(req: Request) {
     const { searchParams } = new URL(req.url);
     const query = searchParams.get("query") || "";
     const silverOnly = searchParams.get("silver") === "true";
+    const sortBy = searchParams.get("sort") || "createdAt_desc";
 
     const whereClause: any = {
       agencyId: session.user.agencyId,
@@ -35,6 +36,17 @@ export async function GET(req: Request) {
         { currentTitle: { contains: query.trim(), mode: "insensitive" } },
         { skills: { hasSome: [query.trim()] } },
       ];
+    }
+
+    let orderByClause: any = { createdAt: "desc" };
+    if (sortBy === "updatedAt_desc") {
+      orderByClause = { updatedAt: "desc" };
+    } else if (sortBy === "createdAt_desc") {
+      orderByClause = { createdAt: "desc" };
+    } else if (sortBy === "exp_desc") {
+      orderByClause = [{ totalExpYears: "desc" }, { createdAt: "desc" }];
+    } else if (sortBy === "name_asc") {
+      orderByClause = [{ fullName: "asc" }, { createdAt: "desc" }];
     }
 
     const candidates = await prisma.candidate.findMany({
@@ -60,7 +72,7 @@ export async function GET(req: Request) {
           orderBy: { calledAt: "desc" },
         },
       },
-      orderBy: { updatedAt: "desc" },
+      orderBy: orderByClause,
     });
 
     return NextResponse.json({ candidates });

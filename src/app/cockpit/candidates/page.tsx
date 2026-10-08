@@ -46,12 +46,14 @@ import {
   Trash2,
   Loader2,
   ChevronDown,
+  ArrowUpDown,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CockpitHeader } from "@/components/CockpitHeader";
 import { CandidateDetailModal, CALL_DISPOSITIONS } from "@/components/CandidateDetailModal";
 import { ScheduleInterviewModal } from "@/components/ScheduleInterviewModal";
 import { CandidateCard } from "@/components/CandidateCard";
+import { CandidateSelectionBar, CandidateSortOption } from "@/components/CandidateSelectionBar";
 
 interface CandidateRecord {
   id: string;
@@ -172,6 +174,22 @@ export default function CandidateBankPage() {
   const [silverFilter, setSilverFilter] = useState(false);
   const [noticeFilter, setNoticeFilter] = useState(false);
   const [probationFilter, setProbationFilter] = useState(false);
+  const [sortBy, setSortBy] = useState<CandidateSortOption>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("recruitos_candidates_sort");
+      if (saved && ["createdAt_desc", "updatedAt_desc", "exp_desc", "name_asc"].includes(saved)) {
+        return saved as CandidateSortOption;
+      }
+    }
+    return "createdAt_desc";
+  });
+
+  const handleSortChange = (newSort: CandidateSortOption) => {
+    setSortBy(newSort);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("recruitos_candidates_sort", newSort);
+    }
+  };
 
   // Unified Batch Ingestion Modal State (RC-02)
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -396,7 +414,7 @@ export default function CandidateBankPage() {
   const fetchCandidates = async (silent = false) => {
     try {
       if (!silent) setLoading(true);
-      const res = await fetch(`/api/candidates?query=${encodeURIComponent(searchQuery)}&silver=${silverFilter}`);
+      const res = await fetch(`/api/candidates?query=${encodeURIComponent(searchQuery)}&silver=${silverFilter}&sort=${sortBy}`);
       if (res.ok) {
         const text = await res.text();
         if (text && text.trim()) {
@@ -434,7 +452,7 @@ export default function CandidateBankPage() {
 
   useEffect(() => {
     fetchCandidates();
-  }, [searchQuery, silverFilter]);
+  }, [searchQuery, silverFilter, sortBy]);
 
   // In-place candidate pipeline status update (optimistic, zero scroll jump)
   const handleUpdateCandidateStatus = async (cand: any, newStatus: string) => {
@@ -1327,51 +1345,28 @@ export default function CandidateBankPage() {
             </div>
           ) : (
             <div className="p-4 bg-slate-50/50 space-y-3">
-              {/* Resdex Candidate Selection & Stats Counter Header */}
-              {displayedCandidates.length > 0 && (
-                <div className="flex items-center justify-between px-3.5 py-2.5 bg-white rounded-xl border border-slate-200/80 text-xs text-slate-600 font-medium shadow-2xs">
-                  <div className="flex items-center space-x-2.5">
-                    <input
-                      type="checkbox"
-                      checked={
-                        selectedCandidateIds.length > 0 &&
-                        displayedCandidates.every((c) => selectedCandidateIds.includes(c.id))
-                      }
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          const allIds = Array.from(
-                            new Set([...selectedCandidateIds, ...displayedCandidates.map((c) => c.id)])
-                          );
-                          setSelectedCandidateIds(allIds);
-                        } else {
-                          const displayedSet = new Set(displayedCandidates.map((c) => c.id));
-                          setSelectedCandidateIds((prev) => prev.filter((id) => !displayedSet.has(id)));
-                        }
-                      }}
-                      aria-label="Select all candidates in this view"
-                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
-                    />
-                    <span className="font-bold text-slate-800">
-                      Showing {displayedCandidates.length} candidate{displayedCandidates.length === 1 ? "" : "s"}
-                    </span>
-                    {selectedCandidateIds.length > 0 && (
-                      <span className="bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-full text-[11px] border border-amber-300">
-                        {selectedCandidateIds.length} selected
-                      </span>
-                    )}
-                  </div>
-
-                  {selectedCandidateIds.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCandidateIds([])}
-                      className="text-xs font-semibold text-slate-500 hover:text-slate-900 underline cursor-pointer"
-                    >
-                      Clear Selection
-                    </button>
-                  )}
-                </div>
-              )}
+              {/* Candidate Selection & Stats Counter Header with Sort */}
+              <CandidateSelectionBar
+                totalCount={displayedCandidates.length}
+                selectedCount={selectedCandidateIds.length}
+                isAllSelected={
+                  selectedCandidateIds.length > 0 &&
+                  displayedCandidates.every((c) => selectedCandidateIds.includes(c.id))
+                }
+                onToggleSelectAll={() => {
+                  if (displayedCandidates.every((c) => selectedCandidateIds.includes(c.id))) {
+                    const displayedSet = new Set(displayedCandidates.map((c) => c.id));
+                    setSelectedCandidateIds((prev) => prev.filter((id) => !displayedSet.has(id)));
+                  } else {
+                    setSelectedCandidateIds(
+                      Array.from(new Set([...selectedCandidateIds, ...displayedCandidates.map((c) => c.id)]))
+                    );
+                  }
+                }}
+                onClearSelection={() => setSelectedCandidateIds([])}
+                sortBy={sortBy}
+                onSortChange={handleSortChange}
+              />
 
               {/* Candidate Cards Stack */}
               {displayedCandidates.map((c, idx) => (

@@ -54,6 +54,7 @@ import { CandidateDetailModal, CALL_DISPOSITIONS } from "@/components/CandidateD
 import { ScheduleInterviewModal } from "@/components/ScheduleInterviewModal";
 import { CockpitHeader } from "@/components/CockpitHeader";
 import { CandidateCard } from "@/components/CandidateCard";
+import { CandidateSelectionBar, CandidateSortOption } from "@/components/CandidateSelectionBar";
 
 interface MandateDetails {
   id: string;
@@ -200,6 +201,22 @@ export default function MandateWorkspacePage() {
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
   const [activeQuickTab, setActiveQuickTab] = useState<"ALL" | "CALLBACKS_TODAY" | "READY_TO_SHARE">("ALL");
   const [selectedCandidateIds, setSelectedCandidateIds] = useState<string[]>([]);
+  const [sortBy, setSortBy] = useState<CandidateSortOption>(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("recruitos_mandate_sort");
+      if (saved && ["createdAt_desc", "updatedAt_desc", "exp_desc", "name_asc"].includes(saved)) {
+        return saved as CandidateSortOption;
+      }
+    }
+    return "createdAt_desc";
+  });
+
+  const handleSortChange = (newSort: CandidateSortOption) => {
+    setSortBy(newSort);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("recruitos_mandate_sort", newSort);
+    }
+  };
   const [isJdDrawerOpen, setIsJdDrawerOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
@@ -958,7 +975,19 @@ export default function MandateWorkspacePage() {
         const timeB = b.nextCallbackAt ? new Date(b.nextCallbackAt).getTime() : Infinity;
         return timeA - timeB;
       }
-      return 0;
+      if (sortBy === "exp_desc") {
+        return (b.totalExpYears || 0) - (a.totalExpYears || 0);
+      }
+      if (sortBy === "name_asc") {
+        return a.fullName.localeCompare(b.fullName);
+      }
+      if (sortBy === "updatedAt_desc") {
+        const timeA = a.lastCallAt ? new Date(a.lastCallAt).getTime() : new Date(a.dateOfSourcing).getTime();
+        const timeB = b.lastCallAt ? new Date(b.lastCallAt).getTime() : new Date(b.dateOfSourcing).getTime();
+        return timeB - timeA;
+      }
+      // Default: createdAt_desc (dateOfSourcing)
+      return new Date(b.dateOfSourcing).getTime() - new Date(a.dateOfSourcing).getTime();
     });
 
   // Count candidates ready to share (Connected & Profile Matched + Not Shared)
@@ -1377,51 +1406,28 @@ export default function MandateWorkspacePage() {
             </div>
           ) : (
             <div className="p-4 bg-slate-50/50 space-y-3">
-              {/* Batch Selection Bar */}
-              {filteredCandidates.length > 0 && (
-                <div className="flex items-center justify-between px-3.5 py-2.5 bg-white rounded-xl border border-slate-200/80 text-xs text-slate-600 font-medium shadow-2xs">
-                  <div className="flex items-center space-x-2.5">
-                    <input
-                      type="checkbox"
-                      checked={
-                        selectedCandidateIds.length > 0 &&
-                        filteredCandidates.every((c) => selectedCandidateIds.includes(c.candidateId))
-                      }
-                      onChange={(e) => {
-                        if (e.target.checked) {
-                          const allIds = Array.from(
-                            new Set([...selectedCandidateIds, ...filteredCandidates.map((c) => c.candidateId)])
-                          );
-                          setSelectedCandidateIds(allIds);
-                        } else {
-                          const displayedSet = new Set(filteredCandidates.map((c) => c.candidateId));
-                          setSelectedCandidateIds((prev) => prev.filter((id) => !displayedSet.has(id)));
-                        }
-                      }}
-                      aria-label="Select all candidates in this view"
-                      className="h-4 w-4 rounded border-slate-300 text-slate-900 focus:ring-slate-900 cursor-pointer"
-                    />
-                    <span className="font-bold text-slate-800">
-                      Showing {filteredCandidates.length} candidate{filteredCandidates.length === 1 ? "" : "s"}
-                    </span>
-                    {selectedCandidateIds.length > 0 && (
-                      <span className="bg-amber-100 text-amber-900 font-bold px-2 py-0.5 rounded-full text-[11px] border border-amber-300">
-                        {selectedCandidateIds.length} selected
-                      </span>
-                    )}
-                  </div>
-
-                  {selectedCandidateIds.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedCandidateIds([])}
-                      className="text-xs font-semibold text-slate-500 hover:text-slate-900 underline cursor-pointer"
-                    >
-                      Clear Selection
-                    </button>
-                  )}
-                </div>
-              )}
+              {/* Candidate Selection & Stats Counter Header with Sort */}
+              <CandidateSelectionBar
+                totalCount={filteredCandidates.length}
+                selectedCount={selectedCandidateIds.length}
+                isAllSelected={
+                  selectedCandidateIds.length > 0 &&
+                  filteredCandidates.every((c) => selectedCandidateIds.includes(c.candidateId))
+                }
+                onToggleSelectAll={() => {
+                  if (filteredCandidates.every((c) => selectedCandidateIds.includes(c.candidateId))) {
+                    const displayedSet = new Set(filteredCandidates.map((c) => c.candidateId));
+                    setSelectedCandidateIds((prev) => prev.filter((id) => !displayedSet.has(id)));
+                  } else {
+                    setSelectedCandidateIds(
+                      Array.from(new Set([...selectedCandidateIds, ...filteredCandidates.map((c) => c.candidateId)]))
+                    );
+                  }
+                }}
+                onClearSelection={() => setSelectedCandidateIds([])}
+                sortBy={sortBy}
+                onSortChange={handleSortChange}
+              />
 
               {/* Candidate Cards Stack */}
               {filteredCandidates.map((c, idx) => (
