@@ -216,15 +216,17 @@ export async function POST(req: Request) {
       specialInstructions,
     } = body;
 
-    if (!companyName || !contactEmail || !title) {
+    if (!companyName || !title) {
       return NextResponse.json(
-        { error: "Missing required fields: Company Name, Contact Email, and Job Title." },
+        { error: "Missing required fields: Company Name and Job Title." },
         { status: 400 }
       );
     }
 
+    const companySlug = companyName.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const effectiveEmail = (contactEmail?.trim() || `hiring@${companySlug || "client"}.com`).toLowerCase();
     const effectiveRecruiterId = assignedRecruiterId || session.user.id;
-    const effectiveContactName = contactName?.trim() || contactEmail.split("@")[0] || "Hiring Lead";
+    const effectiveContactName = contactName?.trim() || effectiveEmail.split("@")[0] || "Hiring Lead";
 
     // Process skills array
     let skillsArray: string[] = [];
@@ -266,7 +268,7 @@ export async function POST(req: Request) {
         where: {
           agencyId: session.user.agencyId!,
           clientId: client.id,
-          email: { equals: contactEmail.toLowerCase().trim(), mode: "insensitive" },
+          email: { equals: effectiveEmail, mode: "insensitive" },
         },
       });
 
@@ -276,7 +278,7 @@ export async function POST(req: Request) {
             agencyId: session.user.agencyId!,
             clientId: client.id,
             name: effectiveContactName,
-            email: contactEmail.toLowerCase().trim(),
+            email: effectiveEmail,
             phone: contactPhone?.trim() || null,
           },
         });

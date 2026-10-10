@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -58,6 +58,7 @@ import {
   Archive,
   RotateCcw,
   Trash2,
+  FileSpreadsheet,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CockpitHeader } from "@/components/CockpitHeader";
@@ -378,16 +379,39 @@ export default function CockpitPage() {
   const userRole = session?.user?.role;
   const isManagement = userRole === "AGENCY_OWNER" || userRole === "TEAM_LEAD";
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const batchCount = params.get("batchSuccess");
+    const clientName = params.get("client");
+    if (batchCount) {
+      setSuccessMessage(
+        `🚀 Successfully launched ${batchCount} new search mandates for '${clientName || "Client"}'! Sourcing mode active.`
+      );
+    }
+  }, []);
+
   // Active Mandate Kebab Menu State
   const [activeMenuMandateId, setActiveMenuMandateId] = useState<string | null>(null);
+  const [newMandateMenuOpen, setNewMandateMenuOpen] = useState(false);
+  const [newMandateMenuTab2Open, setNewMandateMenuTab2Open] = useState(false);
+  const newMandateMenuRef = useRef<HTMLDivElement>(null);
+  const newMandateMenuTab2Ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const handleDocClick = () => setActiveMenuMandateId(null);
-    if (activeMenuMandateId) {
-      document.addEventListener("click", handleDocClick);
-      return () => document.removeEventListener("click", handleDocClick);
-    }
-  }, [activeMenuMandateId]);
+    const handleDocClick = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (newMandateMenuRef.current && !newMandateMenuRef.current.contains(target)) {
+        setNewMandateMenuOpen(false);
+      }
+      if (newMandateMenuTab2Ref.current && !newMandateMenuTab2Ref.current.contains(target)) {
+        setNewMandateMenuTab2Open(false);
+      }
+      setActiveMenuMandateId(null);
+    };
+    document.addEventListener("mousedown", handleDocClick);
+    return () => document.removeEventListener("mousedown", handleDocClick);
+  }, []);
 
   // Navigation State (Solo Owner Micro-Nav Architecture)
   const [currentTab, setCurrentTab] = useState<"dashboard" | "pipeline" | "mandates">("dashboard");
@@ -1282,13 +1306,44 @@ export default function CockpitPage() {
                   </select>
                 </div>
 
-                <button
-                  onClick={() => setIsOfflineModalOpen(true)}
-                  className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fce17c] hover:bg-[#ebd066] border border-[#f5d762] text-slate-900 font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer"
-                >
-                  <Plus className="h-4 w-4 text-slate-900" />
-                  <span>+ New Mandate</span>
-                </button>
+                <div ref={newMandateMenuRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setNewMandateMenuOpen((prev) => !prev)}
+                    className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fce17c] hover:bg-[#ebd066] border border-[#f5d762] text-slate-900 font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                  >
+                    <Plus className="h-4 w-4 text-slate-900" />
+                    <span>+ New Mandate</span>
+                    <ChevronDown className={`h-3.5 w-3.5 text-slate-900 transition-transform duration-150 ${newMandateMenuOpen ? "rotate-180" : ""}`} />
+                  </button>
+
+                  {newMandateMenuOpen && (
+                    <div className="absolute right-0 mt-2 w-64 bg-white border border-[#d3dbed] rounded-xl shadow-xl z-40 p-1.5 text-xs animate-in fade-in zoom-in-95 duration-100 divide-y divide-slate-100">
+                      <Link
+                        href="/cockpit/mandates/new?mode=single"
+                        onClick={() => setNewMandateMenuOpen(false)}
+                        className="flex items-start space-x-2.5 p-2.5 rounded-lg hover:bg-slate-50 transition-colors group cursor-pointer"
+                      >
+                        <Sparkles className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                        <div>
+                          <div className="font-bold text-slate-900 group-hover:text-amber-800">Single Role (Smart JD Drop)</div>
+                          <div className="text-[10px] text-slate-500">Drop PDF, paste brief, or pick role template</div>
+                        </div>
+                      </Link>
+                      <Link
+                        href="/cockpit/mandates/new?mode=batch"
+                        onClick={() => setNewMandateMenuOpen(false)}
+                        className="flex items-start space-x-2.5 p-2.5 rounded-lg hover:bg-slate-50 transition-colors group cursor-pointer"
+                      >
+                        <FileSpreadsheet className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+                        <div>
+                          <div className="font-bold text-slate-900 group-hover:text-blue-800">Multi-Position (Spreadsheet Grid)</div>
+                          <div className="text-[10px] text-slate-500">Upload Excel, paste rows, or inline table</div>
+                        </div>
+                      </Link>
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1901,14 +1956,43 @@ export default function CockpitPage() {
                 </p>
               </div>
 
-              <div className="flex items-center space-x-3">
+              <div ref={newMandateMenuTab2Ref} className="relative">
                 <button
-                  onClick={() => setIsOfflineModalOpen(true)}
-                  className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-extrabold text-xs rounded-xl shadow-sm transition-all cursor-pointer"
+                  type="button"
+                  onClick={() => setNewMandateMenuTab2Open((prev) => !prev)}
+                  className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-extrabold text-xs rounded-xl shadow-xs transition-all cursor-pointer"
                 >
-                  <Plus className="h-4 w-4" />
+                  <Plus className="h-4 w-4 text-slate-900" />
                   <span>+ New Search Mandate</span>
+                  <ChevronDown className={`h-3.5 w-3.5 text-slate-900 transition-transform duration-150 ${newMandateMenuTab2Open ? "rotate-180" : ""}`} />
                 </button>
+
+                {newMandateMenuTab2Open && (
+                  <div className="absolute right-0 mt-2 w-64 bg-white border border-[#d3dbed] rounded-xl shadow-xl z-40 p-1.5 text-xs animate-in fade-in zoom-in-95 duration-100 divide-y divide-slate-100">
+                    <Link
+                      href="/cockpit/mandates/new?mode=single"
+                      onClick={() => setNewMandateMenuTab2Open(false)}
+                      className="flex items-start space-x-2.5 p-2.5 rounded-lg hover:bg-slate-50 transition-colors group cursor-pointer"
+                    >
+                      <Sparkles className="w-4 h-4 text-amber-500 mt-0.5 shrink-0" />
+                      <div>
+                        <div className="font-bold text-slate-900 group-hover:text-amber-800">Single Role (Smart JD Drop)</div>
+                        <div className="text-[10px] text-slate-500">Drop PDF, paste brief, or pick role template</div>
+                      </div>
+                    </Link>
+                    <Link
+                      href="/cockpit/mandates/new?mode=batch"
+                      onClick={() => setNewMandateMenuTab2Open(false)}
+                      className="flex items-start space-x-2.5 p-2.5 rounded-lg hover:bg-slate-50 transition-colors group cursor-pointer"
+                    >
+                      <FileSpreadsheet className="w-4 h-4 text-blue-600 mt-0.5 shrink-0" />
+                      <div>
+                        <div className="font-bold text-slate-900 group-hover:text-blue-800">Multi-Position (Spreadsheet Grid)</div>
+                        <div className="text-[10px] text-slate-500">Upload Excel, paste rows, or inline table</div>
+                      </div>
+                    </Link>
+                  </div>
+                )}
               </div>
             </div>
 

@@ -582,8 +582,9 @@ You are an expert executive search recruiter. Extract structured hiring mandate 
   "currency": "string (e.g. INR, USD, default INR)",
   "location": "string (City / Location e.g. Bengaluru, Mumbai, or empty string)",
   "workMode": "REMOTE" | "HYBRID" | "ONSITE" (default HYBRID),
-  "skills": ["string"] (Array of essential technical, domain, or soft skills mentioned),
-  "description": "string (Cleaned, well-structured full job description text)"
+  "skills": ["string"] (Array of essential technical, framework, and domain skills. Intelligently infer the standard modern companion ecosystem skills so candidates can be accurately matched e.g. for React: React, TypeScript, Redux/Zustand, JavaScript, HTML5/CSS3, REST APIs, Git; for Node: Node.js, Express/NestJS, PostgreSQL, Redis, Docker, Microservices; for DevOps: AWS, Kubernetes, Terraform, Docker, CI/CD, Linux),
+  "description": "string (Cleaned, well-structured full job description text)",
+  "openings": number (Number of open headcount/positions e.g. 2, or default 1 if not specified)
 }
 `;
 
@@ -624,6 +625,7 @@ You are an expert executive search recruiter. Extract structured hiring mandate 
           workMode: validWorkMode,
           skills: Array.isArray(parsed.skills) ? parsed.skills.filter(Boolean) : [],
           description: (parsed.description || rawJdText).trim(),
+          openings: typeof parsed.openings === "number" && parsed.openings > 0 ? Math.floor(parsed.openings) : 1,
         };
       } catch (err: any) {
         console.warn(`Gemini model '${modelName}' failed on JD parse: ${err.message || err}. Trying next model...`);
@@ -647,8 +649,9 @@ You are an expert executive search recruiter. Extract structured hiring mandate 
   "currency": "string (e.g. INR, USD, default INR)",
   "location": "string (City / Location e.g. Bengaluru, Mumbai, or empty string)",
   "workMode": "REMOTE" | "HYBRID" | "ONSITE" (default HYBRID),
-  "skills": ["string"] (Array of essential technical, domain, or soft skills mentioned),
-  "description": "string (Cleaned, well-structured full job description text)"
+  "skills": ["string"] (Array of essential technical, framework, and domain skills. Intelligently infer the standard modern companion ecosystem skills so candidates can be accurately matched e.g. for React: React, TypeScript, Redux/Zustand, JavaScript, HTML5/CSS3, REST APIs, Git; for Node: Node.js, Express/NestJS, PostgreSQL, Redis, Docker, Microservices; for DevOps: AWS, Kubernetes, Terraform, Docker, CI/CD, Linux),
+  "description": "string (Cleaned, well-structured full job description text)",
+  "openings": number (Number of open headcount/positions e.g. 2, or default 1 if not specified)
 }`;
 
       const groqJson = await callGroqChatCompletion([
@@ -676,6 +679,7 @@ You are an expert executive search recruiter. Extract structured hiring mandate 
           workMode: validWorkMode,
           skills: Array.isArray(parsed.skills) ? parsed.skills.filter(Boolean) : [],
           description: (parsed.description || effectiveText).trim(),
+          openings: typeof parsed.openings === "number" && parsed.openings > 0 ? Math.floor(parsed.openings) : 1,
         };
       }
     } catch (groqErr: any) {
@@ -792,6 +796,16 @@ export function smartDeterministicJobDescriptionParser(text: string): ParsedJobD
     return new RegExp(`\\b${escaped}\\b`, "i").test(text);
   });
 
+  // 7. Openings / Vacancy detection
+  let openings = 1;
+  const openingsMatch = text.match(/(?:(?:looking for|need|hire|hiring)\s+)?(\d+)\s*(?:openings?|positions?|vacancies|devs?|engineers?|roles?|candidates?)/i);
+  if (openingsMatch) {
+    const parsedCount = parseInt(openingsMatch[1], 10);
+    if (parsedCount > 0 && parsedCount <= 100) {
+      openings = parsedCount;
+    }
+  }
+
   return {
     title,
     companyName,
@@ -804,6 +818,7 @@ export function smartDeterministicJobDescriptionParser(text: string): ParsedJobD
     workMode,
     skills: matchedSkills,
     description: text.trim(),
+    openings,
   };
 }
 
