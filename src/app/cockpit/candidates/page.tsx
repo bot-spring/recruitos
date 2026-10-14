@@ -1843,9 +1843,12 @@ export default function CandidateBankPage() {
       <ScheduleInterviewModal
         isOpen={!!scheduleModalCandidate && scheduleModalCandidate.submissions.length > 0}
         onClose={() => setScheduleModalCandidate(null)}
+        onBack={() => setScheduleModalCandidate(null)}
         candidate={scheduleModalCandidate}
         submissionId={scheduleModalCandidate?.submissions[0]?.id || null}
         mandateTitle={scheduleModalCandidate?.submissions[0]?.mandate?.title || ""}
+        clientName={scheduleModalCandidate?.submissions[0]?.mandate?.client?.name || ""}
+        competencies={scheduleModalCandidate?.skills || []}
         onSuccess={(data) => {
           setSuccessMessage(
             `⚡ Interview locked for ${scheduleModalCandidate?.fullName}! ${
@@ -2691,8 +2694,20 @@ export default function CandidateBankPage() {
           fetchCandidates(true);
         }}
         onOpenSchedule={(cand) => {
-          setSelectedCandidate(null);
+          setSelectedCandidate(cand);
           handleOpenScheduleModal(cand);
+        }}
+        onStatusChange={(subId, newStatus) => {
+          if (selectedCandidate) {
+            const updatedSubs = (selectedCandidate.submissions || []).map((s: any) =>
+              s.id === subId ? { ...s, stage: newStatus } : s
+            );
+            setSelectedCandidate({
+              ...selectedCandidate,
+              submissions: updatedSubs,
+            });
+          }
+          fetchCandidates(true);
         }}
         onDeleteCandidate={(cand) => setCandidateToDelete(cand as any)}
       />

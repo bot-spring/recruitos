@@ -1473,7 +1473,11 @@ export default function MandateWorkspacePage() {
           id: mandate.id,
           title: mandate.title,
           clientName: mandate.client.name,
+          skills: mandate.skills || [],
+          minCtc: mandate.minCtc,
+          maxCtc: mandate.maxCtc,
         }}
+        onStatusChange={(subId, newStatus) => handleUpdateStatus(subId, newStatus)}
         onCallLogged={(data) => {
           if (selectedCandidate) {
             const newLog = {
@@ -1496,7 +1500,7 @@ export default function MandateWorkspacePage() {
           fetchWorkspace(true);
         }}
         onOpenSchedule={(cand) => {
-          setSelectedCandidate(null);
+          setSelectedCandidate(cand);
           setScheduleCandidate(cand);
         }}
         onRemoveFromMandate={() => {
@@ -1513,9 +1517,12 @@ export default function MandateWorkspacePage() {
       <ScheduleInterviewModal
         isOpen={!!scheduleCandidate}
         onClose={() => setScheduleCandidate(null)}
+        onBack={() => setScheduleCandidate(null)}
         candidate={scheduleCandidate}
         submissionId={scheduleCandidate?.submissionId || null}
         mandateTitle={mandate.title}
+        clientName={mandate.client?.name}
+        competencies={mandate.skills}
         onSuccess={(data: any) => {
           setSuccessMessage(
             `⚡ Interview locked for ${scheduleCandidate?.fullName}! ${
