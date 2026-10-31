@@ -19,7 +19,7 @@ export function UserSandboxToggle() {
   return (
     <div
       title="Demo Sandbox is Active. Outbound communications are safely diverted to your account."
-      className="inline-flex items-center space-x-1.5 px-2.5 py-1.5 rounded-xl text-xs font-bold bg-amber-50 text-amber-900 border border-amber-300 shadow-xs select-none"
+      className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold select-none shadow-2xs"
     >
       <span className="relative flex h-2 w-2">
         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
@@ -43,22 +43,25 @@ export function UserSandboxBanner() {
   if (!session?.user?.isSandboxMode) return null;
 
   const userEmail = session.user.email;
-  const userPhone = session.user.phone || "+91 9818352440";
+  const userPhone = session.user.phone || "+91 98183 52440";
 
   return (
-    <div className="bg-gradient-to-r from-amber-600 via-amber-700 to-orange-700 text-white px-4 py-2 text-xs font-semibold flex flex-col sm:flex-row items-center justify-between shadow-xs sticky top-0 z-40 gap-2 border-b border-amber-800">
-      <div className="flex items-center space-x-2 flex-wrap">
-        <span className="bg-black/30 border border-white/20 text-amber-200 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-wider flex items-center space-x-1">
-          <Sparkles className="h-3 w-3 inline text-amber-300" />
-          <span>Demo Sandbox Active</span>
-        </span>
-        <span className="text-amber-50">
-          Outbound client emails route safely to <strong>{userEmail}</strong> & WhatsApp briefings to <strong>{userPhone}</strong>. Real candidates & clients are protected.
+    <aside className="h-9 bg-[#ffddb8] text-[#2a1700] px-4 sm:px-6 border-b border-[#ffb95f]/50 flex items-center justify-between shadow-[0_1px_4px_rgba(0,0,0,0.02)] sticky top-0 z-40">
+      <div className="flex items-center gap-2 truncate">
+        <span className="text-amber-800 animate-pulse text-xs font-black">⚡</span>
+        <span className="font-mono text-[11px] font-semibold tracking-wide uppercase truncate">
+          DEMO SANDBOX ACTIVE · Outbound client emails route safely to {userEmail} &amp; WhatsApp briefings to {userPhone}
         </span>
       </div>
-      <span className="text-[11px] text-amber-200/90 font-medium hidden sm:inline">
-        Mode managed by Super Admin
-      </span>
-    </div>
+      <div className="flex items-center gap-3 shrink-0">
+        <span className="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-white/80 text-[#2a1700] font-mono text-[11px] font-medium border border-amber-200/50">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-600"></span>
+          Active Sync: Protected
+        </span>
+        <span className="font-mono text-[11px] text-[#653e00] font-medium hidden sm:inline">
+          Mode managed by Super Admin
+        </span>
+      </div>
+    </aside>
   );
 }

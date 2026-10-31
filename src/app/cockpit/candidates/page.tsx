@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useSession, signOut } from "next-auth/react";
 import Link from "next/link";
 import {
@@ -47,7 +47,13 @@ import {
   Loader2,
   ChevronDown,
   ArrowUpDown,
+  FileDown,
+  X,
+  Table,
+  LayoutGrid,
+  MoreVertical,
 } from "lucide-react";
+import { downloadCSV } from "@/lib/export-csv";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CockpitHeader } from "@/components/CockpitHeader";
 import { CandidateDetailModal, CALL_DISPOSITIONS } from "@/components/CandidateDetailModal";
@@ -126,6 +132,17 @@ interface CandidateRecord {
       client: { name: string };
     };
   }>;
+  interviews?: Array<{
+    id: string;
+    scheduledAt: string;
+    durationMinutes?: number;
+    interviewType?: string;
+    status: string;
+    debriefLoggedAt?: string | null;
+    candidateSentiment?: string | null;
+    candidateDebriefNotes?: string | null;
+    mandate?: { id: string; title: string; client?: { name: string } } | null;
+  }>;
 }
 
 
@@ -171,9 +188,43 @@ export default function CandidateBankPage() {
   const [mandates, setMandates] = useState<ActiveMandateOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
-  const [silverFilter, setSilverFilter] = useState(false);
-  const [noticeFilter, setNoticeFilter] = useState(false);
-  const [probationFilter, setProbationFilter] = useState(false);
+  const [activeFilter, setActiveFilter] = useState<string>("ALL");
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const q = params.get("search") || params.get("query") || "";
+      const f = params.get("filter") || "";
+      if (q) setSearchQuery(q);
+      if (f) {
+        const normalized = f.toUpperCase().replace(/-/g, "_");
+        if (normalized === "DEBRIEF_PENDING" || normalized === "DEBRIEFS") {
+          setActiveFilter("DEBRIEF_PENDING");
+        } else if (normalized === "SILVER" || normalized === "SILVER_VAULT") {
+          setActiveFilter("SILVER_VAULT");
+        } else if (normalized === "NOTICE" || normalized === "NOTICE_RISK") {
+          setActiveFilter("NOTICE_RISK");
+        } else if (normalized === "PROBATION" || normalized === "PROBATION_90D") {
+          setActiveFilter("PROBATION_90D");
+        } else if (["SHORTLISTED", "SHARED", "CLIENT_MET", "REJECTED"].includes(normalized)) {
+          setActiveFilter(normalized);
+        }
+      }
+    }
+  }, []);
+
+  const handleFilterChange = (newFilter: string) => {
+    setActiveFilter(newFilter);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (newFilter === "ALL") {
+        url.searchParams.delete("filter");
+      } else {
+        url.searchParams.set("filter", newFilter.toLowerCase());
+      }
+      window.history.replaceState({}, "", url.toString());
+    }
+  };
   const [sortBy, setSortBy] = useState<CandidateSortOption>(() => {
     if (typeof window !== "undefined") {
       const saved = localStorage.getItem("recruitos_candidates_sort");
@@ -190,6 +241,38 @@ export default function CandidateBankPage() {
       localStorage.setItem("recruitos_candidates_sort", newSort);
     }
   };
+
+  const [viewMode, setViewMode] = useState<"table" | "cards">(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("recruitos_candidates_view_mode");
+      if (saved === "table" || saved === "cards") {
+        return saved;
+      }
+    }
+    return "table";
+  });
+
+  const handleViewModeChange = (mode: "table" | "cards") => {
+    setViewMode(mode);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("recruitos_candidates_view_mode", mode);
+    }
+  };
+
+  const [kebabMenuState, setKebabMenuState] = useState<{
+    candidateId: string;
+    candidate: CandidateRecord;
+    top: number;
+    right: number;
+  } | null>(null);
+
+  // Mandate & Pipeline Column Auto-Filter Popover State (Approach A)
+  const [selectedMandateFilter, setSelectedMandateFilter] = useState<string>("ALL");
+  const [mandateFilterState, setMandateFilterState] = useState<{
+    top: number;
+    right: number;
+  } | null>(null);
+  const [mandateSearchQuery, setMandateSearchQuery] = useState("");
 
   // Unified Batch Ingestion Modal State (RC-02)
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
@@ -292,7 +375,10 @@ export default function CandidateBankPage() {
 
   // Delete Candidate Modal State (Recycle Bin)
   const [candidateToDelete, setCandidateToDelete] = useState<CandidateRecord | null>(null);
+  const [bulkDeleteCandidates, setBulkDeleteCandidates] = useState<CandidateRecord[]>([]);
+  const [bulkConfirmText, setBulkConfirmText] = useState("");
   const [deletingCandidate, setDeletingCandidate] = useState(false);
+  const [undoTrashInfo, setUndoTrashInfo] = useState<{ count: number; trashIds?: string[] } | null>(null);
 
   const handleExecuteDeleteCandidate = async () => {
     if (!candidateToDelete) return;
@@ -308,12 +394,45 @@ export default function CandidateBankPage() {
 
       setSuccessMessage(`Candidate '${candidateToDelete.fullName}' moved to Trash Bin.`);
       setCandidates((prev) => prev.filter((c) => c.id !== candidateToDelete.id));
+      setSelectedCandidateIds((prev) => prev.filter((id) => id !== candidateToDelete.id));
       if (selectedCandidate?.id === candidateToDelete.id) {
         setSelectedCandidate(null);
       }
       setCandidateToDelete(null);
     } catch (err: any) {
       setParseError(err.message || "Failed to delete candidate.");
+    } finally {
+      setDeletingCandidate(false);
+    }
+  };
+
+  const handleExecuteBulkDelete = async () => {
+    if (bulkDeleteCandidates.length === 0) return;
+    setDeletingCandidate(true);
+    try {
+      const idsToDelete = bulkDeleteCandidates.map((c) => c.id);
+      const res = await fetch("/api/candidates/trash", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidateIds: idsToDelete,
+          reason: `User bulk deleted ${idsToDelete.length} candidates from Talent Bank`,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to bulk delete candidates.");
+
+      const deletedSet = new Set(data.deletedIds || idsToDelete);
+      setSuccessMessage(`${data.deletedCount || idsToDelete.length} candidate(s) moved to Trash Bin.`);
+      setCandidates((prev) => prev.filter((c) => !deletedSet.has(c.id)));
+      setSelectedCandidateIds((prev) => prev.filter((id) => !deletedSet.has(id)));
+      if (selectedCandidate && deletedSet.has(selectedCandidate.id)) {
+        setSelectedCandidate(null);
+      }
+      setBulkDeleteCandidates([]);
+      setBulkConfirmText("");
+    } catch (err: any) {
+      setParseError(err.message || "Failed to bulk delete candidates.");
     } finally {
       setDeletingCandidate(false);
     }
@@ -414,7 +533,7 @@ export default function CandidateBankPage() {
   const fetchCandidates = async (silent = false) => {
     try {
       if (!silent) setLoading(true);
-      const res = await fetch(`/api/candidates?query=${encodeURIComponent(searchQuery)}&silver=${silverFilter}&sort=${sortBy}`);
+      const res = await fetch(`/api/candidates?query=${encodeURIComponent(searchQuery)}&sort=${sortBy}`);
       if (res.ok) {
         const text = await res.text();
         if (text && text.trim()) {
@@ -452,7 +571,7 @@ export default function CandidateBankPage() {
 
   useEffect(() => {
     fetchCandidates();
-  }, [searchQuery, silverFilter, sortBy]);
+  }, [searchQuery, sortBy]);
 
   // In-place candidate pipeline status update (optimistic, zero scroll jump)
   const handleUpdateCandidateStatus = async (cand: any, newStatus: string) => {
@@ -511,25 +630,195 @@ export default function CandidateBankPage() {
     }
   };
 
-  // Filter candidates based on active view tab
+  // Status stage & lifecycle counts across candidate bank
+  const shortlistedCount = candidates.filter((c) => {
+    const s = c.submissions[0]?.stage;
+    return s && s !== "STAGE_REJECTED" && s !== "CLIENT_REJECTED" && s !== "PARSED_RAW" && s !== "SOURCED_INBOX";
+  }).length;
+
+  const sharedCount = candidates.filter((c) => {
+    const s = c.submissions[0]?.stage;
+    return s === "SUBMITTED_TO_CLIENT" || Boolean((c.submissions[0] as any)?.submittedToClientAt);
+  }).length;
+
+  const clientMetCount = candidates.filter((c) => {
+    const s = c.submissions[0]?.stage;
+    return s === "CLIENT_SHORTLISTED" || s === "INTERVIEW_SCHEDULED" || s === "INTERVIEW_COMPLETED";
+  }).length;
+
+  const debriefPendingCount = candidates.filter((c) =>
+    (c.interviews || []).some(
+      (i) =>
+        new Date(i.scheduledAt).getTime() <= Date.now() &&
+        !i.debriefLoggedAt &&
+        i.status !== "CANCELED"
+    )
+  ).length;
+
+  const noticeRiskCount = candidates.filter((c) => {
+    const s = c.submissions[0]?.stage;
+    return s === "OFFER_ISSUED" || s === "OFFER_ACCEPTED" || s === "NOTICE_PERIOD_ACTIVE";
+  }).length;
+
+  const silverCount = candidates.filter((c) => c.isSilverMedalist).length;
+
+  const probationCount = candidates.filter((c) => {
+    const s = c.submissions[0];
+    return s?.stage === "JOINED_DAY_1_ACTIVE" && s?.probationStatus !== "EARLY_EXIT_REPLACEMENT";
+  }).length;
+
+  const rejectedCount = candidates.filter((c) => {
+    const s = c.submissions[0]?.stage;
+    const d = c.submissions[0]?.clientDecision;
+    return (
+      s === "STAGE_REJECTED" ||
+      s === "CLIENT_REJECTED" ||
+      d === "REJECTED_WITH_FEEDBACK" ||
+      d === "REJECTED" ||
+      (c as any).status === "REJECTED"
+    );
+  }).length;
+
+  // Mandates with counts for Approach A column filter
+  const unassignedCount = candidates.filter((c) => !c.submissions || c.submissions.length === 0).length;
+
+  const mandateOptions = useMemo(() => {
+    const counts: Record<string, number> = {};
+    candidates.forEach((c) => {
+      c.submissions?.forEach((s) => {
+        if (s.mandate?.id) {
+          counts[s.mandate.id] = (counts[s.mandate.id] || 0) + 1;
+        }
+      });
+    });
+
+    const list = mandates.map((m) => ({
+      id: m.id,
+      title: m.title,
+      clientName: m.client?.name || "",
+      count: counts[m.id] || 0,
+    }));
+
+    candidates.forEach((c) => {
+      c.submissions?.forEach((s) => {
+        if (s.mandate?.id && !list.some((m) => m.id === s.mandate.id)) {
+          list.push({
+            id: s.mandate.id,
+            title: s.mandate.title,
+            clientName: (s.mandate as any).client?.name || "",
+            count: counts[s.mandate.id] || 0,
+          });
+        }
+      });
+    });
+
+    return list.sort((a, b) => b.count - a.count || a.title.localeCompare(b.title));
+  }, [mandates, candidates]);
+
+  const filterOptions = [
+    { value: "ALL", label: "All Candidates", count: candidates.length },
+    { value: "SHORTLISTED", label: "Shortlisted", count: shortlistedCount },
+    { value: "SHARED", label: "Shared", count: sharedCount },
+    { value: "CLIENT_MET", label: "Client Met", count: clientMetCount },
+    { value: "DEBRIEF_PENDING", label: "Debrief Pending", count: debriefPendingCount },
+    { value: "NOTICE_RISK", label: "Notice Risk", count: noticeRiskCount },
+    { value: "SILVER_VAULT", label: "Silver Vault", count: silverCount },
+    { value: "PROBATION_90D", label: "90d Guarantee", count: probationCount },
+    { value: "REJECTED", label: "Rejected", count: rejectedCount },
+  ];
+
+  // Filter candidates based on active view tab & stage filters & mandate filter (Approach A)
   const displayedCandidates = candidates.filter((c) => {
+    // Mandate filter (Approach A)
+    if (selectedMandateFilter === "UNASSIGNED") {
+      if (c.submissions && c.submissions.length > 0) return false;
+    } else if (selectedMandateFilter !== "ALL") {
+      if (!c.submissions?.some((s) => s.mandate?.id === selectedMandateFilter)) return false;
+    }
+
     const stage = c.submissions[0]?.stage;
-    if (noticeFilter) {
+    const decision = c.submissions[0]?.clientDecision;
+
+    if (activeFilter === "SHORTLISTED") {
+      return stage && stage !== "STAGE_REJECTED" && stage !== "CLIENT_REJECTED" && stage !== "PARSED_RAW" && stage !== "SOURCED_INBOX";
+    }
+    if (activeFilter === "SHARED") {
+      return stage === "SUBMITTED_TO_CLIENT" || Boolean((c.submissions[0] as any)?.submittedToClientAt);
+    }
+    if (activeFilter === "CLIENT_MET") {
+      return stage === "CLIENT_SHORTLISTED" || stage === "INTERVIEW_SCHEDULED" || stage === "INTERVIEW_COMPLETED";
+    }
+    if (activeFilter === "DEBRIEF_PENDING") {
+      return (c.interviews || []).some(
+        (i) =>
+          new Date(i.scheduledAt).getTime() <= Date.now() &&
+          !i.debriefLoggedAt &&
+          i.status !== "CANCELED"
+      );
+    }
+    if (activeFilter === "NOTICE_RISK") {
       return stage === "OFFER_ISSUED" || stage === "OFFER_ACCEPTED" || stage === "NOTICE_PERIOD_ACTIVE";
     }
-    if (probationFilter) {
-      return stage === "JOINED_DAY_1_ACTIVE";
+    if (activeFilter === "SILVER_VAULT") {
+      return c.isSilverMedalist;
+    }
+    if (activeFilter === "PROBATION_90D") {
+      return stage === "JOINED_DAY_1_ACTIVE" && c.submissions[0]?.probationStatus !== "EARLY_EXIT_REPLACEMENT";
+    }
+    if (activeFilter === "REJECTED") {
+      return (
+        stage === "STAGE_REJECTED" ||
+        stage === "CLIENT_REJECTED" ||
+        decision === "REJECTED_WITH_FEEDBACK" ||
+        decision === "REJECTED" ||
+        (c as any).status === "REJECTED"
+      );
     }
     return true;
   });
 
-  // Handle Resume File Selection & Multi-Resume AI Parsing (Batch up to 5 files, 10MB limit)
+  const handleExportCSV = () => {
+    const headers = [
+      "Full Name",
+      "Current Title",
+      "Current Company",
+      "Email",
+      "Phone",
+      "Total Exp (Years)",
+      "Expected CTC",
+      "Notice Period (Days)",
+      "Location",
+      "Status / Stage",
+      "Active Mandate",
+      "Created At",
+    ];
+    const rows = displayedCandidates.map((c) => {
+      const sub = c.submissions[0];
+      return [
+        c.fullName,
+        c.currentTitle || "",
+        c.currentCompany || "",
+        c.email,
+        c.phone || "",
+        c.totalExpYears ?? 0,
+        c.expectedCtc ? `${c.currency || "INR"} ${c.expectedCtc}` : "",
+        c.noticePeriodDays ?? 0,
+        c.location || "",
+        sub?.stage || (c as any).status || "SOURCED",
+        sub?.mandate?.title || "",
+        new Date(c.createdAt).toLocaleDateString(),
+      ];
+    });
+    downloadCSV(`RecruitOS_Candidates_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
+  };
+
+  // Handle Resume File Selection & Multi-Resume AI Parsing (Batch up to 10 files, 10MB limit)
   const handleMultiFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const fileList = Array.from(e.target.files);
 
-    if (fileList.length > 5) {
-      setParseError("Maximum 5 resumes can be uploaded in one go. Please select up to 5 files.");
+    if (fileList.length > 10) {
+      setParseError("Maximum 10 resumes can be uploaded in one go. Please select up to 10 files.");
       return;
     }
 
@@ -556,15 +845,15 @@ export default function CandidateBankPage() {
     let completedCount = 0;
     const accumulatedResults: any[] = new Array(fileList.length);
 
-    // Smooth stage-aware progress ticker
+    // Smooth stage-aware progress ticker with linear responsive tracking
     const progressInterval = setInterval(() => {
       setParseProgress((prev) => {
         const baseFloor = (completedCount / fileList.length) * 100;
-        const currentTargetCeiling = Math.min(94, Math.round(baseFloor + (94 - baseFloor) * 0.9));
+        const currentTargetCeiling = Math.min(98, Math.round(baseFloor + (100 / fileList.length) * 0.9));
         if (prev.percent >= currentTargetCeiling) {
           return prev;
         }
-        const step = Math.max(1, Math.round((currentTargetCeiling - prev.percent) * 0.08));
+        const step = Math.max(1, Math.round((currentTargetCeiling - prev.percent) * 0.15));
         const nextVal = Math.min(currentTargetCeiling, prev.percent + step);
 
         let stage = "Uploading & storing document in cloud...";
@@ -580,7 +869,7 @@ export default function CandidateBankPage() {
           stageText: stage,
         };
       });
-    }, 200);
+    }, 150);
 
     const worker = async () => {
       while (nextIndex < fileList.length) {
@@ -647,7 +936,7 @@ export default function CandidateBankPage() {
             ...prev,
             current: Math.min(completedCount + 1, fileList.length),
             currentFileName: file.name,
-            percent: Math.max(prev.percent, newFloor > 94 ? 94 : newFloor),
+            percent: Math.max(prev.percent, newFloor),
           };
         });
       }
@@ -1157,6 +1446,34 @@ export default function CandidateBankPage() {
     }
   };
 
+  const formatLakhs = (val: number | null | undefined) => {
+    if (val === null || val === undefined) return "—";
+    if (val >= 10000) return `₹${(val / 100000).toFixed(1)}L`;
+    return `₹${val}L`;
+  };
+
+  const getStageSelectStyle = (val: string) => {
+    switch (val) {
+      case "JOINED_DAY_1_ACTIVE":
+        return "bg-emerald-100 text-emerald-900 border-emerald-300 hover:bg-emerald-200";
+      case "OFFER_ISSUED":
+      case "OFFER_ACCEPTED":
+        return "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100";
+      case "INTERVIEW_SCHEDULED":
+        return "bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100";
+      case "CLIENT_SHORTLISTED":
+      case "SUBMITTED_TO_CLIENT":
+        return "bg-sky-50 text-sky-800 border-sky-300 hover:bg-sky-100";
+      case "NOTICE_PERIOD_ACTIVE":
+        return "bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100";
+      case "STAGE_REJECTED":
+      case "CLIENT_REJECTED":
+        return "bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100";
+      default:
+        return "bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200";
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <UserSandboxBanner />
@@ -1192,24 +1509,53 @@ export default function CandidateBankPage() {
               </span>
             </div>
 
-            <button
-              onClick={() => {
-                setIsImportModalOpen(true);
-                setUploadFiles([]);
-                setBatchResults([]);
-                setParseError(null);
-                setSelectedMandateId("");
-              }}
-              className="inline-flex items-center space-x-2 px-3.5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-bold text-xs rounded-xl shadow-2xs transition-colors cursor-pointer border border-[#e5bf00]"
-            >
-              <UploadCloud className="h-4 w-4 text-slate-900" />
-              <span>+ Import Resumes</span>
-            </button>
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={handleExportCSV}
+                className="inline-flex items-center space-x-1.5 px-3 py-2 bg-white hover:bg-slate-50 text-slate-700 font-bold text-xs rounded-xl shadow-2xs transition-colors cursor-pointer border border-slate-200"
+                title="Export candidates MIS report to CSV"
+              >
+                <FileDown className="h-4 w-4 text-slate-500" />
+                <span>Export CSV</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  setIsImportModalOpen(true);
+                  setUploadFiles([]);
+                  setBatchResults([]);
+                  setParseError(null);
+                  setSelectedMandateId("");
+                }}
+                className="inline-flex items-center space-x-2 px-3.5 py-2 bg-amber-400 hover:bg-amber-500 text-slate-900 font-bold text-xs rounded-xl shadow-2xs transition-colors cursor-pointer border border-amber-500/40"
+              >
+                <UploadCloud className="h-4 w-4 text-slate-900" />
+                <span>+ Import Resumes</span>
+              </button>
+            </div>
           </div>
 
-          {/* Row 2: Search Input (Left) + Interactive Metric Filter Tabs (Right) */}
-          <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 pt-3 border-t border-slate-100">
-            {/* Search Input */}
+          {/* Row 2: Quick Filter Tabs */}
+          <div className="pt-3 border-t border-slate-100 flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-semibold text-slate-600">
+            {filterOptions.map((f) => (
+              <button
+                key={f.value}
+                type="button"
+                onClick={() => handleFilterChange(f.value)}
+                className={`px-3 py-1.5 rounded-lg whitespace-nowrap transition-all cursor-pointer ${
+                  activeFilter === f.value
+                    ? "bg-slate-900 text-white shadow-2xs font-bold"
+                    : "hover:bg-slate-100 text-slate-600 hover:text-slate-900"
+                }`}
+              >
+                {f.label} {f.count !== undefined && <span className="opacity-75">({f.count})</span>}
+              </button>
+            ))}
+          </div>
+
+          {/* Row 3: Search Input & Controls */}
+          <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center justify-between gap-3">
             <div className="relative flex-1 max-w-md">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <Search className="h-3.5 w-3.5 text-slate-400" />
@@ -1231,99 +1577,60 @@ export default function CandidateBankPage() {
               )}
             </div>
 
-            {/* Interactive Metric Filter Tabs (Live Filter + Counter, Monochromatic Discipline) */}
-            <div className="flex flex-wrap items-center gap-1.5">
-              {/* All Filter */}
-              <button
-                type="button"
-                onClick={() => {
-                  setProbationFilter(false);
-                  setNoticeFilter(false);
-                  setSilverFilter(false);
-                }}
-                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  !probationFilter && !noticeFilter && !silverFilter
-                    ? "bg-slate-900 text-white shadow-2xs"
-                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <span>All ({candidates.length})</span>
-              </button>
+            <div className="flex items-center gap-2.5">
+              {/* Sort By Dropdown */}
+              <div className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600">
+                <ArrowUpDown className="h-3.5 w-3.5 text-slate-400" />
+                <span className="font-medium text-slate-500">Sort:</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => handleSortChange(e.target.value as CandidateSortOption)}
+                  className="bg-transparent font-bold text-slate-800 hover:text-slate-900 border-none outline-hidden cursor-pointer text-xs pr-1"
+                >
+                  <option value="createdAt_desc">Newest Added</option>
+                  <option value="updatedAt_desc">Recently Active</option>
+                  <option value="exp_desc">Experience (High to Low)</option>
+                  <option value="name_asc">Alphabetical (A-Z)</option>
+                </select>
+              </div>
 
-              {/* Silver Vault Filter */}
-              <button
-                type="button"
-                onClick={() => {
-                  setSilverFilter(!silverFilter);
-                  if (!silverFilter) {
-                    setProbationFilter(false);
-                    setNoticeFilter(false);
-                  }
-                }}
-                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  silverFilter
-                    ? "bg-slate-900 text-white shadow-2xs"
-                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <span>Silver Vault ({candidates.filter((c) => c.isSilverMedalist).length})</span>
-              </button>
+              {/* Dense Table vs Cards View Switcher */}
+              <div className="inline-flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => handleViewModeChange("table")}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                    viewMode === "table"
+                      ? "bg-white text-slate-900 shadow-2xs font-bold"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Table className="h-3.5 w-3.5" />
+                  <span>Dense Table</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleViewModeChange("cards")}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                    viewMode === "cards"
+                      ? "bg-white text-slate-900 shadow-2xs font-bold"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                  <span>Cards</span>
+                </button>
+              </div>
 
-              {/* Notice Risk Filter */}
-              <button
-                type="button"
-                onClick={() => {
-                  setNoticeFilter(!noticeFilter);
-                  if (!noticeFilter) {
-                    setProbationFilter(false);
-                    setSilverFilter(false);
-                  }
-                }}
-                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  noticeFilter
-                    ? "bg-slate-900 text-white shadow-2xs"
-                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <span>Notice Risk ({
-                  candidates.filter((c) => {
-                    const s = c.submissions[0]?.stage;
-                    return s === "OFFER_ISSUED" || s === "OFFER_ACCEPTED" || s === "NOTICE_PERIOD_ACTIVE";
-                  }).length
-                })</span>
-              </button>
-
-              {/* 90d Guarantee Filter */}
-              <button
-                type="button"
-                onClick={() => {
-                  setProbationFilter(!probationFilter);
-                  if (!probationFilter) {
-                    setNoticeFilter(false);
-                    setSilverFilter(false);
-                  }
-                }}
-                className={`inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                  probationFilter
-                    ? "bg-slate-900 text-white shadow-2xs"
-                    : "bg-white border border-slate-200 text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                <span>90d Guarantee ({
-                  candidates.filter((c) => {
-                    const s = c.submissions[0];
-                    return s?.stage === "JOINED_DAY_1_ACTIVE" && s?.probationStatus !== "EARLY_EXIT_REPLACEMENT";
-                  }).length
-                })</span>
-              </button>
+              <span className="text-xs text-slate-400 font-medium">
+                {displayedCandidates.length} of {candidates.length} showing
+              </span>
             </div>
           </div>
         </div>
 
         {/* Candidate List Container */}
         <div className="bg-white rounded-2xl border border-slate-200/90 shadow-sm overflow-hidden">
-
-          {/* Table */}
           {loading ? (
             <div className="p-12 text-center text-slate-400">
               <div className="inline-block w-6 h-6 border-2 border-slate-400 border-t-transparent rounded-full animate-spin mb-2"></div>
@@ -1334,18 +1641,382 @@ export default function CandidateBankPage() {
               <User className="h-8 w-8 text-slate-300 mx-auto mb-2" />
               <p className="font-bold text-slate-700 text-sm">No candidate profiles found</p>
               <p className="text-xs text-slate-400 mt-1">
-                {probationFilter
+                {activeFilter === "DEBRIEF_PENDING"
+                  ? "All completed interviews have been debriefed. Great job!"
+                  : activeFilter === "PROBATION_90D"
                   ? "No placements currently under 90-day probation tracking."
-                  : noticeFilter
+                  : activeFilter === "NOTICE_RISK"
                   ? "No candidates currently in offer or notice period stage."
-                  : silverFilter
+                  : activeFilter === "SILVER_VAULT"
                   ? "No candidates currently tagged as Silver Medalists."
+                  : activeFilter === "SHORTLISTED"
+                  ? "No candidates currently shortlisted."
+                  : activeFilter === "SHARED"
+                  ? "No candidates currently shared with clients."
+                  : activeFilter === "CLIENT_MET"
+                  ? "No candidates currently in client meeting / interview stage."
+                  : activeFilter === "REJECTED"
+                  ? "No rejected candidate profiles."
                   : "Click '+ Import & Parse Resumes' to ingest candidate CVs via the Gemini AI parser."}
               </p>
+              {(activeFilter !== "ALL" || searchQuery || selectedMandateFilter !== "ALL") && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleFilterChange("ALL");
+                    setSearchQuery("");
+                    setSelectedMandateFilter("ALL");
+                  }}
+                  className="mt-3 text-xs font-bold text-blue-600 hover:underline cursor-pointer"
+                >
+                  Clear search and filters
+                </button>
+              )}
+            </div>
+          ) : viewMode === "table" ? (
+            <div className="overflow-x-auto relative">
+              <table className="w-full text-left border-collapse text-xs min-w-[1050px] border-y border-slate-200">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider divide-x divide-slate-200">
+                    <th className="py-2.5 px-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        checked={
+                          selectedCandidateIds.length > 0 &&
+                          displayedCandidates.every((c) => selectedCandidateIds.includes(c.id))
+                        }
+                        onChange={() => {
+                          if (displayedCandidates.every((c) => selectedCandidateIds.includes(c.id))) {
+                            const displayedSet = new Set(displayedCandidates.map((c) => c.id));
+                            setSelectedCandidateIds((prev) => prev.filter((id) => !displayedSet.has(id)));
+                          } else {
+                            setSelectedCandidateIds(
+                              Array.from(new Set([...selectedCandidateIds, ...displayedCandidates.map((c) => c.id)]))
+                            );
+                          }
+                        }}
+                        className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 h-3.5 w-3.5 cursor-pointer accent-blue-600"
+                      />
+                    </th>
+                    <th className="py-2.5 px-3">
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() => handleSortChange(sortBy === "name_asc" ? "createdAt_desc" : "name_asc")}
+                      >
+                        <span>Candidate Profile</span>
+                        <ChevronDown className="h-3 w-3 text-slate-400" />
+                      </div>
+                    </th>
+                    <th className="py-2.5 px-3 w-36">
+                      <span>Contact</span>
+                    </th>
+                    <th className="py-2.5 px-3 w-48">
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() => handleSortChange(sortBy === "exp_desc" ? "createdAt_desc" : "exp_desc")}
+                      >
+                        <span>Exp · CTC · Notice</span>
+                        <ChevronDown className="h-3 w-3 text-slate-400" />
+                      </div>
+                    </th>
+                    <th className="py-2.5 px-3 w-60">
+                      <span>Key Skills &amp; Domain</span>
+                    </th>
+                    <th className="py-2 px-3 w-64 relative whitespace-nowrap">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-1.5">
+                          <span className={selectedMandateFilter !== "ALL" ? "text-blue-700 font-extrabold" : ""}>
+                            Mandate &amp; Status
+                          </span>
+                          {selectedMandateFilter !== "ALL" && (
+                            <span className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" title="Active Mandate Filter" />
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (mandateFilterState) {
+                              setMandateFilterState(null);
+                              return;
+                            }
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const menuHeight = 320;
+                            let top: number;
+                            if (window.innerHeight - rect.bottom >= menuHeight) {
+                              top = rect.bottom + 4;
+                            } else if (rect.top >= menuHeight) {
+                              top = rect.top - menuHeight - 4;
+                            } else {
+                              top = Math.max(12, window.innerHeight - menuHeight - 12);
+                            }
+                            setMandateFilterState({
+                              top,
+                              right: Math.max(12, window.innerWidth - rect.right),
+                            });
+                          }}
+                          className={`p-1 rounded transition-colors flex items-center border cursor-pointer ${
+                            selectedMandateFilter !== "ALL"
+                              ? "bg-blue-50 text-blue-600 hover:bg-blue-100 border-blue-200"
+                              : "text-slate-400 hover:text-slate-700 hover:bg-slate-100 border-transparent"
+                          }`}
+                          title="Filter by Mandate & Assignment"
+                        >
+                          <Filter className="h-3 w-3" />
+                        </button>
+                      </div>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {displayedCandidates.map((c) => {
+                    const isSelected = selectedCandidateIds.includes(c.id);
+                    const hasPendingDebrief = (c.interviews || []).some(
+                      (i) =>
+                        new Date(i.scheduledAt).getTime() <= Date.now() &&
+                        !i.debriefLoggedAt &&
+                        i.status !== "CANCELED"
+                    );
+
+                    const rawStage = (c.submissions?.[0]?.stage || (c as any).status || "").toUpperCase();
+                    let currentStageVal = "SCREENED_QUALIFIED";
+                    if (rawStage.includes("CLIENT_SHORTLIST") || rawStage.includes("SUBMITTED")) {
+                      currentStageVal = "CLIENT_SHORTLISTED";
+                    } else if (rawStage.includes("INTERVIEW") || rawStage.includes("CLIENT_MET")) {
+                      currentStageVal = "INTERVIEW_SCHEDULED";
+                    } else if (rawStage.includes("OFFER")) {
+                      currentStageVal = "OFFER_ISSUED";
+                    } else if (rawStage.includes("NOTICE")) {
+                      currentStageVal = "NOTICE_PERIOD_ACTIVE";
+                    } else if (rawStage.includes("JOINED")) {
+                      currentStageVal = "JOINED_DAY_1_ACTIVE";
+                    } else if (rawStage.includes("REJECT")) {
+                      currentStageVal = "STAGE_REJECTED";
+                    }
+
+                    return (
+                      <tr
+                        key={c.id}
+                        onClick={() => handleOpenCandidateModal(c)}
+                        className={`transition-colors divide-x divide-slate-200 hover:bg-slate-50/80 cursor-pointer ${
+                          isSelected ? "bg-blue-50/30" : ""
+                        }`}
+                      >
+                        <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              setSelectedCandidateIds((prev) =>
+                                prev.includes(c.id) ? prev.filter((id) => id !== c.id) : [...prev, c.id]
+                              );
+                            }}
+                            className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 h-3.5 w-3.5 cursor-pointer accent-blue-600"
+                          />
+                        </td>
+                        <td className="py-2 px-3">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-slate-900 hover:text-blue-700 text-xs">
+                              {c.fullName}
+                            </span>
+
+                            {c.resumeUrl ? (
+                              <a
+                                href={c.resumeUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[10px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-1.5 py-0.2 rounded transition-colors inline-flex items-center gap-0.5 shadow-2xs"
+                                title="Open CV in new tab"
+                              >
+                                <span>CV</span>
+                                <ExternalLink className="h-2.5 w-2.5 text-slate-400" />
+                              </a>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenCandidateModal(c);
+                                }}
+                                className="text-[10px] font-bold text-slate-400 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded transition-colors"
+                                title="No CV file - view candidate details"
+                              >
+                                CV
+                              </button>
+                            )}
+
+                            {hasPendingDebrief && (
+                              <span
+                                title="Interview conducted — Debrief pending"
+                                className="inline-flex items-center text-purple-700 bg-purple-50 border border-purple-200 p-0.5 rounded shadow-2xs"
+                              >
+                                <Clock className="h-3 w-3" />
+                              </span>
+                            )}
+
+                            {c.isSilverMedalist && (
+                              <span
+                                title={`Silver Medalist finalist: ${c.silverMedalistReason || "High caliber candidate"}`}
+                                className="inline-flex items-center gap-0.5 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-1 py-0.2 rounded shadow-2xs"
+                              >
+                                🥈 Silver
+                              </span>
+                            )}
+
+                            <span className="text-slate-300">·</span>
+                            <span className="text-slate-500 text-[11px] truncate max-w-[280px]">
+                              {c.currentTitle || "Candidate"}{c.currentCompany ? ` (${c.currentCompany})` : ""}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="py-2 px-3 text-slate-700 font-medium whitespace-nowrap">
+                          {c.phone || c.email || "—"}
+                        </td>
+
+                        <td className="py-2 px-3 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-slate-800">
+                              {c.totalExpYears !== undefined && c.totalExpYears !== null ? `${c.totalExpYears}y · ` : ""}
+                              {c.currentCtc || c.expectedCtc ? (
+                                <>
+                                  {c.currentCtc ? formatLakhs(c.currentCtc) : "—"}
+                                  {" → "}
+                                  {c.expectedCtc ? formatLakhs(c.expectedCtc) : "—"}
+                                </>
+                              ) : (
+                                "—"
+                              )}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded">
+                              {c.noticePeriodDays ? `${c.noticePeriodDays}d Notice` : "30d Notice"}
+                            </span>
+                          </div>
+                        </td>
+
+                        <td className="py-2 px-3 whitespace-nowrap">
+                          <div className="flex items-center gap-1 flex-wrap max-w-[240px]">
+                            {c.skills && c.skills.length > 0 ? (
+                              <>
+                                {c.skills.slice(0, 3).map((skill, sIdx) => (
+                                  <span
+                                    key={sIdx}
+                                    className="text-[10px] font-medium text-slate-700 bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded truncate max-w-[95px]"
+                                    title={skill}
+                                  >
+                                    {skill}
+                                  </span>
+                                ))}
+                                {c.skills.length > 3 && (
+                                  <span
+                                    className="text-[10px] font-bold text-slate-500 bg-slate-50 border border-slate-200 px-1 py-0.2 rounded"
+                                    title={c.skills.slice(3).join(", ")}
+                                  >
+                                    +{c.skills.length - 3}
+                                  </span>
+                                )}
+                              </>
+                            ) : (
+                              <span className="text-slate-400 text-[11px] italic">—</span>
+                            )}
+                          </div>
+                        </td>
+
+                        <td className="py-2 px-3 min-w-[210px] w-64 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-between gap-1.5 w-full">
+                            {c.submissions && c.submissions.length > 0 ? (
+                              <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                <Link
+                                  href={`/cockpit/mandates/${c.submissions[0].mandate.id}`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="font-bold text-slate-800 hover:text-blue-600 text-[11px] truncate max-w-[105px]"
+                                  title={c.submissions[0].mandate.title}
+                                >
+                                  {c.submissions[0].mandate.title}
+                                </Link>
+                                <div className="relative inline-flex items-center flex-1 min-w-0">
+                                  <select
+                                    value={currentStageVal}
+                                    onChange={(e) => {
+                                      const newStatus = e.target.value;
+                                      if (!newStatus) return;
+                                      if (newStatus === "INTERVIEW_SCHEDULED") {
+                                        handleOpenScheduleModal(c);
+                                        return;
+                                      }
+                                      if (newStatus === "JOINED_DAY_1_ACTIVE") {
+                                        handleOpenJoiningModal(c);
+                                        return;
+                                      }
+                                      handleUpdateCandidateStatus(c, newStatus);
+                                    }}
+                                    className={`appearance-none w-full py-1 pl-2 pr-5 text-[10px] font-bold rounded-md border cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-slate-400 transition-colors shadow-2xs truncate ${getStageSelectStyle(currentStageVal)}`}
+                                    title="Change pipeline stage"
+                                  >
+                                    <option value="SCREENED_QUALIFIED">Screened / Ready</option>
+                                    <option value="CLIENT_SHORTLISTED">Shortlisted</option>
+                                    <option value="INTERVIEW_SCHEDULED">Interview Scheduled</option>
+                                    <option value="OFFER_ISSUED">Offer Stage</option>
+                                    <option value="NOTICE_PERIOD_ACTIVE">Notice Period</option>
+                                    <option value="JOINED_DAY_1_ACTIVE">Joined Day 1</option>
+                                    <option value="STAGE_REJECTED">Rejected</option>
+                                  </select>
+                                  <ChevronDown className="h-3 w-3 text-slate-500 absolute right-1 top-1/2 -translate-y-1/2 pointer-events-none" />
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="flex items-center flex-1 min-w-0">
+                                <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-md truncate">
+                                  Talent Bank · Available
+                                </span>
+                              </div>
+                            )}
+
+                            {/* In-cell Kebab Menu Trigger */}
+                            <div className="relative inline-block text-left shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (kebabMenuState?.candidateId === c.id) {
+                                    setKebabMenuState(null);
+                                    return;
+                                  }
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const menuHeight = 220;
+                                  let top: number;
+                                  if (window.innerHeight - rect.bottom >= menuHeight) {
+                                    top = rect.bottom + 4;
+                                  } else if (rect.top >= menuHeight) {
+                                    top = rect.top - menuHeight - 4;
+                                  } else {
+                                    top = Math.max(12, window.innerHeight - menuHeight - 12);
+                                  }
+                                  setKebabMenuState({
+                                    candidateId: c.id,
+                                    candidate: c,
+                                    top,
+                                    right: Math.max(12, window.innerWidth - rect.right),
+                                  });
+                                }}
+                                className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                                title="Candidate Actions"
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div className="p-4 bg-slate-50/50 space-y-3">
-              {/* Candidate Selection & Stats Counter Header with Sort */}
+              {/* Candidate Selection & Stats Counter Header (Sort & Filter handled cleanly in Top Command Bar) */}
               <CandidateSelectionBar
                 totalCount={displayedCandidates.length}
                 selectedCount={selectedCandidateIds.length}
@@ -1364,8 +2035,11 @@ export default function CandidateBankPage() {
                   }
                 }}
                 onClearSelection={() => setSelectedCandidateIds([])}
-                sortBy={sortBy}
-                onSortChange={handleSortChange}
+                onBulkDelete={() => {
+                  const toDelete = candidates.filter((c) => selectedCandidateIds.includes(c.id));
+                  setBulkConfirmText("");
+                  setBulkDeleteCandidates(toDelete);
+                }}
               />
 
               {/* Candidate Cards Stack */}
@@ -1383,6 +2057,7 @@ export default function CandidateBankPage() {
                   }}
                   onOpenModal={handleOpenCandidateModal}
                   onScheduleInterview={handleOpenScheduleModal}
+                  onOpenDebrief={handleOpenDebriefModal}
                   onRedeploy={(cand) => {
                     setRedeployCandidate(cand as any);
                     setRedeployNotes(`Redeploying Silver Medalist '${cand.fullName}' with pre-vetted experience.`);
@@ -1396,6 +2071,320 @@ export default function CandidateBankPage() {
             </div>
           )}
         </div>
+
+        {/* Floating Bulk Action Bar for Selected Candidates */}
+        {selectedCandidateIds.length > 0 && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900 text-white px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-3 border border-slate-700 text-xs animate-in fade-in slide-in-from-bottom-4 duration-150">
+            <div className="flex items-center gap-2 pr-3 border-r border-slate-700">
+              <span className="w-5 h-5 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center text-[10px]">
+                {selectedCandidateIds.length}
+              </span>
+              <span className="font-semibold text-slate-200">
+                candidate{selectedCandidateIds.length !== 1 ? "s" : ""} selected
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => {
+                const firstSelected = candidates.find((c) => selectedCandidateIds.includes(c.id));
+                if (firstSelected) {
+                  setRedeployCandidate(firstSelected);
+                  setRedeployNotes(`Adding selected candidate '${firstSelected.fullName}' to active mandate.`);
+                }
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-amber-400 hover:bg-amber-500 text-slate-950 font-bold rounded-lg transition-colors cursor-pointer"
+            >
+              <Zap className="h-3.5 w-3.5" />
+              <span>+ Add to Mandate</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportCSV}
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold rounded-lg transition-colors cursor-pointer"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              <span>Export CSV</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                const toDelete = candidates.filter((c) => selectedCandidateIds.includes(c.id));
+                setBulkConfirmText("");
+                setBulkDeleteCandidates(toDelete);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1 bg-rose-950/80 hover:bg-rose-900 text-rose-300 border border-rose-800 font-semibold rounded-lg transition-colors cursor-pointer"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              <span>Delete Selected</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setSelectedCandidateIds([])}
+              className="text-xs text-slate-400 hover:text-white transition-colors cursor-pointer ml-1"
+            >
+              Clear
+            </button>
+          </div>
+        )}
+
+        {/* Global Fixed Positioned Mandate & Pipeline Column Auto-Filter Popover (Approach A) */}
+        {mandateFilterState && (
+          <>
+            <div
+              className="fixed inset-0 z-40 cursor-default"
+              onClick={() => setMandateFilterState(null)}
+            />
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                top: `${mandateFilterState.top}px`,
+                right: `${mandateFilterState.right}px`,
+              }}
+              className="fixed w-72 bg-white rounded-xl shadow-2xl border border-slate-200 z-50 p-3 text-slate-800 normal-case font-normal animate-in fade-in zoom-in-95 duration-100 text-left"
+            >
+              {/* Popover Header */}
+              <div className="flex items-center justify-between pb-2 border-b border-slate-100 mb-2">
+                <div className="flex items-center space-x-1.5">
+                  <Filter className="w-3.5 h-3.5 text-blue-600" />
+                  <span className="text-xs font-bold text-slate-900">Filter by Mandate</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setMandateFilterState(null)}
+                  className="text-slate-400 hover:text-slate-600 p-0.5 rounded cursor-pointer"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              {/* Quick Search Input */}
+              <div className="mb-2">
+                <input
+                  type="text"
+                  value={mandateSearchQuery}
+                  onChange={(e) => setMandateSearchQuery(e.target.value)}
+                  placeholder="Filter mandates..."
+                  className="w-full px-2.5 py-1 text-xs border border-slate-200 rounded-md focus:outline-hidden focus:ring-1 focus:ring-blue-500 bg-slate-50 text-slate-900 placeholder:text-slate-400"
+                />
+              </div>
+
+              {/* Options List */}
+              <div className="space-y-1 max-h-52 overflow-y-auto pr-1 py-1 text-xs">
+                {/* Option 1: All Candidates */}
+                <label
+                  onClick={() => {
+                    setSelectedMandateFilter("ALL");
+                    setMandateFilterState(null);
+                  }}
+                  className={`flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                    selectedMandateFilter === "ALL"
+                      ? "bg-blue-50 text-blue-900 font-bold"
+                      : "hover:bg-slate-50 text-slate-700"
+                  }`}
+                >
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      name="mandateFilterOption"
+                      checked={selectedMandateFilter === "ALL"}
+                      onChange={() => {}}
+                      className="w-3.5 h-3.5 text-blue-600 border-slate-300 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <span>All Candidates</span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-mono">{candidates.length}</span>
+                </label>
+
+                {/* Option 2: Available (Unassigned in Talent Bank) */}
+                <label
+                  onClick={() => {
+                    setSelectedMandateFilter("UNASSIGNED");
+                    setMandateFilterState(null);
+                  }}
+                  className={`flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                    selectedMandateFilter === "UNASSIGNED"
+                      ? "bg-blue-50 text-blue-900 font-bold"
+                      : "hover:bg-slate-50 text-slate-700"
+                  }`}
+                >
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="radio"
+                      name="mandateFilterOption"
+                      checked={selectedMandateFilter === "UNASSIGNED"}
+                      onChange={() => {}}
+                      className="w-3.5 h-3.5 text-blue-600 border-slate-300 focus:ring-blue-500 cursor-pointer"
+                    />
+                    <span>Available (Unassigned)</span>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-mono">{unassignedCount}</span>
+                </label>
+
+                <div className="border-t border-slate-100 my-1 pt-1">
+                  <div className="px-2 py-0.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    Active Client Mandates
+                  </div>
+                </div>
+
+                {/* Mandate List */}
+                {mandateOptions
+                  .filter(
+                    (m) =>
+                      m.title.toLowerCase().includes(mandateSearchQuery.toLowerCase()) ||
+                      m.clientName.toLowerCase().includes(mandateSearchQuery.toLowerCase())
+                  )
+                  .map((m) => {
+                    const isChecked = selectedMandateFilter === m.id;
+                    return (
+                      <label
+                        key={m.id}
+                        onClick={() => {
+                          setSelectedMandateFilter(m.id);
+                          setMandateFilterState(null);
+                        }}
+                        className={`flex items-center justify-between px-2 py-1.5 rounded-lg cursor-pointer transition-colors ${
+                          isChecked
+                            ? "bg-blue-50 text-blue-900 font-bold"
+                            : "hover:bg-slate-50 text-slate-700"
+                        }`}
+                      >
+                        <div className="flex items-center space-x-2 min-w-0 pr-2">
+                          <input
+                            type="radio"
+                            name="mandateFilterOption"
+                            checked={isChecked}
+                            onChange={() => {}}
+                            className="w-3.5 h-3.5 text-blue-600 border-slate-300 focus:ring-blue-500 cursor-pointer shrink-0"
+                          />
+                          <div className="truncate">
+                            <span className="truncate block font-medium">{m.title}</span>
+                            {m.clientName && (
+                              <span className="text-[10px] text-slate-400 truncate block">
+                                {m.clientName}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <span className="text-[11px] text-slate-400 font-mono shrink-0">{m.count}</span>
+                      </label>
+                    );
+                  })}
+              </div>
+
+              {/* Footer Actions */}
+              <div className="pt-2 mt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectedMandateFilter("ALL");
+                    setMandateSearchQuery("");
+                    setMandateFilterState(null);
+                  }}
+                  className="text-slate-500 hover:text-slate-800 font-medium cursor-pointer"
+                >
+                  Reset Filter
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMandateFilterState(null)}
+                  className="px-2.5 py-1 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-md cursor-pointer text-[11px]"
+                >
+                  Done
+                </button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Global Fixed Positioned Kebab Menu (Immune to Table Overflow & Stacking Contexts) */}
+        {kebabMenuState && (
+          <>
+            <div
+              className="fixed inset-0 z-40 cursor-default"
+              onClick={() => setKebabMenuState(null)}
+            />
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                top: `${kebabMenuState.top}px`,
+                right: `${kebabMenuState.right}px`,
+              }}
+              className="fixed w-48 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 p-1 text-xs animate-in fade-in zoom-in-95 duration-100 text-left"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  const cand = kebabMenuState.candidate;
+                  setKebabMenuState(null);
+                  handleOpenCandidateModal(cand);
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-50 text-slate-700 font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileText className="h-3.5 w-3.5 text-slate-500" />
+                <span>View Profile &amp; Notes</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const cand = kebabMenuState.candidate;
+                  setKebabMenuState(null);
+                  setRedeployCandidate(cand);
+                  setRedeployNotes(`Adding candidate '${cand.fullName}' to active mandate.`);
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-amber-50 text-amber-800 font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <Zap className="h-3.5 w-3.5 text-amber-600" />
+                <span>+ Add to Mandate</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const cand = kebabMenuState.candidate;
+                  setKebabMenuState(null);
+                  handleOpenScheduleModal(cand);
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-50 text-slate-700 font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <Calendar className="h-3.5 w-3.5 text-blue-600" />
+                <span>Schedule Interview</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  const cand = kebabMenuState.candidate;
+                  setKebabMenuState(null);
+                  handleToggleSilver(cand);
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-50 text-slate-700 font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <Award className="h-3.5 w-3.5 text-amber-600" />
+                <span>{kebabMenuState.candidate.isSilverMedalist ? "Remove Silver Medalist" : "Tag Silver Medalist"}</span>
+              </button>
+
+              <div className="border-t border-slate-100 my-1" />
+
+              <button
+                type="button"
+                onClick={() => {
+                  const cand = kebabMenuState.candidate;
+                  setKebabMenuState(null);
+                  setCandidateToDelete(cand);
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-50 text-rose-700 font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-rose-600" />
+                <span>Delete to Trash Bin</span>
+              </button>
+            </div>
+          </>
+        )}
       </main>
 
       {/* MODAL: CONFIRM DAY-1 PHYSICAL JOINING & AUTO-INVOICE (PL-01, PL-02, RC-07) */}
@@ -2775,6 +3764,115 @@ export default function CandidateBankPage() {
                     <>
                       <Trash2 className="h-3.5 w-3.5" />
                       <span>Move to Trash Bin</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Candidates Confirmation Modal */}
+      {bulkDeleteCandidates.length > 0 && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-rose-50 px-6 py-4 border-b border-rose-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">
+                    Move {bulkDeleteCandidates.length} Candidates to Trash Bin
+                  </h3>
+                  <p className="text-[10px] text-rose-700">
+                    Safely archives selected candidate profiles and releases unique identifiers
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setBulkDeleteCandidates([])}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <div>
+                <p className="font-bold text-slate-900 text-sm mb-1">
+                  Are you sure you want to remove {bulkDeleteCandidates.length} selected candidate
+                  {bulkDeleteCandidates.length > 1 ? "s" : ""}?
+                </p>
+                <div className="mt-2 max-h-36 overflow-y-auto space-y-1 p-2 bg-slate-50 rounded-xl border border-slate-200 divide-y divide-slate-100">
+                  {bulkDeleteCandidates.slice(0, 10).map((c) => (
+                    <div key={c.id} className="pt-1 first:pt-0 text-[11px] flex justify-between items-center text-slate-700">
+                      <span className="font-semibold text-slate-900 truncate max-w-[200px]">{c.fullName}</span>
+                      <span className="text-[10px] text-slate-500 font-mono">{c.email || c.phone || "No contact"}</span>
+                    </div>
+                  ))}
+                  {bulkDeleteCandidates.length > 10 && (
+                    <div className="pt-1 text-[10px] text-slate-400 italic text-center">
+                      + {bulkDeleteCandidates.length - 10} more candidates
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-800 text-[11px] leading-relaxed">
+                <strong>What happens next:</strong>
+                <ul className="list-disc list-inside mt-1 space-y-0.5">
+                  <li>Selected candidates will be moved to the <strong>Trash Bin</strong>.</li>
+                  <li>Their emails and phone numbers will be released for future re-import.</li>
+                  <li>You can restore any profile anytime from the Trash Bin.</li>
+                </ul>
+              </div>
+
+              {/* Enterprise Double-Confirmation Guardrail */}
+              {bulkDeleteCandidates.length >= 2 && (
+                <div className="space-y-1.5 pt-1 border-t border-slate-100">
+                  <label className="block text-[11px] font-bold text-slate-700">
+                    To prevent accidental bulk deletion, please type{" "}
+                    <span className="font-mono bg-rose-100 text-rose-800 px-1 py-0.5 rounded font-extrabold">DELETE</span>{" "}
+                    to confirm:
+                  </label>
+                  <input
+                    type="text"
+                    value={bulkConfirmText}
+                    onChange={(e) => setBulkConfirmText(e.target.value)}
+                    placeholder="Type DELETE to confirm"
+                    className="w-full px-3 py-1.5 text-xs font-mono border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-rose-500 focus:border-rose-500"
+                    autoFocus
+                  />
+                </div>
+              )}
+
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBulkDeleteCandidates([]);
+                    setBulkConfirmText("");
+                  }}
+                  disabled={deletingCandidate}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteBulkDelete}
+                  disabled={deletingCandidate || (bulkDeleteCandidates.length >= 2 && bulkConfirmText.trim().toUpperCase() !== "DELETE")}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-xs cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed flex items-center space-x-1.5"
+                >
+                  {deletingCandidate ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Moving to Bin...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="h-3.5 w-3.5" />
+                      <span>Move {bulkDeleteCandidates.length} to Trash Bin</span>
                     </>
                   )}
                 </button>

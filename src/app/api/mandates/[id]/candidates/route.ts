@@ -103,30 +103,42 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
 
     let submissionId = submissionIdParam;
     let candidateId = candidateIdParam;
+    let submissionIds: string[] = [];
+    let candidateIds: string[] = [];
     let reason = "Removed from search mandate";
 
     try {
       const body = await req.json();
       if (body.submissionId) submissionId = body.submissionId;
       if (body.candidateId) candidateId = body.candidateId;
+      if (Array.isArray(body.submissionIds)) submissionIds = body.submissionIds;
+      if (Array.isArray(body.candidateIds)) candidateIds = body.candidateIds;
       if (body.reason) reason = body.reason;
     } catch {
       // Body is optional if params provided in query
     }
 
-    if (!submissionId && !candidateId) {
+    // Determine target submissions (support single or batch)
+    const hasBatch = submissionIds.length > 0 || candidateIds.length > 0;
+    if (!submissionId && !candidateId && !hasBatch) {
       return NextResponse.json(
-        { error: "Either submissionId or candidateId is required." },
+        { error: "submissionId(s) or candidateId(s) is required." },
         { status: 400 }
       );
     }
 
-    // Find submission
-    const submission = await prisma.candidateSubmission.findFirst({
+    const whereOr: any[] = [];
+    if (submissionIds.length > 0) whereOr.push({ id: { in: submissionIds } });
+    if (candidateIds.length > 0) whereOr.push({ candidateId: { in: candidateIds } });
+    if (submissionId) whereOr.push({ id: submissionId });
+    if (candidateId) whereOr.push({ candidateId });
+
+    // Find matching submissions
+    const submissions = await prisma.candidateSubmission.findMany({
       where: {
         agencyId,
         mandateId,
-        ...(submissionId ? { id: submissionId } : { candidateId: candidateId! }),
+        OR: whereOr,
       },
       include: {
         candidate: true,
@@ -134,46 +146,53 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
       },
     });
 
-    if (!submission) {
-      return NextResponse.json({ error: "Candidate is not attached to this mandate." }, { status: 404 });
+    if (submissions.length === 0) {
+      return NextResponse.json({ error: "No matching candidate submissions found on this mandate." }, { status: 404 });
     }
 
+    const removedSubIds = submissions.map((s) => s.id);
+    const removedCandIds = submissions.map((s) => s.candidateId);
+    const mandateTitle = submissions[0]?.mandate?.title || "Search Mandate";
+
     await prisma.$transaction(async (tx) => {
-      // Delete any pending interview schedules on this mandate for this candidate
+      // Delete any pending interview schedules on this mandate for these submissions
       await tx.interviewSchedule.deleteMany({
         where: {
           mandateId,
-          candidateId: submission.candidateId,
-          submissionId: submission.id,
+          submissionId: { in: removedSubIds },
         },
       });
 
-      // Delete the submission
-      await tx.candidateSubmission.delete({
-        where: { id: submission.id },
+      // Delete the submissions
+      await tx.candidateSubmission.deleteMany({
+        where: { id: { in: removedSubIds } },
       });
 
       // Record Audit Trail
-      await tx.auditLog.create({
-        data: {
-          agencyId,
-          userId: session.user.id,
-          action: "CANDIDATE_REMOVED_FROM_MANDATE",
-          entity: "CandidateSubmission",
-          entityId: submission.id,
-          metadata: {
-            candidateName: submission.candidate.fullName,
-            mandateTitle: submission.mandate.title,
-            reason,
+      for (const s of submissions) {
+        await tx.auditLog.create({
+          data: {
+            agencyId,
+            userId: session.user.id,
+            action: "CANDIDATE_REMOVED_FROM_MANDATE",
+            entity: "CandidateSubmission",
+            entityId: s.id,
+            metadata: {
+              candidateName: s.candidate.fullName,
+              mandateTitle,
+              reason,
+            },
           },
-        },
-      });
+        });
+      }
     });
 
     return NextResponse.json({
-      message: `Candidate '${submission.candidate.fullName}' removed from '${submission.mandate.title}'. Profile preserved in Talent Bank.`,
+      message: `${submissions.length} candidate(s) removed from '${mandateTitle}'. Profiles preserved in Talent Bank.`,
       success: true,
-      candidateId: submission.candidateId,
+      removedCount: submissions.length,
+      removedCandidateIds: removedCandIds,
+      removedSubmissionIds: removedSubIds,
     });
   } catch (error: any) {
     console.error("Error removing candidate from mandate:", error);

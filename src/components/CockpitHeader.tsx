@@ -294,41 +294,39 @@ export function CockpitHeader({
 
   return (
     <header className="bg-white border-b border-slate-200 sticky top-0 z-30 shadow-xs">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div className="w-full px-4 sm:px-6 lg:px-10">
         <div className="flex justify-between items-center h-16">
           <div className="flex items-center space-x-6">
             <Link href="/cockpit" className="flex items-center space-x-3 cursor-pointer">
-              <div className="h-9 w-9 rounded-xl bg-brand-surface border border-brand-surfaceDark flex items-center justify-center font-extrabold text-slate-800 text-base shadow-sm">
+              <div className="w-9 h-9 rounded-xl bg-slate-900 text-white flex items-center justify-center font-bold text-lg shadow-xs">
                 R
               </div>
-              <div>
-                <div className="flex items-center space-x-2">
-                  <span className="font-extrabold text-slate-900 text-lg tracking-tight">RecruitOS</span>
-                  <span className="bg-brand-surfaceLight text-slate-800 text-[10px] font-extrabold px-2 py-0.5 rounded border border-brand-surface uppercase tracking-wide">
-                    {session?.user?.agencyName || "Agency Cockpit"}
-                  </span>
-                </div>
+              <div className="flex items-center space-x-2.5">
+                <span className="text-xl font-bold tracking-tight text-slate-900">RecruitOS</span>
+                <span className="text-[11px] font-semibold uppercase px-2.5 py-0.5 rounded bg-slate-100 text-slate-600 border border-slate-200 tracking-wider">
+                  {session?.user?.agencyName || "Agency Cockpit"}
+                </span>
               </div>
             </Link>
 
             {/* SOLO OWNER MICRO-NAV NAVIGATION */}
-            <nav className="hidden md:flex items-center space-x-1 bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold">
+            <nav className="hidden lg:flex items-center space-x-1.5">
               <button
                 type="button"
                 onClick={() => handleTabClick("dashboard")}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer relative ${
+                className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer relative ${
                   activeTab === "dashboard" || activeTab === "pipeline"
-                    ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                    : "text-slate-600 hover:text-slate-900"
+                    ? "bg-slate-100 text-slate-900 font-semibold border border-slate-200 shadow-2xs"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-50 font-medium"
                 }`}
                 title="Command Center: Interviews, SLA Chase Queue & Retentions"
               >
                 <Zap className="h-3.5 w-3.5 text-amber-500" />
-                <span>⚡ Command Center</span>
+                <span>Command Center</span>
                 {pipelineAlertCount > 0 && (
                   <span
                     className={`ml-1 text-[9px] font-black px-1.5 py-0.2 rounded-full ${
-                      isBreachedAlert ? "bg-rose-500 text-white" : "bg-[#fce17c] text-slate-900"
+                      isBreachedAlert ? "bg-rose-500 text-white" : "bg-amber-400 text-slate-900"
                     }`}
                   >
                     {isBreachedAlert ? `!${pipelineAlertCount}` : pipelineAlertCount}
@@ -339,17 +337,17 @@ export function CockpitHeader({
               <button
                 type="button"
                 onClick={() => handleTabClick("mandates")}
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
                   activeTab === "mandates"
-                    ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                    : "text-slate-600 hover:text-slate-900"
+                    ? "bg-slate-100 text-slate-900 font-semibold border border-slate-200 shadow-2xs"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-50 font-medium"
                 }`}
                 title="Search Mandates & Client Workspaces"
               >
-                <Briefcase className="h-3.5 w-3.5 text-slate-700" />
-                <span>💼 Mandates</span>
+                <Briefcase className="h-3.5 w-3.5 text-slate-500" />
+                <span>Mandates</span>
                 {inboundCount > 0 && (
-                  <span className="ml-1 bg-amber-500 text-slate-900 text-[9px] font-black px-1.5 py-0.2 rounded-full">
+                  <span className="ml-1 px-1.5 py-0.2 rounded-full bg-slate-200 text-slate-700 font-semibold text-[10px]">
                     {inboundCount}
                   </span>
                 )}
@@ -357,15 +355,15 @@ export function CockpitHeader({
 
               <Link
                 href="/cockpit/candidates"
-                className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
+                className={`flex items-center space-x-1.5 px-3.5 py-1.5 rounded-lg text-xs transition-colors cursor-pointer ${
                   activeTab === "candidates"
-                    ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-200/60"
+                    ? "bg-slate-100 text-slate-900 font-semibold border border-slate-200 shadow-2xs"
+                    : "text-slate-600 hover:text-slate-900 hover:bg-slate-50 font-medium"
                 }`}
                 title="Candidate Bank & Talent Pool"
               >
-                <Users className="h-3.5 w-3.5 text-slate-700" />
-                <span>👥 Talent Bank</span>
+                <Users className="h-3.5 w-3.5 text-slate-500" />
+                <span>Talent Bank</span>
               </Link>
             </nav>
           </div>
@@ -382,14 +380,12 @@ export function CockpitHeader({
                   setIsNotifOpen(!isNotifOpen);
                   setIsProfileOpen(false);
                 }}
-                className="relative p-2 text-slate-600 hover:text-slate-900 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
+                className="relative p-2 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors cursor-pointer"
                 title="Recruiter Activity & Notifications"
               >
                 <Bell className="h-4 w-4" />
                 {unreadNotifCount > 0 && (
-                  <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-rose-500 text-white text-[9px] font-black rounded-full flex items-center justify-center animate-pulse shadow-xs">
-                    {unreadNotifCount > 9 ? "9+" : unreadNotifCount}
-                  </span>
+                  <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-500 ring-2 ring-white"></span>
                 )}
               </button>
 
@@ -512,13 +508,13 @@ export function CockpitHeader({
                   setIsProfileOpen(!isProfileOpen);
                   setIsNotifOpen(false);
                 }}
-                className="flex items-center space-x-1.5 p-1 rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+                className="flex items-center space-x-1.5 p-1 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
                 title="Account Profile"
               >
-                <div className="h-8 w-8 rounded-full bg-slate-900 text-brand-surface font-black text-xs flex items-center justify-center border border-slate-700 shadow-xs">
+                <div className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-xs ring-2 ring-slate-100">
                   {initials}
                 </div>
-                <ChevronDown className="h-3 w-3 text-slate-500" />
+                <ChevronDown className="h-3.5 w-3.5 text-slate-400" />
               </button>
 
               {isProfileOpen && (

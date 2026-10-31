@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { SubmissionStage } from "@prisma/client";
+import { SubmissionStage, InterviewStatus } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -293,6 +293,122 @@ export async function GET(req: Request) {
     const healthyCount = totalSubmitted - breachedCount;
     const complianceRate = totalSubmitted > 0 ? Math.round((healthyCount / totalSubmitted) * 100) : 100;
 
+    // 6. Recruiter Tasks Hybrid Queries (RC-04, RC-05)
+    const [
+      callbacksDue,
+      callsLoggedToday,
+      unscreenedSubmissionsCount,
+      screenedTodayCount,
+      debriefsPending,
+      debriefsCompletedTodayCount,
+    ] = await Promise.all([
+      // 1. Callbacks due today or overdue
+      prisma.callLog.findMany({
+        where: {
+          agencyId: session.user.agencyId,
+          disposition: "CONNECTED_CALLBACK",
+          callbackAt: { lte: endOfToday },
+          ...(mandateId ? { mandateId } : {}),
+        },
+        include: {
+          candidate: {
+            select: {
+              id: true,
+              fullName: true,
+              phone: true,
+              email: true,
+              currentTitle: true,
+              currentCompany: true,
+            },
+          },
+          mandate: {
+            select: {
+              id: true,
+              title: true,
+              client: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: { callbackAt: "asc" },
+        take: 10,
+      }),
+      // Calls logged today
+      prisma.callLog.count({
+        where: {
+          agencyId: session.user.agencyId,
+          calledAt: { gte: startOfToday },
+          ...(mandateId ? { mandateId } : {}),
+        },
+      }),
+      // 2. Unscreened / Raw submissions
+      prisma.candidateSubmission.count({
+        where: {
+          agencyId: session.user.agencyId,
+          stage: SubmissionStage.PARSED_RAW,
+          ...(mandateId ? { mandateId } : {}),
+        },
+      }),
+      // Screened today
+      prisma.candidateSubmission.count({
+        where: {
+          agencyId: session.user.agencyId,
+          stage: { not: SubmissionStage.PARSED_RAW },
+          updatedAt: { gte: startOfToday },
+          ...(mandateId ? { mandateId } : {}),
+        },
+      }),
+      // 4. Debriefs pending: past interviews without debrief logged
+      prisma.interviewSchedule.findMany({
+        where: {
+          agencyId: session.user.agencyId,
+          scheduledAt: { lte: now },
+          debriefLoggedAt: null,
+          status: { not: InterviewStatus.CANCELED },
+          ...(mandateId ? { mandateId } : {}),
+        },
+        include: {
+          candidate: {
+            select: {
+              id: true,
+              fullName: true,
+              phone: true,
+              email: true,
+              currentTitle: true,
+            },
+          },
+          mandate: {
+            select: {
+              id: true,
+              title: true,
+              client: { select: { id: true, name: true } },
+            },
+          },
+        },
+        orderBy: { scheduledAt: "desc" },
+        take: 10,
+      }),
+      // Debriefs completed today
+      prisma.interviewSchedule.count({
+        where: {
+          agencyId: session.user.agencyId,
+          debriefLoggedAt: { gte: startOfToday },
+          ...(mandateId ? { mandateId } : {}),
+        },
+      }),
+    ]);
+
+    const callbacksCompletionRate = callbacksDue.length === 0
+      ? 100
+      : Math.min(100, Math.max(0, Math.round((callsLoggedToday / (callsLoggedToday + callbacksDue.length)) * 100)));
+
+    const screeningCompletionRate = unscreenedSubmissionsCount === 0
+      ? 100
+      : Math.min(100, Math.max(0, Math.round((screenedTodayCount / (screenedTodayCount + unscreenedSubmissionsCount)) * 100)));
+
+    const debriefsCompletionRate = debriefsPending.length === 0
+      ? 100
+      : Math.min(100, Math.max(0, Math.round((debriefsCompletedTodayCount / (debriefsCompletedTodayCount + debriefsPending.length)) * 100)));
+
     return NextResponse.json({
       interviewsToday,
       interviewsYesterday,
@@ -303,6 +419,31 @@ export async function GET(req: Request) {
         screened: screenedSubmissions,
         submitted: formattedSubmitted,
         interviewing: interviewingSubmissions,
+      },
+      tasks: {
+        callbacks: {
+          dueCount: callbacksDue.length,
+          completedToday: callsLoggedToday,
+          completionRate: callbacksCompletionRate,
+          items: callbacksDue,
+        },
+        screening: {
+          pendingCount: unscreenedSubmissionsCount,
+          screenedToday: screenedTodayCount,
+          completionRate: screeningCompletionRate,
+        },
+        clientChases: {
+          bottlenecksCount: breachedCount + warningCount,
+          totalWaiting: totalSubmitted,
+          completionRate: complianceRate,
+          topBottleneck: chasesDue[0] || null,
+        },
+        debriefs: {
+          pendingCount: debriefsPending.length,
+          completedToday: debriefsCompletedTodayCount,
+          completionRate: debriefsCompletionRate,
+          items: debriefsPending,
+        },
       },
       stats: {
         totalScreened: screenedSubmissions.length,
@@ -315,6 +456,9 @@ export async function GET(req: Request) {
         breachedCount,
         warningCount,
         noticePeriodCount: formattedNoticePeriod.length,
+        callbacksDueCount: callbacksDue.length,
+        debriefsPendingCount: debriefsPending.length,
+        unscreenedCount: unscreenedSubmissionsCount,
       },
     });
   } catch (error: any) {

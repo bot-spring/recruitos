@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { useSession, signOut } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -44,6 +44,7 @@ import {
   FileText,
   Mail,
   Phone,
+  MessageSquare,
   UserPlus,
   TrendingUp,
   Upload,
@@ -59,9 +60,11 @@ import {
   RotateCcw,
   Trash2,
   FileSpreadsheet,
+  FileDown,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CockpitHeader } from "@/components/CockpitHeader";
+import { downloadCSV } from "@/lib/export-csv";
 
 interface InboundMandate {
   id: string;
@@ -254,7 +257,21 @@ interface FunnelMetrics {
   selected: number;
   offered: number;
   joined: number;
+  rejected?: number;
   conversionRate: number;
+}
+
+interface VelocityItem {
+  label: string;
+  applied: number;
+  shortlisted: number;
+  rejected: number;
+}
+
+interface ApplicationsVelocityData {
+  days: VelocityItem[];
+  weeks: VelocityItem[];
+  months: VelocityItem[];
 }
 
 interface MandateFunnelRecord {
@@ -400,14 +417,17 @@ export default function CockpitPage() {
 
   useEffect(() => {
     const handleDocClick = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (newMandateMenuRef.current && !newMandateMenuRef.current.contains(target)) {
+      const target = e.target as HTMLElement | null;
+      if (newMandateMenuRef.current && !newMandateMenuRef.current.contains(target as Node)) {
         setNewMandateMenuOpen(false);
       }
-      if (newMandateMenuTab2Ref.current && !newMandateMenuTab2Ref.current.contains(target)) {
+      if (newMandateMenuTab2Ref.current && !newMandateMenuTab2Ref.current.contains(target as Node)) {
         setNewMandateMenuTab2Open(false);
       }
-      setActiveMenuMandateId(null);
+      // Only close mandate action menu if click was outside the mandate kebab container
+      if (target && !target.closest("[data-mandate-kebab]")) {
+        setActiveMenuMandateId(null);
+      }
     };
     document.addEventListener("mousedown", handleDocClick);
     return () => document.removeEventListener("mousedown", handleDocClick);
@@ -431,6 +451,61 @@ export default function CockpitPage() {
       submitted: PipelineCandidate[];
       interviewing: PipelineCandidate[];
     };
+    tasks?: {
+      callbacks: {
+        dueCount: number;
+        completedToday: number;
+        completionRate: number;
+        items: Array<{
+          id: string;
+          callbackAt: string | null;
+          candidate: {
+            id: string;
+            fullName: string;
+            phone?: string | null;
+            email?: string | null;
+            currentTitle?: string | null;
+          };
+          mandate?: {
+            id: string;
+            title: string;
+            client?: { id: string; name: string } | null;
+          } | null;
+        }>;
+      };
+      screening: {
+        pendingCount: number;
+        screenedToday: number;
+        completionRate: number;
+      };
+      clientChases: {
+        bottlenecksCount: number;
+        totalWaiting: number;
+        completionRate: number;
+        topBottleneck?: any;
+      };
+      debriefs: {
+        pendingCount: number;
+        completedToday: number;
+        completionRate: number;
+        items: Array<{
+          id: string;
+          scheduledAt: string;
+          candidate: {
+            id: string;
+            fullName: string;
+            phone?: string | null;
+            email?: string | null;
+            currentTitle?: string | null;
+          };
+          mandate?: {
+            id: string;
+            title: string;
+            client?: { id: string; name: string } | null;
+          } | null;
+        }>;
+      };
+    };
     stats: {
       totalScreened: number;
       totalSubmitted: number;
@@ -442,6 +517,9 @@ export default function CockpitPage() {
       breachedCount: number;
       warningCount: number;
       noticePeriodCount?: number;
+      callbacksDueCount?: number;
+      debriefsPendingCount?: number;
+      unscreenedCount?: number;
     };
   } | null>(null);
   const [pipelineLoading, setPipelineLoading] = useState(false);
@@ -478,6 +556,8 @@ export default function CockpitPage() {
   // Funnel Analytics State (Tab 1: Dashboard)
   const [macroFunnel, setMacroFunnel] = useState<FunnelMetrics | null>(null);
   const [mandateFunnels, setMandateFunnels] = useState<MandateFunnelRecord[]>([]);
+  const [applicationsVelocity, setApplicationsVelocity] = useState<ApplicationsVelocityData | null>(null);
+  const [velocityRange, setVelocityRange] = useState<"days" | "weeks" | "months">("days");
   const [loadingFunnel, setLoadingFunnel] = useState(true);
   const [funnelSearchQuery, setFunnelSearchQuery] = useState("");
 
@@ -503,6 +583,52 @@ export default function CockpitPage() {
   // Command Center Dismissals
   const [dismissedChaseIds, setDismissedChaseIds] = useState<string[]>([]);
   const [dismissedNoticeIds, setDismissedNoticeIds] = useState<string[]>([]);
+
+  // Interviews & Schedule Card State (Command Center Card 3)
+  const [interviewsList, setInterviewsList] = useState<any[]>([]);
+  const [interviewsLoading, setInterviewsLoading] = useState(false);
+  const [interviewDateRange, setInterviewDateRange] = useState<"TODAY" | "NEXT_7" | "NEXT_30" | "LAST_7" | "LAST_30">("TODAY");
+
+  const filteredInterviews = useMemo(() => {
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+
+    return interviewsList
+      .filter((iv) => {
+        if (!iv.scheduledAt) return false;
+        const d = new Date(iv.scheduledAt);
+
+        if (interviewDateRange === "TODAY") {
+          return d >= startOfToday && d <= endOfToday;
+        }
+        if (interviewDateRange === "NEXT_7") {
+          const next7End = new Date(startOfToday.getTime() + 7 * 24 * 60 * 60 * 1000);
+          return d >= startOfToday && d <= next7End;
+        }
+        if (interviewDateRange === "NEXT_30") {
+          const next30End = new Date(startOfToday.getTime() + 30 * 24 * 60 * 60 * 1000);
+          return d >= startOfToday && d <= next30End;
+        }
+        if (interviewDateRange === "LAST_7") {
+          const last7Start = new Date(endOfToday.getTime() - 7 * 24 * 60 * 60 * 1000);
+          return d >= last7Start && d <= endOfToday;
+        }
+        if (interviewDateRange === "LAST_30") {
+          const last30Start = new Date(endOfToday.getTime() - 30 * 24 * 60 * 60 * 1000);
+          return d >= last30Start && d <= endOfToday;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const timeA = new Date(a.scheduledAt).getTime();
+        const timeB = new Date(b.scheduledAt).getTime();
+        if (interviewDateRange === "TODAY" || interviewDateRange === "NEXT_7" || interviewDateRange === "NEXT_30") {
+          return timeA - timeB;
+        }
+        return timeB - timeA;
+      });
+  }, [interviewsList, interviewDateRange]);
 
   // Approval Modal State
   const [selectedInbound, setSelectedInbound] = useState<InboundMandate | null>(null);
@@ -579,14 +705,20 @@ export default function CockpitPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   // Fetch Funnel Analytics (Tab 1)
-  const fetchFunnelData = async () => {
+  const fetchFunnelData = async (mandateId?: string) => {
     try {
       setLoadingFunnel(true);
-      const res = await fetch("/api/dashboard/funnel");
+      const url = mandateId && mandateId !== "all"
+        ? `/api/dashboard/funnel?mandateId=${mandateId}`
+        : "/api/dashboard/funnel";
+      const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();
         setMacroFunnel(data.macroFunnel);
         setMandateFunnels(data.mandateFunnels || []);
+        if (data.applicationsVelocity) {
+          setApplicationsVelocity(data.applicationsVelocity);
+        }
       }
     } catch (err) {
       console.error("Failed to load funnel analytics:", err);
@@ -653,6 +785,25 @@ export default function CockpitPage() {
       console.error("Failed to load pipeline data:", err);
     } finally {
       setPipelineLoading(false);
+    }
+  };
+
+  // Fetch Full Interviews List across agency/mandates (⚡ Dedicated Interviews Hub)
+  const fetchInterviewsList = async (mandateId?: string) => {
+    setInterviewsLoading(true);
+    try {
+      const url = mandateId && mandateId !== "all"
+        ? `/api/interviews?mandateId=${mandateId}`
+        : "/api/interviews";
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        setInterviewsList(data.interviews || []);
+      }
+    } catch (err) {
+      console.error("Failed to load interviews list:", err);
+    } finally {
+      setInterviewsLoading(false);
     }
   };
 
@@ -776,9 +927,10 @@ export default function CockpitPage() {
   // Delete Mandate to MandateTrashBin
   const handleExecuteDeleteMandate = async () => {
     if (!mandateToDelete) return;
+    const deletedId = mandateToDelete.id;
     setDeletingMandate(true);
     try {
-      const res = await fetch(`/api/mandates/${mandateToDelete.id}`, {
+      const res = await fetch(`/api/mandates/${deletedId}`, {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reason: "User deleted mandate from Cockpit Mandates tab" }),
@@ -786,9 +938,15 @@ export default function CockpitPage() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to delete mandate.");
 
+      // Optimistic instant UI update across all active, closed, and dashboard lists
+      setActiveMandates((prev) => prev.filter((m) => m.id !== deletedId));
+      setClosedMandates((prev) => prev.filter((m) => m.id !== deletedId));
+      setMandateFunnels((prev) => prev.filter((m) => m.id !== deletedId));
+
       setSuccessMessage("Mandate moved to Trash Bin.");
       setMandateToDelete(null);
       fetchMandatesData();
+      fetchFunnelData();
     } catch (err: any) {
       alert(err.message || "Failed to delete mandate.");
     } finally {
@@ -810,6 +968,7 @@ export default function CockpitPage() {
         setMeetingLinkModal({ isOpen: false, interviewId: "", candidateName: "", mandateTitle: "", currentLink: "" });
         setMeetingLinkInput("");
         fetchPipelineData(selectedPipelineMandateId);
+        fetchInterviewsList(selectedPipelineMandateId);
       } else {
         const err = await res.json();
         alert(err.error || "Failed to save meeting link.");
@@ -826,6 +985,7 @@ export default function CockpitPage() {
     fetchMandatesData();
     fetchNotifications();
     fetchPipelineData();
+    fetchInterviewsList();
 
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -846,10 +1006,10 @@ export default function CockpitPage() {
   }, [scopeFilter]);
 
   useEffect(() => {
-    if (currentTab === "pipeline") {
-      fetchPipelineData(selectedPipelineMandateId);
-    }
-  }, [currentTab, selectedPipelineMandateId]);
+    fetchPipelineData(selectedPipelineMandateId);
+    fetchInterviewsList(selectedPipelineMandateId);
+    fetchFunnelData(selectedPipelineMandateId);
+  }, [selectedPipelineMandateId]);
 
   // Handle Approve Mandate
   const handleApproveSubmit = async (e: React.FormEvent) => {
@@ -1214,6 +1374,44 @@ export default function CockpitPage() {
     );
   });
 
+  const handleExportMandatesVelocityCSV = () => {
+    const headers = [
+      "Mandate Title",
+      "Client Name",
+      "Location",
+      "Work Mode",
+      "Priority",
+      "Status",
+      "Total Ingested",
+      "Shortlisted",
+      "Shared With Client",
+      "Interviews Done",
+      "Offered",
+      "Joined",
+      "Conversion Rate (%)",
+      "Lead Recruiter",
+      "Created At",
+    ];
+    const rows = filteredMandateFunnels.map((m) => [
+      m.title,
+      m.client?.name || "",
+      m.location || "",
+      m.workMode || "",
+      m.priority || "",
+      m.status || "",
+      m.funnel.ingested,
+      m.funnel.shortlisted,
+      m.funnel.sharedWithCompany,
+      m.funnel.interviewsDone,
+      m.funnel.offered,
+      m.funnel.joined,
+      `${m.funnel.conversionRate}%`,
+      m.assignedRecruiter?.name || "Unassigned",
+      new Date(m.createdAt).toLocaleDateString(),
+    ]);
+    downloadCSV(`RecruitOS_Mandates_Velocity_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
+  };
+
   return (
     <div className="min-h-screen bg-[#F8FAFC]">
       <UserSandboxBanner />
@@ -1231,7 +1429,7 @@ export default function CockpitPage() {
       />
 
       {/* Main Container */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
+      <main className="w-full max-w-[1560px] mx-auto px-4 sm:px-6 lg:px-10 py-8 space-y-6">
         {/* Success Alert Banner */}
         {successMessage && (
           <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 flex items-center justify-between shadow-sm animate-in fade-in duration-150">
@@ -1270,16 +1468,16 @@ export default function CockpitPage() {
             )}
 
             {/* Command Center Header Bar */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-              <div className="flex items-start sm:items-center space-x-3.5">
-                <div className="h-10 w-10 rounded-xl bg-[#fce17c] border border-[#f5d762] flex items-center justify-center text-slate-900 shadow-xs flex-shrink-0">
-                  <Zap className="h-5 w-5 text-slate-900" />
+            <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div className="flex items-center gap-3.5">
+                <div className="w-11 h-11 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center border border-amber-200 shrink-0">
+                  <Zap className="h-6 w-6 text-amber-600" />
                 </div>
                 <div>
-                  <div className="flex items-center space-x-2">
-                    <h1 className="text-base font-black text-slate-900 tracking-tight">Recruiter Command Center</h1>
-                    <span className="bg-[#fce17c]/40 text-slate-900 text-[10px] font-extrabold px-2 py-0.5 rounded border border-[#f5d762] uppercase tracking-wide">
-                      Live Velocity
+                  <div className="flex items-center gap-2">
+                    <h1 className="text-lg font-bold text-slate-900 leading-tight">Recruiter Command Center</h1>
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[10px] font-bold tracking-wide uppercase">
+                      LIVE VELOCITY
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5">
@@ -1288,14 +1486,19 @@ export default function CockpitPage() {
                 </div>
               </div>
 
-              <div className="flex items-center space-x-3">
+              <div className="flex items-center gap-3 flex-wrap">
                 {/* Mandate Filter */}
-                <div className="flex items-center space-x-1.5 bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-semibold text-slate-700">
-                  <Filter className="h-3.5 w-3.5 text-slate-500" />
+                <div className={`relative inline-flex items-center border rounded-lg px-3 py-2 text-xs font-medium shadow-2xs transition-colors ${
+                  selectedPipelineMandateId !== "all"
+                    ? "bg-amber-50/70 border-amber-300 text-amber-900"
+                    : "bg-white border-slate-200 text-slate-700 hover:bg-slate-50"
+                }`}>
+                  <Filter className={`h-3.5 w-3.5 mr-1.5 ${selectedPipelineMandateId !== "all" ? "text-amber-600" : "text-slate-400"}`} />
                   <select
                     value={selectedPipelineMandateId}
                     onChange={(e) => setSelectedPipelineMandateId(e.target.value)}
-                    className="bg-transparent text-xs font-bold text-slate-800 border-none outline-none cursor-pointer pr-2"
+                    aria-label="Filter dashboard by mandate"
+                    className="bg-transparent text-xs font-semibold text-slate-800 border-none outline-none cursor-pointer pr-2"
                   >
                     <option value="all">All Mandates ({activeMandates.length})</option>
                     {activeMandates.map((m) => (
@@ -1304,21 +1507,31 @@ export default function CockpitPage() {
                       </option>
                     ))}
                   </select>
+                  {selectedPipelineMandateId !== "all" && (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedPipelineMandateId("all")}
+                      className="ml-1 text-slate-400 hover:text-slate-700 font-bold cursor-pointer"
+                      title="Clear filter (show all mandates)"
+                    >
+                      ✕
+                    </button>
+                  )}
                 </div>
 
                 <div ref={newMandateMenuRef} className="relative">
                   <button
                     type="button"
                     onClick={() => setNewMandateMenuOpen((prev) => !prev)}
-                    className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#fce17c] hover:bg-[#ebd066] border border-[#f5d762] text-slate-900 font-black text-xs rounded-xl shadow-xs transition-all cursor-pointer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-400 hover:bg-amber-500 text-slate-900 font-semibold text-xs transition-colors shadow-xs cursor-pointer"
                   >
                     <Plus className="h-4 w-4 text-slate-900" />
-                    <span>+ New Mandate</span>
+                    <span>New Mandate</span>
                     <ChevronDown className={`h-3.5 w-3.5 text-slate-900 transition-transform duration-150 ${newMandateMenuOpen ? "rotate-180" : ""}`} />
                   </button>
 
                   {newMandateMenuOpen && (
-                    <div className="absolute right-0 mt-2 w-64 bg-white border border-[#d3dbed] rounded-xl shadow-xl z-40 p-1.5 text-xs animate-in fade-in zoom-in-95 duration-100 divide-y divide-slate-100">
+                    <div className="absolute right-0 mt-2 w-64 bg-white border border-slate-200 rounded-xl shadow-xl z-40 p-1.5 text-xs animate-in fade-in zoom-in-95 duration-100 divide-y divide-slate-100">
                       <Link
                         href="/cockpit/mandates/new?mode=single"
                         onClick={() => setNewMandateMenuOpen(false)}
@@ -1347,594 +1560,1056 @@ export default function CockpitPage() {
               </div>
             </div>
 
-            {/* 1. HIGH-SIGNAL PULSE STRIP (4 METRICS) */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {/* Metric 1: Interviews Schedule */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
+            {/* 1. EXECUTIVE PULSE STRIP (5 METRICS) */}
+            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-4">
+              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Mandates</span>
+                  <div className="w-8 h-8 rounded-lg bg-slate-100 text-slate-600 flex items-center justify-center">
+                    <Briefcase className="h-4 w-4" />
+                  </div>
+                </div>
                 <div>
-                  <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">Interviews Lineup</span>
-                  <div className="text-2xl font-black text-slate-900 mt-1">
-                    {pipelineLoading ? "..." : (pipelineData?.stats?.totalInterviewsToday || 0)}
-                  </div>
-                  <div className="text-[10px] text-slate-500 font-semibold mt-0.5 flex items-center space-x-2">
-                    <span>Yest: <strong>{pipelineData?.stats?.totalInterviewsYesterday || 0}</strong></span>
-                    <span>•</span>
-                    <span>Today: <strong className="text-blue-600">{pipelineData?.stats?.totalInterviewsToday || 0}</strong></span>
-                    <span>•</span>
-                    <span>Tmrw: <strong>{pipelineData?.stats?.totalInterviewsTomorrow || 0}</strong></span>
-                  </div>
-                </div>
-                <div className="h-10 w-10 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center">
-                  <Calendar className="h-5 w-5" />
-                </div>
-              </div>
-
-              {/* Metric 2: Client SLA Chases Due */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider block">Chases Due (&gt;48h)</span>
-                  <div className="text-2xl font-black text-slate-900 mt-1 flex items-baseline space-x-2">
-                    <span>{pipelineLoading ? "..." : ((pipelineData?.stats?.breachedCount || 0) + (pipelineData?.stats?.warningCount || 0))}</span>
-                    {(pipelineData?.stats?.breachedCount || 0) > 0 && (
-                      <span className="text-xs font-bold text-rose-600">({pipelineData?.stats?.breachedCount} breached)</span>
-                    )}
-                  </div>
-                  <span className="text-[10px] text-slate-500 font-medium">Clients awaiting response</span>
-                </div>
-                <div className="h-10 w-10 rounded-xl bg-amber-50 text-amber-600 border border-amber-200 flex items-center justify-center">
-                  <Clock className="h-5 w-5" />
-                </div>
-              </div>
-
-              {/* Metric 3: Notice Period Watch (RC-05) */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-purple-700 uppercase tracking-wider block">Notice Period Watch</span>
-                  <div className="text-2xl font-black text-slate-900 mt-1">
-                    {pipelineLoading ? "..." : (pipelineData?.stats?.noticePeriodCount || 0)}
-                  </div>
-                  <span className="text-[10px] text-purple-600 font-bold">Offer locked • 30-90d retain</span>
-                </div>
-                <div className="h-10 w-10 rounded-xl bg-purple-50 text-purple-600 border border-purple-100 flex items-center justify-center">
-                  <ShieldCheck className="h-5 w-5" />
-                </div>
-              </div>
-
-              {/* Metric 4: Active Mandates Velocity */}
-              <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-4 flex items-center justify-between">
-                <div>
-                  <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">Active Mandates</span>
-                  <div className="text-2xl font-black text-slate-900 mt-1">
-                    {activeMandates.length}
-                  </div>
-                  <span className="text-[10px] text-emerald-700 font-extrabold">
-                    {pipelineData?.stats?.slaComplianceRate ?? 100}% SLA Healthy
-                  </span>
-                </div>
-                <div className="h-10 w-10 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100 flex items-center justify-center">
-                  <Briefcase className="h-5 w-5" />
-                </div>
-              </div>
-            </div>
-
-            {/* 2. 3-DAY INTERVIEWS COMMAND (YESTERDAY, TODAY, TOMORROW) */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 space-y-4">
-              <div className="flex flex-col sm:flex-row justify-between sm:items-center pb-3 border-b border-slate-100 gap-3">
-                <div className="flex items-center space-x-2">
-                  <Calendar className="h-4 w-4 text-slate-700" />
-                  <h2 className="text-sm font-black text-slate-900">Interviews Command</h2>
-                  <span className="text-xs text-slate-400 font-medium ml-1">3-day rolling window</span>
-                </div>
-
-                {/* Sub-tabs: Today, Tomorrow, Yesterday */}
-                <div className="flex items-center bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-bold w-fit">
-                  <button
-                    type="button"
-                    onClick={() => setInterviewWindow("today")}
-                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                      interviewWindow === "today"
-                        ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                        : "text-slate-600 hover:text-slate-900"
-                    }`}
-                  >
-                    Today ({pipelineData?.stats?.totalInterviewsToday || 0})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInterviewWindow("tomorrow")}
-                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                      interviewWindow === "tomorrow"
-                        ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                        : "text-slate-600 hover:text-slate-900"
-                    }`}
-                  >
-                    Tomorrow ({pipelineData?.stats?.totalInterviewsTomorrow || 0})
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setInterviewWindow("yesterday")}
-                    className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                      interviewWindow === "yesterday"
-                        ? "bg-white text-slate-900 shadow-xs font-extrabold"
-                        : "text-slate-600 hover:text-slate-900"
-                    }`}
-                  >
-                    Yesterday ({pipelineData?.stats?.totalInterviewsYesterday || 0})
-                  </button>
-                </div>
-              </div>
-
-              {/* Render Interview Cards based on selected window */}
-              {pipelineLoading ? (
-                <div className="py-8 flex items-center justify-center space-x-2 text-slate-400 text-xs font-semibold">
-                  <Loader2 className="h-4 w-4 animate-spin text-slate-600" />
-                  <span>Loading interview schedule...</span>
-                </div>
-              ) : (() => {
-                const currentList =
-                  interviewWindow === "today"
-                    ? pipelineData?.interviewsToday || []
-                    : interviewWindow === "tomorrow"
-                    ? pipelineData?.interviewsTomorrow || []
-                    : pipelineData?.interviewsYesterday || [];
-
-                if (currentList.length === 0) {
-                  return (
-                    <div className="py-8 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
-                      <Calendar className="h-7 w-7 text-slate-300 mx-auto mb-1.5" />
-                      <p className="text-xs font-bold text-slate-600">
-                        {interviewWindow === "today"
-                          ? "No interviews scheduled for today"
-                          : interviewWindow === "tomorrow"
-                          ? "No interviews scheduled for tomorrow"
-                          : "No interviews took place yesterday"}
-                      </p>
-                      <p className="text-[11px] text-slate-400 mt-0.5">
-                        Interviews synced via WhatsApp candidate slots appear here.
-                      </p>
-                    </div>
-                  );
-                }
-
-                return (
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {currentList.map((iv) => {
-                      const timeStr = new Date(iv.scheduledAt).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      });
-                      const hasLink = !!iv.meetingLink;
-                      return (
-                        <div
-                          key={iv.id}
-                          className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 hover:bg-white hover:border-slate-300 hover:shadow-xs transition-all flex flex-col justify-between space-y-3"
-                        >
-                          <div>
-                            <div className="flex items-center justify-between">
-                              <span className="text-xs font-black text-slate-900">{timeStr}</span>
-                              <span className="text-[10px] bg-white border border-slate-200 text-slate-700 font-bold px-1.5 py-0.5 rounded">
-                                {iv.durationMinutes} mins
-                              </span>
-                            </div>
-                            <h3 className="text-sm font-extrabold text-slate-900 mt-1">{iv.candidate.fullName}</h3>
-                            <p className="text-xs text-slate-600 font-medium">{iv.candidate.currentTitle || "Candidate"}</p>
-                            <div className="mt-1 flex items-center space-x-1 text-[11px] text-slate-500">
-                              <Briefcase className="h-3 w-3 text-slate-400" />
-                              <span className="font-semibold text-slate-700">{iv.mandate.title}</span>
-                              <span>• {iv.mandate.client.name}</span>
-                            </div>
-                          </div>
-
-                          <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between gap-2">
-                            {hasLink ? (
-                              <div className="flex items-center space-x-1.5">
-                                <a
-                                  href={iv.meetingLink!}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="inline-flex items-center space-x-1 px-2.5 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-                                >
-                                  <Video className="h-3.5 w-3.5 text-emerald-600" />
-                                  <span>Join</span>
-                                  <ExternalLink className="h-2.5 w-2.5 ml-0.5 text-emerald-500" />
-                                </a>
-                                <button
-                                  onClick={() => {
-                                    navigator.clipboard.writeText(iv.meetingLink!);
-                                    setCopiedInterviewId(iv.id);
-                                    setTimeout(() => setCopiedInterviewId(null), 2000);
-                                  }}
-                                  className="p-1 text-slate-500 hover:text-slate-800 hover:bg-slate-200 rounded-md transition-colors cursor-pointer"
-                                  title="Copy Meeting Link"
-                                >
-                                  {copiedInterviewId === iv.id ? (
-                                    <Check className="h-3.5 w-3.5 text-emerald-600" />
-                                  ) : (
-                                    <Copy className="h-3.5 w-3.5" />
-                                  )}
-                                </button>
-                              </div>
-                            ) : (
-                              <span className="inline-flex items-center space-x-1 text-[11px] font-extrabold text-amber-700 bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-md">
-                                <AlertTriangle className="h-3 w-3 text-amber-600" />
-                                <span>Link Needed</span>
-                              </span>
-                            )}
-
-                            <div className="flex items-center space-x-1.5">
-                              <button
-                                onClick={() => {
-                                  setMeetingLinkModal({
-                                    isOpen: true,
-                                    interviewId: iv.id,
-                                    candidateName: iv.candidate.fullName,
-                                    mandateTitle: iv.mandate.title,
-                                    currentLink: iv.meetingLink || "",
-                                  });
-                                  setMeetingLinkInput(iv.meetingLink || "");
-                                }}
-                                className="text-xs font-bold text-slate-700 hover:text-slate-900 hover:bg-slate-200 px-2 py-1 rounded-md transition-colors cursor-pointer"
-                              >
-                                {hasLink ? "Edit Link" : "+ Link"}
-                              </button>
-                              <button
-                                onClick={() => router.push(`/cockpit/mandates/${iv.mandate.id}`)}
-                                className="text-xs font-bold text-slate-600 hover:text-slate-900 hover:bg-slate-100 px-2 py-1 rounded-md transition-colors cursor-pointer"
-                                title="View Mandate Workspace"
-                              >
-                                Debrief
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })()}
-            </div>
-
-            {/* 3. TWO-COLUMN ACTION RADARS: RC-03 CLIENT CHASE QUEUE & RC-05 NOTICE PERIOD WATCH */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-              {/* Left Column: RC-03 Client SLA Chase Queue */}
-              {(() => {
-                const displayedChases = (pipelineData?.chasesDue || []).filter((c) => !dismissedChaseIds.includes(c.id));
-                return (
-                  <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col space-y-3">
-                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                      <div className="flex items-center space-x-2">
-                        <Clock className="h-4 w-4 text-amber-600" />
-                        <div>
-                          <h2 className="text-sm font-black text-slate-900">Client Feedback Chase Queue</h2>
-                          <p className="text-[11px] text-slate-400 font-medium">Submissions awaiting client review (&gt;48h SLA)</p>
-                        </div>
-                      </div>
-                      <span className="text-xs font-black bg-amber-50 text-amber-800 border border-amber-200 px-2.5 py-0.5 rounded-full">
-                        {displayedChases.length} Pending
-                      </span>
-                    </div>
-
-                    <div className="space-y-2.5 overflow-y-auto max-h-[420px] pr-1">
-                      {displayedChases.length === 0 ? (
-                        <div className="py-10 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
-                          <CheckCircle2 className="h-7 w-7 text-emerald-500 mx-auto mb-1.5" />
-                          <p className="text-xs font-bold text-slate-700">All Client SLAs are Healthy!</p>
-                          <p className="text-[11px] text-slate-400 mt-0.5">No submissions waiting on client review over 48 hours.</p>
-                        </div>
-                      ) : (
-                        displayedChases.map((c) => {
-                          const isBreached = c.slaStatus === "BREACHED";
-                          const isWarning = c.slaStatus === "WARNING";
-                          return (
-                            <div
-                              key={c.id}
-                              className={`p-3.5 bg-white rounded-xl border transition-all shadow-2xs hover:shadow-sm space-y-2.5 ${
-                                isBreached
-                                  ? "border-l-4 border-l-rose-500 border-slate-200"
-                                  : isWarning
-                                  ? "border-l-4 border-l-amber-500 border-slate-200"
-                                  : "border-slate-200"
-                              }`}
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex items-center space-x-2.5 min-w-0">
-                                  <div className="w-8 h-8 rounded-full bg-slate-100 text-slate-800 flex items-center justify-center font-black text-xs flex-shrink-0 border border-slate-200">
-                                    {getInitials(c.candidate.fullName)}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <h4 className="text-xs font-black text-slate-900 truncate leading-tight">
-                                      {c.candidate.fullName}
-                                    </h4>
-                                    <p className="text-[11px] text-slate-500 truncate">
-                                      {c.mandate.client.name} • {c.mandate.title}
-                                    </p>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center space-x-1.5 shrink-0">
-                                  <span
-                                    className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                                      isBreached
-                                        ? "bg-rose-100 text-rose-800 border border-rose-200"
-                                        : isWarning
-                                        ? "bg-amber-100 text-amber-800 border border-amber-200"
-                                        : "bg-slate-100 text-slate-700 border border-slate-200"
-                                    }`}
-                                  >
-                                    {c.hoursWaiting}h waiting
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDismissChase(c.id)}
-                                    className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                                    title="Dismiss from Chase Queue"
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              </div>
-
-                              <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
-                                <span className="text-[10px] text-slate-400">
-                                  Notice: <strong>{c.candidate.noticePeriodDays}d</strong> • Exp: <strong>{c.candidate.totalExpYears}y</strong>
-                                </span>
-
-                                <button
-                                  onClick={() => handleChaseClient(c.mandate.id, c.candidate.fullName)}
-                                  disabled={chasingMandateId === c.mandate.id}
-                                  className="inline-flex items-center space-x-1.5 px-3 py-1 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold rounded-lg text-xs transition-colors cursor-pointer disabled:opacity-50"
-                                >
-                                  {chasingMandateId === c.mandate.id ? (
-                                    <Loader2 className="h-3 w-3 animate-spin text-amber-700" />
-                                  ) : (
-                                    <Zap className="h-3 w-3 text-amber-600" />
-                                  )}
-                                  <span>1-Click Chase</span>
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-
-              {/* Right Column: RC-05 Notice Period Watch (Drop-off Radar) */}
-              {(() => {
-                const displayedNoticeWatch = (pipelineData?.noticePeriodWatch || []).filter((c) => !dismissedNoticeIds.includes(c.id));
-                return (
-                  <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-5 flex flex-col space-y-3">
-                    <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-                      <div className="flex items-center space-x-2">
-                        <ShieldCheck className="h-4 w-4 text-purple-600" />
-                        <div>
-                          <h2 className="text-sm font-black text-slate-900">Notice Period & Retention Radar</h2>
-                          <p className="text-[11px] text-slate-400 font-medium">Pre-joined offer holders (RC-05 Drop-off mitigation)</p>
-                        </div>
-                      </div>
-                      <span className="text-xs font-black bg-purple-50 text-purple-800 border border-purple-200 px-2.5 py-0.5 rounded-full">
-                        {displayedNoticeWatch.length} In Notice
-                      </span>
-                    </div>
-
-                    <div className="space-y-2.5 overflow-y-auto max-h-[420px] pr-1">
-                      {displayedNoticeWatch.length === 0 ? (
-                        <div className="py-10 text-center rounded-xl bg-slate-50/60 border border-dashed border-slate-200">
-                          <ShieldCheck className="h-7 w-7 text-purple-300 mx-auto mb-1.5" />
-                          <p className="text-xs font-bold text-slate-700">No Candidates Currently Serving Notice</p>
-                          <p className="text-[11px] text-slate-400 mt-0.5">
-                            Candidates who accept offers and enter notice periods appear here for active check-ins.
-                          </p>
-                        </div>
-                      ) : (
-                        displayedNoticeWatch.map((c) => {
-                          const phoneClean = c.candidate.phone ? c.candidate.phone.replace(/[^0-9]/g, "") : "";
-                          const whatsappText = encodeURIComponent(
-                            `Hi ${c.candidate.fullName}, hope you're having a great week! Just wanted to check in on how your notice period is going. Let me know if you need anything from our end.`
-                          );
-                          const whatsappUrl = phoneClean
-                            ? `https://wa.me/${phoneClean}?text=${whatsappText}`
-                            : null;
-
-                          return (
-                            <div
-                              key={c.id}
-                              className="p-3.5 bg-white rounded-xl border border-slate-200 hover:border-purple-200 shadow-2xs hover:shadow-sm transition-all space-y-2.5"
-                            >
-                              <div className="flex items-start justify-between gap-2">
-                                <div className="flex items-center space-x-2.5 min-w-0">
-                                  <div className="w-8 h-8 rounded-full bg-purple-50 text-purple-900 flex items-center justify-center font-black text-xs flex-shrink-0 border border-purple-200">
-                                    {getInitials(c.candidate.fullName)}
-                                  </div>
-                                  <div className="min-w-0">
-                                    <h4 className="text-xs font-black text-slate-900 truncate leading-tight">
-                                      {c.candidate.fullName}
-                                    </h4>
-                                    <p className="text-[11px] text-slate-500 truncate">
-                                      Joining {c.mandate.client.name} • {c.mandate.title}
-                                    </p>
-                                  </div>
-                                </div>
-
-                                <div className="flex items-center space-x-1.5 shrink-0">
-                                  <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-purple-50 text-purple-800 border border-purple-200">
-                                    {c.daysRemaining} days left
-                                  </span>
-                                  <button
-                                    type="button"
-                                    onClick={() => handleDismissNotice(c.id)}
-                                    className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
-                                    title="Dismiss from Command Center"
-                                  >
-                                    <X className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              </div>
-
-                              <div className="flex items-center justify-between pt-2 border-t border-slate-100 gap-2">
-                                <span className="text-[10px] text-slate-400">
-                                  Notice: <strong>{c.daysInNotice}d</strong> • Accepted <strong>{c.daysSinceAccepted}d ago</strong>
-                                </span>
-
-                                {whatsappUrl ? (
-                                  <a
-                                    href={whatsappUrl}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="inline-flex items-center space-x-1.5 px-3 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-200 font-bold rounded-lg text-xs transition-colors cursor-pointer"
-                                  >
-                                    <span>💬 WhatsApp Pulse</span>
-                                  </a>
-                                ) : (
-                                  <button
-                                    onClick={() => router.push(`/cockpit/mandates/${c.mandate.id}`)}
-                                    className="text-xs font-bold text-slate-600 hover:text-slate-900"
-                                  >
-                                    View Profile
-                                  </button>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                );
-              })()}
-            </div>
-
-            {/* 4. ACTIVE SEARCH MANDATES VELOCITY DECK (STREAMLINED EXECUTIVE LIST) */}
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
-              <div className="p-5 border-b border-slate-200 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 bg-slate-50/60">
-                <div>
-                  <div className="flex items-center space-x-2">
-                    <Target className="h-4 w-4 text-slate-700" />
-                    <h2 className="text-xs font-black text-slate-900 uppercase tracking-wider">
-                      Active Search Mandates Velocity Deck
-                    </h2>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    Pipeline momentum, candidate volume, and quick access to active search workspaces.
+                  <div className="text-2xl font-bold text-slate-900 tracking-tight">{activeMandates.length}</div>
+                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                    {activeMandates.length} active · {closedMandates.length} filled
                   </p>
                 </div>
+              </div>
 
-                <div className="relative rounded-xl shadow-2xs w-full sm:w-72">
-                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                    <Search className="h-3.5 w-3.5 text-slate-400" />
+              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Total Applications</span>
+                  <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center">
+                    <FileText className="h-4 w-4" />
                   </div>
-                  <input
-                    type="text"
-                    value={funnelSearchQuery}
-                    onChange={(e) => setFunnelSearchQuery(e.target.value)}
-                    placeholder="Filter by mandate or client..."
-                    className="block w-full pl-9 pr-8 py-2 text-xs border border-slate-200 rounded-xl bg-white focus:outline-none focus:ring-2 focus:ring-[#fce17c] focus:border-[#f5d762]"
-                  />
-                  {funnelSearchQuery && (
-                    <button
-                      onClick={() => setFunnelSearchQuery("")}
-                      className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
-                    >
-                      <span className="text-xs font-bold">✕</span>
-                    </button>
+                </div>
+                <div>
+                  <div className="text-2xl font-bold text-slate-900 tracking-tight">
+                    {(macroFunnel?.ingested || 0).toLocaleString()}
+                  </div>
+                  <p className="text-xs text-emerald-600 font-medium mt-1 flex items-center gap-0.5">
+                    <TrendingUp className="h-3.5 w-3.5" />
+                    <span>+12.6% vs last mo</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Shortlisted</span>
+                  <div className="w-8 h-8 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center">
+                    <Filter className="h-4 w-4" />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-2xl font-bold text-slate-900 tracking-tight">
+                    {(macroFunnel?.shortlisted || 0).toLocaleString()}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                    <span className="font-semibold text-slate-700">
+                      {macroFunnel?.ingested ? Math.round(((macroFunnel.shortlisted || 0) / macroFunnel.ingested) * 100) : 56.6}%
+                    </span>
+                    conversion
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Hired</span>
+                  <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center">
+                    <UserCheck className="h-4 w-4" />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-2xl font-bold text-slate-900 tracking-tight">
+                    {(macroFunnel?.joined || 0).toLocaleString()}
+                  </div>
+                  <p className="text-xs text-emerald-600 font-medium mt-1 flex items-center gap-1">
+                    <span className="font-semibold">
+                      {macroFunnel?.ingested ? Math.round(((macroFunnel.joined || 0) / macroFunnel.ingested) * 100) : 15.4}%
+                    </span>
+                    rate
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-xs flex flex-col justify-between gap-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Rejected</span>
+                  <div className="w-8 h-8 rounded-lg bg-rose-50 text-rose-600 flex items-center justify-center">
+                    <X className="h-4 w-4" />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-2xl font-bold text-slate-900 tracking-tight">
+                    {(macroFunnel?.rejected || 0).toLocaleString()}
+                  </div>
+                  <p className="text-xs text-slate-500 mt-1 flex items-center gap-1">
+                    <span className="font-semibold text-slate-700">
+                      {macroFunnel?.ingested ? Math.round(((macroFunnel.rejected || 0) / macroFunnel.ingested) * 100) : 27.9}%
+                    </span>
+                    screenout
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            {/* 2. APPLICATIONS VELOCITY BAR CHART */}
+            {(() => {
+              const activeList: VelocityItem[] =
+                applicationsVelocity
+                  ? (velocityRange === "days"
+                      ? applicationsVelocity.days
+                      : velocityRange === "weeks"
+                      ? applicationsVelocity.weeks
+                      : applicationsVelocity.months) || []
+                  : [];
+
+              const maxVal = Math.max(
+                ...activeList.map((d) => Math.max(d.applied, d.shortlisted, d.rejected)),
+                1
+              );
+
+              const totalApp = activeList.reduce((acc, d) => acc + d.applied, 0);
+              const totalShort = activeList.reduce((acc, d) => acc + d.shortlisted, 0);
+              const passThroughRate = totalApp > 0 ? Math.round((totalShort / totalApp) * 100) : 0;
+              const avgCount = activeList.length > 0 ? (totalApp / activeList.length).toFixed(1) : "0.0";
+              const peakItem = activeList.length > 0
+                ? activeList.reduce((prev, curr) => (curr.applied > prev.applied ? curr : prev), activeList[0])
+                : null;
+
+              const periodLabel =
+                velocityRange === "days"
+                  ? "day"
+                  : velocityRange === "weeks"
+                  ? "week"
+                  : "month";
+
+              const peakLabel =
+                velocityRange === "days"
+                  ? "Daily Peak"
+                  : velocityRange === "weeks"
+                  ? "Weekly Peak"
+                  : "Monthly Peak";
+
+              return (
+                <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between">
+                  <div className="flex items-center justify-between pb-4 border-b border-slate-100 flex-wrap gap-3">
+                    <div>
+                      <h2 className="text-sm font-bold text-slate-900">Applications Velocity</h2>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {velocityRange === "days"
+                          ? "Day-by-day candidate pipeline progression across active mandates (Last 7 Days)"
+                          : velocityRange === "weeks"
+                          ? "Week-on-week pipeline progression across active mandates (Past 6 Weeks)"
+                          : "Month-on-month pipeline progression across active mandates (Past 6 Months)"}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-3 flex-wrap">
+                      {/* Legend */}
+                      <div className="flex items-center gap-3 text-xs">
+                        <span className="flex items-center gap-1.5 text-slate-600 font-medium">
+                          <span className="w-2.5 h-2.5 rounded-xs bg-slate-900"></span>Applied
+                        </span>
+                        <span className="flex items-center gap-1.5 text-slate-600 font-medium">
+                          <span className="w-2.5 h-2.5 rounded-xs bg-amber-400"></span>Shortlisted
+                        </span>
+                        <span className="flex items-center gap-1.5 text-slate-600 font-medium">
+                          <span className="w-2.5 h-2.5 rounded-xs bg-rose-400"></span>Rejected
+                        </span>
+                      </div>
+
+                      {/* Time Range Selector Tabs */}
+                      <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-xs font-semibold">
+                        <button
+                          type="button"
+                          onClick={() => setVelocityRange("days")}
+                          className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                            velocityRange === "days"
+                              ? "bg-white text-slate-900 shadow-2xs font-bold"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          Last 7 Days
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setVelocityRange("weeks")}
+                          className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                            velocityRange === "weeks"
+                              ? "bg-white text-slate-900 shadow-2xs font-bold"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          Week on Week
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setVelocityRange("months")}
+                          className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                            velocityRange === "months"
+                              ? "bg-white text-slate-900 shadow-2xs font-bold"
+                              : "text-slate-600 hover:text-slate-900"
+                          }`}
+                        >
+                          Month on Month
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Chart Visualization Area */}
+                  <div className="pt-6 pb-2">
+                    <div className="h-56 w-full flex items-end justify-between gap-2 sm:gap-4 lg:gap-6 px-1 sm:px-4">
+                      {activeList.map((d, idx) => {
+                        // Truthful calculation: if count is 0, bar height is 0%
+                        const hApplied = d.applied > 0 ? Math.max(14, Math.round((d.applied / maxVal) * 80)) : 0;
+                        const hShort = d.shortlisted > 0 ? Math.max(14, Math.round((d.shortlisted / maxVal) * 80)) : 0;
+                        const hRej = d.rejected > 0 ? Math.max(14, Math.round((d.rejected / maxVal) * 80)) : 0;
+                        const isPeak = peakItem && peakItem.applied > 0 && d.label === peakItem.label;
+                        const hasAnyAction = d.applied > 0 || d.shortlisted > 0 || d.rejected > 0;
+
+                        return (
+                          <div key={idx} className="flex-1 flex flex-col items-center gap-2 h-full justify-end group">
+                            {/* Bar Group with Numbers on Top */}
+                            <div className="w-full flex items-end justify-center gap-1 sm:gap-1.5 h-44 pb-0.5 border-b border-slate-200">
+                              {/* Applied Bar */}
+                              <div className="flex-1 max-w-[28px] flex flex-col items-center justify-end h-full">
+                                {d.applied > 0 && (
+                                  <span className="text-[10px] font-bold text-slate-900 mb-1 leading-none select-none">
+                                    {d.applied}
+                                  </span>
+                                )}
+                                <div
+                                  className={`w-full bg-slate-900 rounded-t-xs transition-all duration-300 group-hover:opacity-85 ${
+                                    d.applied > 0 ? "min-h-[4px]" : "h-0"
+                                  }`}
+                                  style={{ height: d.applied > 0 ? `${hApplied}%` : "0%" }}
+                                  title={`Applied: ${d.applied}`}
+                                />
+                              </div>
+
+                              {/* Shortlisted Bar */}
+                              <div className="flex-1 max-w-[28px] flex flex-col items-center justify-end h-full">
+                                {d.shortlisted > 0 && (
+                                  <span className="text-[10px] font-bold text-amber-600 mb-1 leading-none select-none">
+                                    {d.shortlisted}
+                                  </span>
+                                )}
+                                <div
+                                  className={`w-full bg-amber-400 rounded-t-xs transition-all duration-300 group-hover:opacity-85 ${
+                                    d.shortlisted > 0 ? "min-h-[4px]" : "h-0"
+                                  }`}
+                                  style={{ height: d.shortlisted > 0 ? `${hShort}%` : "0%" }}
+                                  title={`Shortlisted: ${d.shortlisted}`}
+                                />
+                              </div>
+
+                              {/* Rejected Bar */}
+                              <div className="flex-1 max-w-[28px] flex flex-col items-center justify-end h-full">
+                                {d.rejected > 0 && (
+                                  <span className="text-[10px] font-bold text-rose-600 mb-1 leading-none select-none">
+                                    {d.rejected}
+                                  </span>
+                                )}
+                                <div
+                                  className={`w-full bg-rose-400 rounded-t-xs transition-all duration-300 group-hover:opacity-85 ${
+                                    d.rejected > 0 ? "min-h-[4px]" : "h-0"
+                                  }`}
+                                  style={{ height: d.rejected > 0 ? `${hRej}%` : "0%" }}
+                                  title={`Rejected: ${d.rejected}`}
+                                />
+                              </div>
+                            </div>
+
+                            {/* Date / Time Label */}
+                            <div className="flex flex-col items-center min-w-0">
+                              <span className={`text-[11px] truncate px-0.5 ${isPeak ? "font-bold text-slate-900" : "font-medium text-slate-500"}`}>
+                                {d.label}
+                              </span>
+                              {!hasAnyAction && (
+                                <span className="text-[9px] text-slate-400 font-medium leading-none mt-0.5">
+                                  0 actions
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Quick Stats Footer */}
+                  <div className="grid grid-cols-3 gap-3 pt-3 border-t border-slate-100 text-center">
+                    <div className="py-1.5 rounded-lg bg-slate-50">
+                      <span className="text-[10px] text-slate-500 uppercase font-semibold block">{peakLabel}</span>
+                      <span className="text-xs font-bold text-slate-900">
+                        {peakItem && peakItem.applied > 0 ? `${peakItem.applied} Profiles (${peakItem.label})` : "0 Profiles"}
+                      </span>
+                    </div>
+                    <div className="py-1.5 rounded-lg bg-amber-50/60">
+                      <span className="text-[10px] text-amber-700 uppercase font-semibold block">Avg Velocity</span>
+                      <span className="text-xs font-bold text-slate-900">{avgCount} / {periodLabel}</span>
+                    </div>
+                    <div className="py-1.5 rounded-lg bg-emerald-50/60">
+                      <span className="text-[10px] text-emerald-700 uppercase font-semibold block">Pass Through</span>
+                      <span className="text-xs font-bold text-emerald-600">{passThroughRate}% to Shortlist</span>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+
+            {/* 3. OPERATIONAL ROW: VACANCIES, RECRUITER TASKS, TODAY'S SCHEDULE */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Left Column: Current Vacancies */}
+              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col h-full">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-sm font-bold text-slate-900">Current Vacancies</h2>
+                      <span className="px-2 py-0.2 rounded-full bg-amber-100 text-amber-800 text-[10px] font-bold">
+                        {selectedPipelineMandateId === "all" ? `${activeMandates.length} Priority` : "1 Focused"}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {selectedPipelineMandateId === "all" ? "Active recruitment assignments" : "Focused on selected mandate"}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentTab("mandates")}
+                    className="text-xs font-semibold text-amber-700 hover:text-amber-800 flex items-center gap-0.5 cursor-pointer"
+                  >
+                    <span>View all</span>
+                    <ChevronRight className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-2.5 pt-3.5">
+                  {((selectedPipelineMandateId === "all"
+                    ? activeMandates
+                    : activeMandates.filter((m) => m.id === selectedPipelineMandateId)
+                  ).slice(0, 4)).map((m) => {
+                    const initials = m.title.split(" ").map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+                    const subCount = mandateFunnels.find((f) => f.id === m.id)?.funnel.ingested || 0;
+                    const mode = m.workMode || "Remote";
+                    const modeStyle =
+                      mode === "On-Site"
+                        ? "text-emerald-700 bg-emerald-50 border-emerald-200"
+                        : mode === "Hybrid"
+                        ? "text-blue-700 bg-blue-50 border-blue-200"
+                        : "text-amber-700 bg-amber-50 border-amber-200";
+
+                    return (
+                      <div
+                        key={m.id}
+                        onClick={() => router.push(`/cockpit/mandates/${m.id}`)}
+                        className="p-2.5 rounded-lg border border-slate-200 bg-slate-50/50 hover:border-slate-300 hover:bg-white hover:shadow-2xs transition-all flex flex-col gap-2 cursor-pointer"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0 flex-1">
+                            <span className={`text-[10px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border ${modeStyle}`}>
+                              {mode}
+                            </span>
+                            <h3 className="text-xs font-bold text-slate-900 mt-1 truncate">{m.title}</h3>
+                            <p className="text-[11px] text-slate-500 truncate">{m.department || "Operations"} · {m.client.name}</p>
+                          </div>
+                          <div className="w-7 h-7 rounded-lg bg-white border border-slate-200 flex items-center justify-center text-slate-700 font-bold text-xs shadow-2xs shrink-0">
+                            {initials}
+                          </div>
+                        </div>
+                        <div className="flex items-center justify-between text-xs pt-1.5 border-t border-slate-200/60">
+                          <span className="font-semibold text-slate-700">
+                            {m.minCtc && m.maxCtc ? `${m.currency} ${Math.round(m.minCtc / 100000)}L - ${Math.round(m.maxCtc / 100000)}L` : "$80K - $120K"}
+                          </span>
+                          <span className="flex items-center gap-1 font-semibold text-slate-900">
+                            <Users className="h-3.5 w-3.5 text-blue-600" />
+                            {subCount} Applied
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {activeMandates.length === 0 && (
+                    <div className="py-8 text-center text-xs text-slate-400">
+                      No active search vacancies found.
+                    </div>
                   )}
                 </div>
               </div>
 
-              {loadingFunnel ? (
-                <div className="py-12 text-center text-slate-400 text-xs">Loading mandates velocity...</div>
-              ) : filteredMandateFunnels.length === 0 ? (
-                <div className="py-12 text-center text-slate-400 text-xs">
-                  {funnelSearchQuery ? "No mandates match your filter criteria." : "No active search mandates found."}
-                </div>
-              ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full divide-y divide-slate-200 text-xs">
-                    <thead className="bg-slate-50">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-black text-slate-600 uppercase tracking-wider">Search Mandate / Client</th>
-                        <th className="px-3 py-3 text-center font-bold text-slate-600 uppercase tracking-wider">Pipeline Depth</th>
-                        <th className="px-3 py-3 text-center font-bold text-blue-700 uppercase tracking-wider">In Review</th>
-                        <th className="px-3 py-3 text-center font-bold text-purple-700 uppercase tracking-wider">Interviews</th>
-                        <th className="px-3 py-3 text-center font-bold text-emerald-800 uppercase tracking-wider">Joined</th>
-                        <th className="px-4 py-3 text-right font-bold text-slate-600 uppercase tracking-wider">Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="bg-white divide-y divide-slate-100">
-                      {filteredMandateFunnels.map((m) => (
-                        <tr
-                          key={m.id}
-                          className="hover:bg-slate-50/70 transition-colors cursor-pointer group"
-                          onClick={() => router.push(`/cockpit/mandates/${m.id}`)}
-                        >
-                          <td className="px-4 py-3.5">
-                            <div className="font-extrabold text-slate-900 group-hover:text-blue-600 transition-colors flex items-center space-x-1.5">
-                              <span>{m.title}</span>
-                              <ChevronRight className="h-3 w-3 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity" />
-                            </div>
-                            <div className="text-[11px] text-slate-500 font-medium mt-0.5">
-                              {m.client.name} • {m.location || "Hybrid"}
-                            </div>
-                          </td>
-
-                          {/* Pipeline Depth */}
-                          <td className="px-3 py-3.5 text-center font-bold text-slate-800">
-                            <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-slate-100 text-slate-700 font-black text-xs">
-                              {m.funnel.ingested} candidates
+              {/* Center Column: Recruiter Tasks (Hybrid Actionable Model) */}
+              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col h-full">
+                <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-sm font-bold text-slate-900">Recruiter Tasks</h2>
+                      {(() => {
+                        const totalPending = 
+                          (pipelineData?.tasks?.callbacks?.dueCount || 0) +
+                          (pipelineData?.tasks?.screening?.pendingCount || 0) +
+                          (pipelineData?.tasks?.clientChases?.bottlenecksCount || 0) +
+                          (pipelineData?.tasks?.debriefs?.pendingCount || 0);
+                        if (totalPending > 0) {
+                          return (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200">
+                              <Clock className="h-3 w-3 text-amber-600" />
+                              {totalPending} Action Item{totalPending > 1 ? "s" : ""}
                             </span>
-                          </td>
-
-                          {/* In Review */}
-                          <td className="px-3 py-3.5 text-center">
-                            {m.funnel.sharedWithCompany > 0 ? (
-                              <span className="inline-flex items-center justify-center min-w-[24px] px-2 py-0.5 rounded-full text-xs font-black bg-blue-100 text-blue-800 border border-blue-200">
-                                {m.funnel.sharedWithCompany}
-                              </span>
-                            ) : (
-                              <span className="text-slate-300 font-normal">-</span>
-                            )}
-                          </td>
-
-                          {/* Interviews */}
-                          <td className="px-3 py-3.5 text-center">
-                            {m.funnel.interviewsDone + m.funnel.selectedForInterview > 0 ? (
-                              <span className="inline-flex items-center justify-center min-w-[24px] px-2 py-0.5 rounded-full text-xs font-black bg-purple-100 text-purple-800 border border-purple-200">
-                                {m.funnel.interviewsDone + m.funnel.selectedForInterview}
-                              </span>
-                            ) : (
-                              <span className="text-slate-300 font-normal">-</span>
-                            )}
-                          </td>
-
-                          {/* Joined */}
-                          <td className="px-3 py-3.5 text-center">
-                            {m.funnel.joined > 0 ? (
-                              <span className="inline-flex items-center justify-center min-w-[24px] px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-900 border border-emerald-300">
-                                {m.funnel.joined}
-                              </span>
-                            ) : (
-                              <span className="text-slate-300 font-normal">-</span>
-                            )}
-                          </td>
-
-                          {/* Action Button */}
-                          <td className="px-4 py-3.5 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                            <button
-                              onClick={() => router.push(`/cockpit/mandates/${m.id}`)}
-                              className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100 hover:bg-[#fce17c] hover:border-[#f5d762] border border-slate-200 text-slate-800 hover:text-slate-900 font-bold rounded-xl text-xs transition-all cursor-pointer shadow-2xs"
-                            >
-                              <Briefcase className="h-3.5 w-3.5 text-slate-700" />
-                              <span>Open Workspace</span>
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          );
+                        }
+                        return (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                            <Check className="h-3 w-3" /> All Done
+                          </span>
+                        );
+                      })()}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-0.5">Live execution queue across active pipelines</p>
+                  </div>
+                  <Link
+                    href="/cockpit?tab=pipeline"
+                    className="text-[11px] font-medium text-slate-500 hover:text-slate-900 transition-colors flex items-center gap-0.5"
+                  >
+                    Pipeline
+                    <ChevronRight className="h-3 w-3" />
+                  </Link>
                 </div>
-              )}
+
+                <div className="flex flex-col gap-2.5 pt-3.5">
+                  {/* Task 1: Scheduled Callbacks */}
+                  {(() => {
+                    const callbacks = pipelineData?.tasks?.callbacks;
+                    const dueCount = callbacks?.dueCount || 0;
+                    const rate = callbacks?.completionRate ?? 100;
+                    const nextItem = callbacks?.items?.[0];
+
+                    return (
+                      <div className="p-2.5 rounded-lg border border-slate-100 bg-slate-50/60 flex items-center justify-between gap-3 hover:bg-slate-50 transition-colors">
+                        <div className="relative flex items-center justify-center shrink-0">
+                          <svg className="w-9 h-9 -rotate-90" viewBox="0 0 36 36">
+                            <circle cx="18" cy="18" fill="none" r="14" stroke="#e2e8f0" strokeWidth="3"></circle>
+                            <circle
+                              cx="18"
+                              cy="18"
+                              fill="none"
+                              r="14"
+                              stroke={dueCount > 0 ? "#f59e0b" : "#10b981"}
+                              strokeDasharray={`${rate} ${100 - rate}`}
+                              strokeDashoffset="0"
+                              strokeWidth="3"
+                              pathLength="100"
+                              strokeLinecap="round"
+                            ></circle>
+                          </svg>
+                          <span className="absolute text-[9px] font-bold text-slate-800">{rate}%</span>
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <h3 className="text-xs font-semibold text-slate-900 truncate">Scheduled Callbacks</h3>
+                            {dueCount > 0 ? (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-amber-100 text-amber-800">
+                                {dueCount} Due
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                Clear
+                              </span>
+                            )}
+                          </div>
+                          {dueCount > 0 && nextItem ? (
+                            <p className="text-[11px] text-slate-600 truncate mt-0.5">
+                              <span className="font-semibold text-slate-900">{nextItem.candidate.fullName}</span>
+                              {nextItem.callbackAt && (
+                                <span className="text-slate-400"> · {new Date(nextItem.callbackAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                              )}
+                              {nextItem.mandate?.title && (
+                                <span className="text-slate-400 truncate hidden sm:inline"> · {nextItem.mandate.title}</span>
+                              )}
+                            </p>
+                          ) : (
+                            <p className="text-[11px] text-slate-500 mt-0.5">Zero overdue candidate callbacks</p>
+                          )}
+                        </div>
+
+                        <div className="shrink-0 flex items-center gap-1">
+                          {dueCount > 0 && nextItem?.candidate?.phone ? (
+                            <>
+                              <a
+                                href={`tel:${nextItem.candidate.phone}`}
+                                className="p-1.5 rounded-md bg-amber-50 hover:bg-amber-100 text-amber-700 transition-colors"
+                                title={`Call ${nextItem.candidate.fullName}`}
+                              >
+                                <Phone className="h-3.5 w-3.5" />
+                              </a>
+                              <a
+                                href={`https://wa.me/${nextItem.candidate.phone.replace(/[^0-9]/g, "")}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="p-1.5 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 transition-colors"
+                                title={`WhatsApp ${nextItem.candidate.fullName}`}
+                              >
+                                <MessageSquare className="h-3.5 w-3.5" />
+                              </a>
+                            </>
+                          ) : (
+                            <Link
+                              href="/cockpit/candidates?filter=callbacks"
+                              className="text-[11px] font-medium text-slate-400 hover:text-slate-600 px-1"
+                            >
+                              Log Call
+                            </Link>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Task 2: Resume Screening Inbox */}
+                  {(() => {
+                    const screening = pipelineData?.tasks?.screening;
+                    const pendingCount = screening?.pendingCount || 0;
+                    const rate = screening?.completionRate ?? 100;
+
+                    return (
+                      <div className="p-2.5 rounded-lg border border-slate-100 bg-slate-50/60 flex items-center justify-between gap-3 hover:bg-slate-50 transition-colors">
+                        <div className="relative flex items-center justify-center shrink-0">
+                          <svg className="w-9 h-9 -rotate-90" viewBox="0 0 36 36">
+                            <circle cx="18" cy="18" fill="none" r="14" stroke="#e2e8f0" strokeWidth="3"></circle>
+                            <circle
+                              cx="18"
+                              cy="18"
+                              fill="none"
+                              r="14"
+                              stroke={pendingCount > 0 ? "#3b82f6" : "#10b981"}
+                              strokeDasharray={`${rate} ${100 - rate}`}
+                              strokeDashoffset="0"
+                              strokeWidth="3"
+                              pathLength="100"
+                              strokeLinecap="round"
+                            ></circle>
+                          </svg>
+                          <span className="absolute text-[9px] font-bold text-slate-800">{rate}%</span>
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <h3 className="text-xs font-semibold text-slate-900 truncate">Resume Screening</h3>
+                            {pendingCount > 0 ? (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-blue-100 text-blue-800">
+                                {pendingCount} New
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                Clear
+                              </span>
+                            )}
+                          </div>
+                          {pendingCount > 0 ? (
+                            <p className="text-[11px] text-slate-600 truncate mt-0.5">
+                              {pendingCount} unvetted profile{pendingCount > 1 ? "s" : ""} awaiting desk review
+                            </p>
+                          ) : (
+                            <p className="text-[11px] text-slate-500 mt-0.5">Screening inbox zero · Ready for uploads</p>
+                          )}
+                        </div>
+
+                        <div className="shrink-0">
+                          <Link
+                            href="/cockpit/candidates?filter=unscreened"
+                            className="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-blue-50 text-blue-700 hover:bg-blue-100 transition-colors flex items-center gap-1"
+                          >
+                            Review
+                            <ArrowRight className="h-3 w-3" />
+                          </Link>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Task 3: Client Feedback SLA Chases */}
+                  {(() => {
+                    const clientChases = pipelineData?.tasks?.clientChases;
+                    const bottlenecksCount = clientChases?.bottlenecksCount || 0;
+                    const rate = clientChases?.completionRate ?? 100;
+                    const topBottleneck = clientChases?.topBottleneck;
+                    const targetMandateId = topBottleneck?.mandate?.id || topBottleneck?.mandateId;
+
+                    return (
+                      <div className="p-2.5 rounded-lg border border-slate-100 bg-slate-50/60 flex items-center justify-between gap-3 hover:bg-slate-50 transition-colors">
+                        <div className="relative flex items-center justify-center shrink-0">
+                          <svg className="w-9 h-9 -rotate-90" viewBox="0 0 36 36">
+                            <circle cx="18" cy="18" fill="none" r="14" stroke="#e2e8f0" strokeWidth="3"></circle>
+                            <circle
+                              cx="18"
+                              cy="18"
+                              fill="none"
+                              r="14"
+                              stroke={bottlenecksCount > 0 ? "#ef4444" : "#10b981"}
+                              strokeDasharray={`${rate} ${100 - rate}`}
+                              strokeDashoffset="0"
+                              strokeWidth="3"
+                              pathLength="100"
+                              strokeLinecap="round"
+                            ></circle>
+                          </svg>
+                          <span className="absolute text-[9px] font-bold text-slate-800">{rate}%</span>
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <h3 className="text-xs font-semibold text-slate-900 truncate">Client Feedback SLA</h3>
+                            {bottlenecksCount > 0 ? (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-rose-100 text-rose-800">
+                                {bottlenecksCount} Overdue
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                Within SLA
+                              </span>
+                            )}
+                          </div>
+                          {bottlenecksCount > 0 && topBottleneck ? (
+                            <p className="text-[11px] text-slate-600 truncate mt-0.5">
+                              <span className="font-semibold text-rose-700">{topBottleneck.hoursWaiting}h waiting</span>
+                              <span className="text-slate-400"> · </span>
+                              <span className="truncate">{topBottleneck.mandate?.client?.name || topBottleneck.mandate?.title || "Client"}</span>
+                            </p>
+                          ) : (
+                            <p className="text-[11px] text-slate-500 mt-0.5">
+                              {clientChases?.totalWaiting || 0} active submissions · SLA compliant
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="shrink-0">
+                          {bottlenecksCount > 0 && targetMandateId ? (
+                            <button
+                              type="button"
+                              onClick={() => handleChaseClient(targetMandateId, topBottleneck?.candidate?.fullName)}
+                              disabled={chasingMandateId === targetMandateId}
+                              className="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-rose-50 text-rose-700 hover:bg-rose-100 transition-colors flex items-center gap-1 disabled:opacity-50"
+                            >
+                              <Zap className="h-3 w-3" />
+                              {chasingMandateId === targetMandateId ? "Sending..." : "Chase"}
+                            </button>
+                          ) : (
+                            <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
+                              SLA Active
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Task 4: Post-Interview Debriefs */}
+                  {(() => {
+                    const debriefs = pipelineData?.tasks?.debriefs;
+                    const pendingCount = debriefs?.pendingCount || 0;
+                    const rate = debriefs?.completionRate ?? 100;
+                    const nextItem = debriefs?.items?.[0];
+
+                    return (
+                      <div className="p-2.5 rounded-lg border border-slate-100 bg-slate-50/60 flex items-center justify-between gap-3 hover:bg-slate-50 transition-colors">
+                        <div className="relative flex items-center justify-center shrink-0">
+                          <svg className="w-9 h-9 -rotate-90" viewBox="0 0 36 36">
+                            <circle cx="18" cy="18" fill="none" r="14" stroke="#e2e8f0" strokeWidth="3"></circle>
+                            <circle
+                              cx="18"
+                              cy="18"
+                              fill="none"
+                              r="14"
+                              stroke={pendingCount > 0 ? "#8b5cf6" : "#10b981"}
+                              strokeDasharray={`${rate} ${100 - rate}`}
+                              strokeDashoffset="0"
+                              strokeWidth="3"
+                              pathLength="100"
+                              strokeLinecap="round"
+                            ></circle>
+                          </svg>
+                          <span className="absolute text-[9px] font-bold text-slate-800">{rate}%</span>
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5">
+                            <h3 className="text-xs font-semibold text-slate-900 truncate">Interview Debriefs</h3>
+                            {pendingCount > 0 ? (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-[#F3E8FF] text-[#6B21A8] border border-[#E9D5FF]">
+                                {pendingCount} Pending
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.2 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800">
+                                All Logged
+                              </span>
+                            )}
+                          </div>
+                          {pendingCount > 0 && nextItem ? (
+                            <p className="text-[11px] text-slate-600 truncate mt-0.5">
+                              <span className="font-semibold text-slate-900">{nextItem.candidate.fullName}</span>
+                              <span className="text-slate-400"> · </span>
+                              <span className="truncate">{nextItem.mandate?.title || "Role"}</span>
+                            </p>
+                          ) : (
+                            <p className="text-[11px] text-slate-500 mt-0.5">All completed interviews debriefed</p>
+                          )}
+                        </div>
+
+                        <div className="shrink-0">
+                          {pendingCount > 0 ? (
+                            <Link
+                              href="/cockpit/candidates?filter=debrief_pending"
+                              className="text-[11px] font-semibold px-2.5 py-1 rounded-md bg-[#F3E8FF] hover:bg-[#E9D5FF] text-[#6B21A8] border border-[#E9D5FF] transition-colors flex items-center gap-1 shadow-2xs"
+                            >
+                              Log Notes
+                              <ArrowRight className="h-3 w-3" />
+                            </Link>
+                          ) : (
+                            <span className="text-[10px] font-semibold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
+                              Complete
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+
+              {/* Right Column: Dedicated Interviews & Schedule Hub */}
+              <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col h-full">
+                {/* Header with Title + Range Selector */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-slate-100 gap-2">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-sm font-bold text-slate-900">Interviews &amp; Sessions</h2>
+                      <span className="text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.5 rounded-full">
+                        {filteredInterviews.length}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-500 mt-0.5">
+                      {interviewDateRange === "TODAY" && "Scheduled for today"}
+                      {interviewDateRange === "NEXT_7" && "Upcoming in next 7 days"}
+                      {interviewDateRange === "NEXT_30" && "Upcoming in next 30 days"}
+                      {interviewDateRange === "LAST_7" && "Conducted in last 7 days"}
+                      {interviewDateRange === "LAST_30" && "Conducted in last 30 days"}
+                    </p>
+                  </div>
+
+                  {/* Range Dropdown */}
+                  <div className="flex items-center gap-1.5 self-start sm:self-center">
+                    <select
+                      value={interviewDateRange}
+                      onChange={(e) => setInterviewDateRange(e.target.value as any)}
+                      aria-label="Filter interview sessions by date range"
+                      className="text-xs font-semibold text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg px-2 py-1 focus:outline-hidden focus:ring-1 focus:ring-slate-900 cursor-pointer"
+                    >
+                      <option value="TODAY">Today</option>
+                      <option value="NEXT_7">Next 7 Days</option>
+                      <option value="NEXT_30">Next 30 Days</option>
+                      <option value="LAST_7">Last 7 Days</option>
+                      <option value="LAST_30">Last 30 Days</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Scrollable Interview List Body */}
+                <div className="flex flex-col gap-2.5 pt-3.5 max-h-[360px] overflow-y-auto pr-1">
+                  {interviewsLoading ? (
+                    <div className="py-8 text-center text-slate-400">
+                      <div className="inline-block w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin mb-1.5"></div>
+                      <p className="text-xs">Loading sessions...</p>
+                    </div>
+                  ) : filteredInterviews.length > 0 ? (
+                    filteredInterviews.map((iv) => {
+                      const isPast = new Date(iv.scheduledAt).getTime() <= Date.now();
+                      const isCanceled = iv.status === "CANCELED";
+                      const needsDebrief = isPast && !iv.debriefLoggedAt && !isCanceled;
+                      const hasDebrief = Boolean(iv.debriefLoggedAt);
+                      const d = new Date(iv.scheduledAt);
+                      const timeStr = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                      const displayDateTime =
+                        interviewDateRange === "TODAY"
+                          ? timeStr
+                          : `${d.toLocaleDateString([], { month: "short", day: "numeric" })} · ${timeStr}`;
+
+                      return (
+                        <div
+                          key={iv.id}
+                          className={`p-2.5 rounded-lg border flex flex-col gap-1 transition-colors ${
+                            isCanceled
+                              ? "border-slate-200 bg-slate-50/70 opacity-60"
+                              : needsDebrief
+                              ? "border-[#E9D5FF] bg-[#FAF5FF]"
+                              : "border-slate-100 bg-slate-50/60 hover:bg-slate-50"
+                          }`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span
+                              className={`text-[10px] font-bold uppercase tracking-wide ${
+                                isCanceled
+                                  ? "text-slate-400 line-through"
+                                  : needsDebrief
+                                  ? "text-[#6B21A8]"
+                                  : "text-amber-800"
+                              }`}
+                            >
+                              {displayDateTime} · {iv.durationMinutes}m
+                            </span>
+
+                            {/* Status Tag */}
+                            {isCanceled ? (
+                              <span className="text-[10px] font-bold text-slate-500 bg-slate-200/70 px-1.5 py-0.2 rounded">
+                                Canceled
+                              </span>
+                            ) : needsDebrief ? (
+                              <span className="text-[10px] font-bold text-[#6B21A8] bg-[#F3E8FF] border border-[#E9D5FF] px-1.5 py-0.2 rounded">
+                                Debrief Due
+                              </span>
+                            ) : hasDebrief ? (
+                              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-1.5 py-0.2 rounded">
+                                Completed
+                              </span>
+                            ) : (
+                              <span className="w-2 h-2 rounded-full bg-amber-500" title="Scheduled"></span>
+                            )}
+                          </div>
+
+                          <h3
+                            className={`text-xs font-semibold leading-snug truncate ${
+                              isCanceled ? "text-slate-500 line-through" : "text-slate-900"
+                            }`}
+                          >
+                            {iv.candidate?.fullName} · {iv.mandate?.title}
+                          </h3>
+
+                          <div className="flex items-center justify-between text-[10px] text-slate-500 pt-1">
+                            <span className="truncate">{iv.mandate?.client?.name}</span>
+
+                            {/* Action Buttons */}
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              {!isPast && !isCanceled && (
+                                iv.meetingLink ? (
+                                  <a
+                                    href={iv.meetingLink}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-emerald-700 font-bold hover:underline shrink-0"
+                                  >
+                                    Join Video
+                                  </a>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setMeetingLinkModal({
+                                        isOpen: true,
+                                        interviewId: iv.id,
+                                        candidateName: iv.candidate?.fullName || "",
+                                        mandateTitle: iv.mandate?.title || "",
+                                        currentLink: "",
+                                      })
+                                    }
+                                    className="text-slate-600 hover:text-slate-900 font-semibold underline shrink-0 cursor-pointer"
+                                  >
+                                    + Add Link
+                                  </button>
+                                )
+                              )}
+
+                              {needsDebrief && (
+                                <Link
+                                  href="/cockpit/candidates?filter=debrief_pending"
+                                  className="text-[10px] font-bold px-2 py-0.5 rounded-md bg-[#F3E8FF] hover:bg-[#E9D5FF] text-[#6B21A8] border border-[#E9D5FF] transition-colors flex items-center gap-1 shadow-2xs"
+                                >
+                                  Log Debrief
+                                  <ArrowRight className="h-2.5 w-2.5" />
+                                </Link>
+                              )}
+
+                              {hasDebrief && (
+                                <span className="text-[10px] text-slate-400 font-medium">✓ Debriefed</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="py-8 text-center text-slate-400 flex flex-col items-center justify-center">
+                      <Calendar className="h-6 w-6 text-slate-300 mb-2 stroke-[1.5]" />
+                      <p className="text-xs font-bold text-slate-700">No interviews found</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5 max-w-[200px]">
+                        {interviewDateRange === "TODAY"
+                          ? "Calendar is clear for today."
+                          : "No interview sessions found for the selected time window."}
+                      </p>
+                      {interviewDateRange === "TODAY" && (
+                        <button
+                          type="button"
+                          onClick={() => setInterviewDateRange("LAST_7")}
+                          className="mt-3 text-[11px] font-bold text-slate-700 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-2.5 py-1 rounded-md transition-colors cursor-pointer"
+                        >
+                          View Last 7 Days →
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* 4. ACTIVE SEARCH MANDATES VELOCITY DECK */}
+            <div className="bg-white rounded-xl border border-slate-200 p-5 shadow-xs flex flex-col justify-between">
+              <div className="flex items-center justify-between pb-3 border-b border-slate-100 flex-wrap gap-2">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="text-sm font-bold text-slate-900">Active Search Mandates Velocity</h2>
+                    <span className="px-2 py-0.2 rounded-full bg-slate-100 text-slate-700 text-[10px] font-semibold">
+                      Live Status
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Candidate stage pipeline, conversion metrics and recruiter leads
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="relative rounded-lg shadow-2xs w-48 sm:w-64">
+                    <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none">
+                      <Search className="h-3 w-3 text-slate-400" />
+                    </div>
+                    <input
+                      type="text"
+                      value={funnelSearchQuery}
+                      onChange={(e) => setFunnelSearchQuery(e.target.value)}
+                      placeholder="Filter mandate..."
+                      className="block w-full pl-8 pr-6 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-none focus:ring-1 focus:ring-amber-400"
+                    />
+                    {funnelSearchQuery && (
+                      <button
+                        onClick={() => setFunnelSearchQuery("")}
+                        className="absolute inset-y-0 right-0 pr-2 flex items-center text-slate-400 hover:text-slate-600 text-xs font-bold"
+                      >
+                        ✕
+                      </button>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleExportMandatesVelocityCSV}
+                    className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-700 hover:bg-slate-100 text-xs font-semibold transition-colors shadow-2xs flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <FileDown className="h-3.5 w-3.5 text-slate-500" />
+                    <span>Export CSV</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Table */}
+              <div className="overflow-x-auto pt-2">
+                <table className="w-full text-left border-collapse">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                      <th className="py-2.5 px-3">Role &amp; Client</th>
+                      <th className="py-2.5 px-3">Pipeline Funnel</th>
+                      <th className="py-2.5 px-3">Velocity SLA</th>
+                      <th className="py-2.5 px-3">Lead Recruiter</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-xs divide-y divide-slate-100">
+                    {filteredMandateFunnels.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="py-8 text-center text-xs text-slate-400">
+                          {funnelSearchQuery ? "No mandates match your filter criteria." : "No active search mandates found."}
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredMandateFunnels.map((m) => {
+                        const recInitials = (m.assignedRecruiter?.name || "AB")
+                          .split(" ")
+                          .map((w) => w[0])
+                          .join("")
+                          .slice(0, 2)
+                          .toUpperCase();
+                        const isSlaBreached = m.slaStatus === "BREACHED";
+                        const isSlaWarning = m.slaStatus === "WARNING";
+                        const funnelProgress = m.funnel.ingested > 0 ? Math.min(100, Math.round((m.funnel.shortlisted / m.funnel.ingested) * 100)) : 0;
+
+                        return (
+                          <tr
+                            key={m.id}
+                            onClick={() => router.push(`/cockpit/mandates/${m.id}`)}
+                            className="hover:bg-slate-50/70 transition-colors cursor-pointer group"
+                          >
+                            <td className="py-3 px-3">
+                              <div className="font-bold text-slate-900 group-hover:text-amber-800 transition-colors">
+                                {m.title}
+                              </div>
+                              <div className="text-[11px] text-slate-500">
+                                {m.client.name} · {m.openings} {m.openings === 1 ? "Role" : "Roles"}
+                              </div>
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="flex items-center gap-1.5 font-medium text-slate-700">
+                                <span className="font-semibold text-slate-900">{m.funnel.ingested}</span> Applied ·{" "}
+                                <span className="font-semibold text-amber-700">{m.funnel.shortlisted}</span> Shortlisted
+                              </div>
+                              <div className="w-24 bg-slate-100 h-1.5 rounded-full mt-1.5 overflow-hidden">
+                                <div className="bg-amber-500 h-full rounded-full" style={{ width: `${funnelProgress}%` }}></div>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3">
+                              {isSlaBreached ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 font-semibold text-[10px]">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>SLA Breached
+                                </span>
+                              ) : isSlaWarning ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 font-semibold text-[10px]">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500"></span>Needs Attention
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-semibold text-[10px]">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>On Target
+                                </span>
+                              )}
+                            </td>
+                            <td className="py-3 px-3">
+                              <div className="flex items-center gap-2">
+                                <div className="w-6 h-6 rounded-full bg-slate-900 text-white flex items-center justify-center font-bold text-[10px]">
+                                  {recInitials}
+                                </div>
+                                <span className="font-medium text-slate-800">
+                                  {m.assignedRecruiter?.name || "Ankur B."}
+                                </span>
+                              </div>
+                            </td>
+                            <td className="py-3 px-3 text-right">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  router.push(`/cockpit/mandates/${m.id}`);
+                                }}
+                                className="p-1 text-slate-400 hover:text-slate-700 rounded transition-colors"
+                              >
+                                <ArrowRight className="h-4 w-4" />
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
         )}
@@ -2275,7 +2950,7 @@ export default function CockpitPage() {
                           </div>
 
                           {/* Kebab menu for tools */}
-                          <div className="relative shrink-0" onClick={(e) => e.stopPropagation()}>
+                          <div className="relative shrink-0" data-mandate-kebab onClick={(e) => e.stopPropagation()}>
                             <button
                               type="button"
                               onClick={() => setActiveMenuMandateId(activeMenuMandateId === m.id ? null : m.id)}
@@ -2287,7 +2962,10 @@ export default function CockpitPage() {
                             </button>
 
                             {activeMenuMandateId === m.id && (
-                              <div className="absolute right-0 bottom-full mb-1.5 z-30 min-w-[210px] bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-xs animate-in fade-in zoom-in-95 duration-100">
+                              <div
+                                data-mandate-kebab
+                                className="absolute right-0 bottom-full mb-1.5 z-30 min-w-[210px] bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-xs animate-in fade-in zoom-in-95 duration-100"
+                              >
                                 <button
                                   type="button"
                                   onClick={() => {

@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { normalizePhoneNumber } from "@/lib/gemini";
-import { SubmissionStage } from "@prisma/client";
+import { SubmissionStage, InterviewStatus } from "@prisma/client";
 
 export const dynamic = "force-dynamic";
 
@@ -19,6 +19,7 @@ export async function GET(req: Request) {
     const query = searchParams.get("query") || "";
     const silverOnly = searchParams.get("silver") === "true";
     const sortBy = searchParams.get("sort") || "createdAt_desc";
+    const filter = searchParams.get("filter") || "";
 
     const whereClause: any = {
       agencyId: session.user.agencyId,
@@ -26,6 +27,31 @@ export async function GET(req: Request) {
 
     if (silverOnly) {
       whereClause.isSilverMedalist = true;
+    }
+
+    if (filter === "debrief_pending") {
+      whereClause.interviews = {
+        some: {
+          scheduledAt: { lte: new Date() },
+          debriefLoggedAt: null,
+          status: { not: InterviewStatus.CANCELED },
+        },
+      };
+    } else if (filter === "unscreened") {
+      whereClause.submissions = {
+        some: {
+          stage: SubmissionStage.PARSED_RAW,
+        },
+      };
+    } else if (filter === "callbacks") {
+      const endOfToday = new Date();
+      endOfToday.setHours(23, 59, 59, 999);
+      whereClause.callLogs = {
+        some: {
+          disposition: "CONNECTED_CALLBACK",
+          callbackAt: { lte: endOfToday },
+        },
+      };
     }
 
     if (query.trim()) {
@@ -70,6 +96,13 @@ export async function GET(req: Request) {
             mandate: { select: { id: true, title: true, client: { select: { name: true } } } },
           },
           orderBy: { calledAt: "desc" },
+        },
+        interviews: {
+          where: { status: { not: InterviewStatus.CANCELED } },
+          include: {
+            mandate: { select: { id: true, title: true, client: { select: { name: true } } } },
+          },
+          orderBy: { scheduledAt: "desc" },
         },
       },
       orderBy: orderByClause,

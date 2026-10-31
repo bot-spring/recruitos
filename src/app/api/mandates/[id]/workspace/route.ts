@@ -141,6 +141,17 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
         })),
         // History from OTHER jobs in this agency
         otherJobsHistory,
+        // Scheduled interviews for THIS submission
+        interviews: sub.interviews.map((iv) => ({
+          id: iv.id,
+          scheduledAt: iv.scheduledAt,
+          durationMinutes: iv.durationMinutes,
+          interviewType: iv.interviewType,
+          status: iv.status,
+          meetingLink: iv.meetingLink,
+          debriefLoggedAt: iv.debriefLoggedAt,
+          candidateSentiment: iv.candidateSentiment,
+        })),
       };
     });
 

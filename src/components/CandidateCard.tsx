@@ -16,6 +16,8 @@ import {
   ThumbsDown,
   Sparkles,
   Trash2,
+  MessageSquare,
+  Clock,
 } from "lucide-react";
 import { CALL_DISPOSITIONS } from "./CandidateDetailModal";
 
@@ -101,6 +103,7 @@ export interface CandidateCardProps {
   onRedeploy?: (candidate: any) => void;
   onRetentionPulse?: (candidate: any) => void;
   onConfirmJoining?: (candidate: any) => void;
+  onOpenDebrief?: (candidate: any) => void;
   onStatusChange?: (candidate: any, newStatus: string) => void;
   onReject?: (candidate: any) => void;
   statusOptions?: StatusOption[];
@@ -149,6 +152,7 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
   onRedeploy,
   onRetentionPulse,
   onConfirmJoining,
+  onOpenDebrief,
   onStatusChange,
   onReject,
   statusOptions,
@@ -209,6 +213,11 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
   const rawSkills: string[] = Array.isArray(candidate.skills) ? candidate.skills : [];
   const topSkills = rawSkills.slice(0, 7).join(", ");
   const moreCount = rawSkills.length > 7 ? rawSkills.length - 7 : 0;
+
+  // Pending interview debrief check: interview is past scheduledAt, debriefLoggedAt is null, not cancelled
+  const pendingDebrief = (candidate.interviews || []).find((i: any) => {
+    return new Date(i.scheduledAt).getTime() <= Date.now() && !i.debriefLoggedAt && i.status !== "CANCELED";
+  });
 
   // Notice period: subtle green text only if <= 15 days
   const isQuickNotice = candidate.noticePeriodDays !== null && candidate.noticePeriodDays !== undefined && candidate.noticePeriodDays <= 15;
@@ -350,6 +359,14 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
                   {candidate.isSilverMedalist && (
                     <span className="text-[10px] font-bold text-amber-800 bg-amber-50 border border-amber-200/80 px-1.5 py-0.2 rounded-md shadow-2xs">
                       🥈 Silver Medalist
+                    </span>
+                  )}
+
+                  {/* Debrief Due Tag */}
+                  {pendingDebrief && (
+                    <span className="text-[10px] font-extrabold text-purple-800 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-md shadow-2xs flex items-center gap-1">
+                      <Clock className="h-3 w-3 text-purple-600" />
+                      <span>Debrief Due</span>
                     </span>
                   )}
                 </>
@@ -618,6 +635,20 @@ export const CandidateCard: React.FC<CandidateCardProps> = ({
 
                 {menuOpen && (
                   <div className="absolute right-0 bottom-full mb-1 z-30 min-w-[220px] bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-xs animate-in fade-in zoom-in-95 duration-100">
+                    {pendingDebrief && onOpenDebrief && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMenuOpen(false);
+                          onOpenDebrief(candidate);
+                        }}
+                        className="w-full text-left px-3 py-1.5 text-purple-900 hover:bg-purple-50 font-bold flex items-center space-x-2 transition-colors cursor-pointer"
+                      >
+                        <MessageSquare className="h-3.5 w-3.5 text-purple-600" />
+                        <span>Log Post-Interview Debrief</span>
+                      </button>
+                    )}
+
                     {candidate.isSilverMedalist && onRedeploy && (
                       <button
                         type="button"

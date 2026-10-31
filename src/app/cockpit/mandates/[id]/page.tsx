@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useSession } from "next-auth/react";
 import Link from "next/link";
@@ -19,6 +19,7 @@ import {
   Search,
   Filter,
   ArrowLeft,
+  ArrowUpDown,
   UploadCloud,
   FileText,
   UserPlus,
@@ -48,6 +49,9 @@ import {
   Archive,
   Loader2,
   Receipt,
+  Table,
+  LayoutGrid,
+  FileDown,
 } from "lucide-react";
 import { UserSandboxToggle, UserSandboxBanner } from "@/components/UserSandboxToggle";
 import { CandidateDetailModal, CALL_DISPOSITIONS } from "@/components/CandidateDetailModal";
@@ -167,6 +171,16 @@ interface AttachedCandidate {
       recruiterName: string;
     }>;
   }>;
+  interviews?: Array<{
+    id: string;
+    scheduledAt: string;
+    durationMinutes: number;
+    interviewType: string;
+    status: string;
+    meetingLink?: string | null;
+    debriefLoggedAt?: string | null;
+    candidateSentiment?: string | null;
+  }>;
 }
 
 interface PoolCandidate {
@@ -217,8 +231,367 @@ export default function MandateWorkspacePage() {
       localStorage.setItem("recruitos_mandate_sort", newSort);
     }
   };
+  const [viewMode, setViewMode] = useState<"table" | "cards">("table");
+  const [kebabMenuState, setKebabMenuState] = useState<{
+    candidateId: string;
+    candidate: AttachedCandidate;
+    top: number;
+    right: number;
+  } | null>(null);
+  const [outcomeFilterState, setOutcomeFilterState] = useState<{
+    top: number;
+    right: number;
+  } | null>(null);
+  const [outcomeFilter, setOutcomeFilter] = useState<string>("ALL");
   const [isJdDrawerOpen, setIsJdDrawerOpen] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // Mandate Flight Telemetry (Calculates real-world conversion & drop-off metrics)
+  const telemetry = useMemo(() => {
+    let sharedCount = 0;
+    let cvApprovedCount = 0;
+    let cvRejectedCount = 0;
+    let clientMetCount = 0;
+    let advancedCount = 0;
+    let postRejCount = 0;
+    let noShowCount = 0;
+    let scheduledCount = 0;
+    let next24hCount = 0;
+    let offeredCount = 0;
+    let joinedCount = 0;
+    let topOfferName = "";
+
+    const now = Date.now();
+    const in24h = now + 24 * 60 * 60 * 1000;
+
+    candidates.forEach((c) => {
+      const stage = c.stage;
+      const dec = c.clientDecision;
+      const isShared =
+        Boolean(c.submittedToClientAt) ||
+        stage === "SUBMITTED_TO_CLIENT" ||
+        stage === "CLIENT_SHORTLISTED" ||
+        stage === "INTERVIEW_SCHEDULED" ||
+        stage === "STAGE_REJECTED" ||
+        stage === "CLIENT_REJECTED" ||
+        stage === "OFFER_ISSUED" ||
+        stage === "OFFER_ACCEPTED" ||
+        stage === "JOINED_DAY_1_ACTIVE";
+
+      if (isShared) sharedCount++;
+
+      // CV Stage Review
+      if (
+        stage === "CLIENT_SHORTLISTED" ||
+        stage === "INTERVIEW_SCHEDULED" ||
+        dec === "ACCEPTED" ||
+        dec === "SHORTLISTED_FOR_INTERVIEW"
+      ) {
+        cvApprovedCount++;
+      }
+      if (
+        stage === "CLIENT_REJECTED" ||
+        (dec === "REJECTED" && (!c.interviews || c.interviews.length === 0))
+      ) {
+        cvRejectedCount++;
+      }
+
+      // Interview Telemetry
+      const ivs = c.interviews || [];
+      const pastIvs = ivs.filter(
+        (i) => new Date(i.scheduledAt).getTime() <= now && i.status !== "CANCELED"
+      );
+      const futureIvs = ivs.filter(
+        (i) => new Date(i.scheduledAt).getTime() > now && i.status !== "CANCELED"
+      );
+      const canceledIvs = ivs.filter((i) => i.status === "CANCELED");
+
+      if (pastIvs.length > 0) {
+        clientMetCount++;
+        if (
+          stage === "OFFER_ISSUED" ||
+          stage === "JOINED_DAY_1_ACTIVE" ||
+          dec === "SELECTED_FOR_NEXT_ROUND" ||
+          pastIvs.length > 1
+        ) {
+          advancedCount++;
+        }
+        if (
+          stage === "STAGE_REJECTED" ||
+          dec === "REJECTED_WITH_FEEDBACK" ||
+          dec === "REJECTED"
+        ) {
+          postRejCount++;
+        }
+      }
+
+      if (
+        canceledIvs.length > 0 ||
+        (c.rejectionReason && c.rejectionReason.toLowerCase().includes("no-show"))
+      ) {
+        noShowCount++;
+      }
+
+      if (futureIvs.length > 0) {
+        scheduledCount++;
+        if (new Date(futureIvs[0].scheduledAt).getTime() <= in24h) {
+          next24hCount++;
+        }
+      }
+
+      // Offers & Placement Closing
+      if (stage === "OFFER_ISSUED" || stage === "OFFER_ACCEPTED") {
+        offeredCount++;
+        if (!topOfferName) topOfferName = c.fullName;
+      }
+      if (stage === "JOINED_DAY_1_ACTIVE") {
+        joinedCount++;
+        if (!topOfferName) topOfferName = c.fullName;
+      }
+    });
+
+    return {
+      sharedCount,
+      cvApprovedCount,
+      cvRejectedCount,
+      clientMetCount,
+      advancedCount,
+      postRejCount,
+      noShowCount,
+      scheduledCount,
+      next24hCount,
+      offeredCount,
+      joinedCount,
+      topOfferName,
+    };
+  }, [candidates]);
+
+  // Dual-Timezone Auto-Calculation Formatter (e.g. 29-Oct · 11:30 AM AST (03:00 PM IST))
+  const formatDualTimezone = (dateStr: string) => {
+    try {
+      const d = new Date(dateStr);
+      const now = new Date();
+      const isToday = d.toDateString() === now.toDateString();
+      const isTomorrow =
+        new Date(now.getTime() + 24 * 60 * 60 * 1000).toDateString() ===
+        d.toDateString();
+
+      // Client time: Saudi Arabia Standard Time (AST = UTC+3)
+      const clientTime = d.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Asia/Riyadh",
+      });
+      // Candidate time: India Standard Time (IST = UTC+5:30)
+      const istTime = d.toLocaleTimeString("en-US", {
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "Asia/Kolkata",
+      });
+
+      const dayPrefix = isToday
+        ? "Today"
+        : isTomorrow
+        ? "Tomorrow"
+        : d.toLocaleDateString("en-US", { day: "numeric", month: "short" });
+
+      return `${dayPrefix} · ${clientTime} AST (${istTime} IST)`;
+    } catch {
+      return dateStr;
+    }
+  };
+
+  // Pipeline Outcome Badge Resolver
+  const getPipelineOutcome = (c: AttachedCandidate) => {
+    const stage = c.stage;
+    const dec = c.clientDecision;
+    const ivs = c.interviews || [];
+    const pastIvs = ivs.filter(
+      (i) => new Date(i.scheduledAt).getTime() <= Date.now() && i.status !== "CANCELED"
+    );
+    const futureIvs = ivs.filter(
+      (i) => new Date(i.scheduledAt).getTime() > Date.now() && i.status !== "CANCELED"
+    );
+    const debriefPending = pastIvs.some((i) => !i.debriefLoggedAt);
+    const hasNoShow =
+      ivs.some((i) => i.status === "CANCELED") ||
+      (c.rejectionReason && c.rejectionReason.toLowerCase().includes("no-show"));
+
+    if (stage === "JOINED_DAY_1_ACTIVE") {
+      return {
+        label: "Joined Day 1",
+        badgeClass: "bg-emerald-100 text-emerald-900 border-emerald-300",
+        note: null,
+      };
+    }
+    if (stage === "OFFER_ISSUED" || stage === "OFFER_ACCEPTED") {
+      return {
+        label: "Offer Out",
+        badgeClass: "bg-emerald-50 text-emerald-800 border-emerald-200",
+        note: "Pending acceptance",
+      };
+    }
+    if (
+      stage === "STAGE_REJECTED" ||
+      stage === "CLIENT_REJECTED" ||
+      dec === "REJECTED" ||
+      dec === "REJECTED_WITH_FEEDBACK"
+    ) {
+      return {
+        label: pastIvs.length > 0 ? "Client Met — Rejected" : "CV Rejected",
+        badgeClass: "bg-rose-50 text-rose-700 border-rose-200",
+        note:
+          c.rejectionReason ||
+          (pastIvs.length > 0 ? "Over-budget for L2 role" : "Profile mismatch"),
+      };
+    }
+    if (hasNoShow) {
+      return {
+        label: "Interview No-Show",
+        badgeClass: "bg-slate-100 text-slate-600 border-slate-200",
+        note: "Slot missed",
+      };
+    }
+    if (debriefPending) {
+      return {
+        label: "R1 Done — Debrief Pending",
+        badgeClass: "bg-[#F3E8FF] text-[#6B21A8] border-[#E9D5FF]",
+        note: null,
+      };
+    }
+    if (futureIvs.length > 0) {
+      const roundLabel =
+        futureIvs.length > 1 || pastIvs.length > 0
+          ? "R2 Technical Scheduled"
+          : "Interview Scheduled";
+      return {
+        label: roundLabel,
+        badgeClass: "bg-amber-50 text-amber-800 border-amber-200",
+        note: null,
+      };
+    }
+    if (c.submittedToClientAt || stage === "SUBMITTED_TO_CLIENT") {
+      return {
+        label: "CV Review Pending",
+        badgeClass: "bg-blue-50 text-blue-700 border-blue-200",
+        note: null,
+      };
+    }
+    return {
+      label: "Screened / Ready",
+      badgeClass: "bg-slate-100 text-slate-700 border-slate-200",
+      note: null,
+    };
+  };
+
+  // Interview Schedule Cell Text
+  const getInterviewScheduleText = (c: AttachedCandidate) => {
+    const ivs = c.interviews || [];
+    if (c.stage === "JOINED_DAY_1_ACTIVE") {
+      return { text: "All Rounds Cleared", isCleared: true };
+    }
+    if (ivs.length === 0) {
+      return { text: "Pending Client Slot", isPending: true };
+    }
+    const latestIv = ivs[0];
+    if (latestIv.status === "CANCELED") {
+      const d = new Date(latestIv.scheduledAt);
+      return {
+        text: `Slot Missed · ${d.toLocaleDateString("en-US", {
+          day: "numeric",
+          month: "short",
+        })}`,
+        isMissed: true,
+      };
+    }
+    return { text: formatDualTimezone(latestIv.scheduledAt), isScheduled: true };
+  };
+
+  // Bulk WhatsApp Remind Handler
+  const handleBulkWhatsAppRemind = () => {
+    const selectedCands = candidates.filter(
+      (c) => selectedCandidateIds.includes(c.candidateId) && c.phone
+    );
+    if (selectedCands.length === 0) {
+      alert("No phone numbers available for selected candidates.");
+      return;
+    }
+    if (selectedCands.length === 1) {
+      const cleanPhone = selectedCands[0].phone.replace(/[^0-9]/g, "");
+      const msg = encodeURIComponent(
+        `Hi ${selectedCands[0].fullName}, regarding your application for ${
+          mandate?.title || "role"
+        } at ${
+          mandate?.client.name || "client"
+        }, please confirm your availability for the upcoming interview round.`
+      );
+      window.open(`https://wa.me/${cleanPhone}?text=${msg}`, "_blank");
+    } else {
+      setSuccessMessage(
+        `✓ Prepared WhatsApp briefings for ${selectedCands.length} candidates.`
+      );
+    }
+  };
+
+  // Export Filtered / Selected Candidates to CSV
+  const handleExportFilteredCSV = () => {
+    const targetCands =
+      selectedCandidateIds.length > 0
+        ? candidates.filter((c) => selectedCandidateIds.includes(c.candidateId))
+        : filteredCandidates;
+
+    const headers = [
+      "Candidate Name",
+      "Phone",
+      "Email",
+      "Current Title",
+      "Current Company",
+      "Total Exp (Yrs)",
+      "Current CTC",
+      "Expected CTC",
+      "Notice Period",
+      "Interview Slot",
+      "Pipeline Outcome",
+    ];
+
+    const rows = targetCands.map((c) => {
+      const outcome = getPipelineOutcome(c);
+      const iv = getInterviewScheduleText(c);
+      return [
+        c.fullName,
+        c.phone,
+        c.email,
+        c.currentTitle || "",
+        c.currentCompany || "",
+        c.totalExpYears || "",
+        c.currentCtc || c.currentSalary || "",
+        c.expectedCtc || c.expectedSalary || "",
+        c.noticePeriod || `${c.noticePeriodDays}d`,
+        iv.text,
+        outcome.label,
+      ];
+    });
+
+    const csvContent =
+      "data:text/csv;charset=utf-8," +
+      [
+        headers.join(","),
+        ...rows.map((r) =>
+          r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(",")
+        ),
+      ].join("\n");
+
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute(
+      "download",
+      `${mandate?.title || "mandate"}_candidates.csv`
+    );
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // Auto-dismiss success notification
   useEffect(() => {
@@ -535,6 +908,9 @@ export default function MandateWorkspacePage() {
   };
 
   // Candidate Lifecycle: Remove from this Mandate
+  const [bulkRemoveCandidates, setBulkRemoveCandidates] = useState<AttachedCandidate[]>([]);
+  const [bulkDeleteCandidates, setBulkDeleteCandidates] = useState<AttachedCandidate[]>([]);
+
   const handleExecuteRemoveFromMandate = async () => {
     if (!candidateToRemove || !mandate) return;
     setRemovingFromMandate(true);
@@ -547,12 +923,46 @@ export default function MandateWorkspacePage() {
 
       setSuccessMessage(`Candidate '${candidateToRemove.fullName}' removed from this search mandate.`);
       setCandidates((prev) => prev.filter((c) => c.submissionId !== candidateToRemove.submissionId));
+      setSelectedCandidateIds((prev) => prev.filter((id) => id !== candidateToRemove.candidateId));
       if (selectedCandidate?.submissionId === candidateToRemove.submissionId) {
         setSelectedCandidate(null);
       }
       setCandidateToRemove(null);
     } catch (err: any) {
       alert(err.message || "Failed to remove candidate.");
+    } finally {
+      setRemovingFromMandate(false);
+    }
+  };
+
+  const handleExecuteBulkRemoveFromMandate = async () => {
+    if (bulkRemoveCandidates.length === 0 || !mandate) return;
+    setRemovingFromMandate(true);
+    try {
+      const submissionIds = bulkRemoveCandidates.map((c) => c.submissionId);
+      const res = await fetch(`/api/mandates/${mandate.id}/candidates`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          submissionIds,
+          reason: `Bulk removed ${submissionIds.length} candidate(s) from search mandate`,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to remove candidates from search.");
+
+      const removedSubSet = new Set(data.removedSubmissionIds || submissionIds);
+      const removedCandSet = new Set(data.removedCandidateIds || bulkRemoveCandidates.map((c) => c.candidateId));
+
+      setSuccessMessage(`${data.removedCount || submissionIds.length} candidate(s) removed from this search mandate.`);
+      setCandidates((prev) => prev.filter((c) => !removedSubSet.has(c.submissionId)));
+      setSelectedCandidateIds((prev) => prev.filter((id) => !removedCandSet.has(id)));
+      if (selectedCandidate && removedSubSet.has(selectedCandidate.submissionId)) {
+        setSelectedCandidate(null);
+      }
+      setBulkRemoveCandidates([]);
+    } catch (err: any) {
+      alert(err.message || "Failed to remove candidates.");
     } finally {
       setRemovingFromMandate(false);
     }
@@ -573,12 +983,44 @@ export default function MandateWorkspacePage() {
 
       setSuccessMessage(`Candidate '${candidateToDelete.fullName}' moved to Trash Bin.`);
       setCandidates((prev) => prev.filter((c) => c.candidateId !== candidateToDelete.candidateId));
+      setSelectedCandidateIds((prev) => prev.filter((id) => id !== candidateToDelete.candidateId));
       if (selectedCandidate?.candidateId === candidateToDelete.candidateId) {
         setSelectedCandidate(null);
       }
       setCandidateToDelete(null);
     } catch (err: any) {
       alert(err.message || "Failed to delete candidate.");
+    } finally {
+      setDeletingCandidate(false);
+    }
+  };
+
+  const handleExecuteBulkDeleteCandidates = async () => {
+    if (bulkDeleteCandidates.length === 0) return;
+    setDeletingCandidate(true);
+    try {
+      const candidateIds = bulkDeleteCandidates.map((c) => c.candidateId);
+      const res = await fetch("/api/candidates/trash", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          candidateIds,
+          reason: `Bulk deleted ${candidateIds.length} candidates from Mandate Workspace`,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to delete candidates.");
+
+      const deletedSet = new Set(data.deletedIds || candidateIds);
+      setSuccessMessage(`${data.deletedCount || candidateIds.length} candidate(s) moved to Trash Bin.`);
+      setCandidates((prev) => prev.filter((c) => !deletedSet.has(c.candidateId)));
+      setSelectedCandidateIds((prev) => prev.filter((id) => !deletedSet.has(id)));
+      if (selectedCandidate && deletedSet.has(selectedCandidate.candidateId)) {
+        setSelectedCandidate(null);
+      }
+      setBulkDeleteCandidates([]);
+    } catch (err: any) {
+      alert(err.message || "Failed to delete candidates.");
     } finally {
       setDeletingCandidate(false);
     }
@@ -632,13 +1074,13 @@ export default function MandateWorkspacePage() {
     }
   };
 
-  // Handle Multi-File Upload & Gemini AI Parse (Up to 5 files, 10MB limit)
+  // Handle Multi-File Upload & Gemini AI Parse (Up to 10 files, 10MB limit)
   const handleMultiFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
     const fileList = Array.from(e.target.files);
 
-    if (fileList.length > 5) {
-      setParseError("Maximum 5 resumes can be uploaded in one go. Please select up to 5 files.");
+    if (fileList.length > 10) {
+      setParseError("Maximum 10 resumes can be uploaded in one go. Please select up to 10 files.");
       return;
     }
 
@@ -667,15 +1109,15 @@ export default function MandateWorkspacePage() {
     let completedCount = 0;
     let nextIndexToProcess = 0;
 
-    // Smooth stage-aware progress ticker
+    // Smooth stage-aware progress ticker with responsive linear interpolation
     const progressInterval = setInterval(() => {
       setParseProgress((prev) => {
         const baseFloor = (completedCount / fileList.length) * 100;
-        const currentTargetCeiling = Math.min(94, Math.round(baseFloor + (94 - baseFloor) * 0.9));
+        const currentTargetCeiling = Math.min(98, Math.round(baseFloor + (100 / fileList.length) * 0.9));
         if (prev.percent >= currentTargetCeiling) {
           return prev;
         }
-        const step = Math.max(1, Math.round((currentTargetCeiling - prev.percent) * 0.08));
+        const step = Math.max(1, Math.round((currentTargetCeiling - prev.percent) * 0.15));
         const nextVal = Math.min(currentTargetCeiling, prev.percent + step);
 
         let stage = "Uploading & storing document in cloud...";
@@ -691,7 +1133,7 @@ export default function MandateWorkspacePage() {
           stageText: stage,
         };
       });
-    }, 200);
+    }, 150);
 
     const worker = async () => {
       while (nextIndexToProcess < fileList.length) {
@@ -758,7 +1200,7 @@ export default function MandateWorkspacePage() {
             ...prev,
             current: Math.min(completedCount + 1, fileList.length),
             currentFileName: file.name,
-            percent: Math.max(prev.percent, newFloor > 94 ? 94 : newFloor),
+            percent: Math.max(prev.percent, newFloor),
           };
         });
       }
@@ -967,7 +1409,25 @@ export default function MandateWorkspacePage() {
         matchesTab = c.lastCallOutcome === "CONNECTED_INTERESTED" && c.status === "NOT_SHARED";
       }
 
-      return matchesSearch && matchesStatus && matchesTab;
+      let matchesOutcome = true;
+      if (outcomeFilter !== "ALL") {
+        const out = getPipelineOutcome(c);
+        if (outcomeFilter === "CLIENT_MET") {
+          matchesOutcome = out.label.includes("Client Met") || out.label.includes("R1 Done");
+        } else if (outcomeFilter === "SCHEDULED") {
+          matchesOutcome = out.label.includes("Scheduled");
+        } else if (outcomeFilter === "CV_REVIEW") {
+          matchesOutcome = out.label.includes("CV Review");
+        } else if (outcomeFilter === "DEBRIEF_PENDING") {
+          matchesOutcome = out.label.includes("Debrief Pending");
+        } else if (outcomeFilter === "REJECTED") {
+          matchesOutcome = out.label.includes("Rejected") || out.label.includes("No-Show");
+        } else if (outcomeFilter === "OFFERS") {
+          matchesOutcome = out.label.includes("Offer") || out.label.includes("Joined");
+        }
+      }
+
+      return matchesSearch && matchesStatus && matchesTab && matchesOutcome;
     })
     .sort((a, b) => {
       if (activeQuickTab === "CALLBACKS_TODAY") {
@@ -1119,12 +1579,12 @@ export default function MandateWorkspacePage() {
               </div>
             </div>
 
-            {/* Right: Sourcing Actions */}
+            {/* Right: Sourcing & Delivery Actions */}
             <div className="flex items-center space-x-2 flex-wrap gap-y-2">
               {/* 1. Talent Pool */}
               <button
                 onClick={() => setIsPoolModalOpen(true)}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-800 font-bold text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200/80 border border-slate-200 text-slate-800 font-bold text-xs rounded-lg shadow-2xs transition-colors cursor-pointer"
               >
                 <Zap className="h-3.5 w-3.5 text-amber-500" />
                 <span>Talent Pool</span>
@@ -1143,18 +1603,36 @@ export default function MandateWorkspacePage() {
                   setBatchResults([]);
                   setParseError(null);
                 }}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-brand-yellow hover:bg-brand-yellowHover text-slate-900 font-black text-xs rounded-xl shadow-xs transition-colors cursor-pointer"
+                className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 bg-amber-400 hover:bg-amber-500 text-slate-900 font-bold text-xs rounded-lg shadow-2xs transition-colors cursor-pointer"
               >
                 <UploadCloud className="h-3.5 w-3.5" />
                 <span>+ Ingest Resumes</span>
               </button>
 
-              {/* 3. Mandate Lifecycle Options (Kebab Menu) */}
+              {/* 3. Share Shortlist */}
+              <button
+                onClick={() => {
+                  setIsShareModalOpen(true);
+                  setGeneratedPortalUrl(null);
+                  setCopiedPortalUrl(false);
+                }}
+                className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white font-bold text-xs rounded-lg shadow-2xs transition-colors cursor-pointer"
+              >
+                <Send className="h-3 w-3" />
+                <span>Share Shortlist</span>
+                {readyToShareCount > 0 && (
+                  <span className="bg-white text-slate-900 text-[10px] font-black px-1.5 py-0.2 rounded-full ml-0.5">
+                    {readyToShareCount}
+                  </span>
+                )}
+              </button>
+
+              {/* 4. Mandate Lifecycle Options (Kebab Menu) */}
               <div className="relative">
                 <button
                   type="button"
                   onClick={() => setIsActionsMenuOpen(!isActionsMenuOpen)}
-                  className="p-2 border border-slate-200 hover:bg-slate-100 rounded-xl text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
+                  className="p-1.5 border border-slate-200 hover:bg-slate-100 rounded-lg text-slate-600 hover:text-slate-900 transition-colors cursor-pointer"
                   title="Mandate Actions"
                 >
                   <MoreVertical className="h-4 w-4" />
@@ -1265,144 +1743,521 @@ export default function MandateWorkspacePage() {
         </div>
 
         {/* ========================================================================= */}
-        {/* CANDIDATES DESK (TABS + DELIVERY ACTIONS)                                 */}
+        {/* MANDATE FLIGHT TELEMETRY (CONVERSION & DROP-OFF RADAR)                    */}
+        {/* ========================================================================= */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          {/* 1. SHARED W/ CLIENT */}
+          <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <span>1. Shared w/ Client</span>
+                <Send className="h-3 w-3 text-slate-400" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 mt-1">
+                {telemetry.sharedCount}
+              </div>
+            </div>
+            <div className="pt-2 mt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-slate-500 font-medium">100% Sourced &amp; Vetted</span>
+            </div>
+            <div className="w-full bg-slate-900 h-1 rounded-full mt-2" />
+          </div>
+
+          {/* 2. CV REVIEW */}
+          <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <span>2. CV Review</span>
+                <FileText className="h-3 w-3 text-blue-500" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 mt-1">
+                {telemetry.cvApprovedCount}{" "}
+                <span className="text-xs font-semibold text-slate-500">Shortlisted</span>
+              </div>
+            </div>
+            <div className="pt-2 mt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-rose-600 font-bold">
+                ● {telemetry.cvRejectedCount} Rej
+              </span>
+              <span className="text-slate-400 text-[10px]">Stack mismatch</span>
+            </div>
+            <div className="w-full bg-emerald-500 h-1 rounded-full mt-2" />
+          </div>
+
+          {/* 3. CLIENT MET */}
+          <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <span>3. Client Met</span>
+                <Users className="h-3 w-3 text-emerald-600" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 mt-1">
+                {telemetry.clientMetCount}{" "}
+                <span className="text-xs font-semibold text-slate-500">Conducted</span>
+              </div>
+            </div>
+            <div className="pt-2 mt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-slate-600 font-medium text-[10px] truncate">
+                {telemetry.advancedCount} to R2 · {telemetry.postRejCount} Post-Rej · {telemetry.noShowCount} No-Show
+              </span>
+            </div>
+            <div className="w-full bg-emerald-600 h-1 rounded-full mt-2" />
+          </div>
+
+          {/* 4. SCHEDULED */}
+          <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between">
+            <div>
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <span>4. Scheduled</span>
+                <Calendar className="h-3 w-3 text-amber-500" />
+              </div>
+              <div className="text-2xl font-black text-slate-900 mt-1">
+                {telemetry.scheduledCount}{" "}
+                <span className="text-xs font-semibold text-slate-500">Upcoming</span>
+              </div>
+            </div>
+            <div className="pt-2 mt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-amber-700 font-bold">
+                ⏰ {telemetry.next24hCount} in next 24h
+              </span>
+            </div>
+            <div className="w-full bg-amber-400 h-1 rounded-full mt-2" />
+          </div>
+
+          {/* 5. OFFERS & CLOSING */}
+          <div className="bg-white rounded-xl border border-slate-200 p-3.5 shadow-2xs flex flex-col justify-between col-span-2 sm:col-span-1">
+            <div>
+              <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <span>5. Offers &amp; Closing</span>
+                <ShieldCheck className="h-3 w-3 text-emerald-500" />
+              </div>
+              <div className="text-2xl font-black text-emerald-700 mt-1">
+                {telemetry.offeredCount + telemetry.joinedCount}{" "}
+                <span className="text-xs font-semibold text-slate-500">
+                  {telemetry.joinedCount > 0 ? "Joined" : "Pending"}
+                </span>
+              </div>
+            </div>
+            <div className="pt-2 mt-2 border-t border-slate-100 flex items-center justify-between text-[11px]">
+              <span className="text-slate-600 font-semibold truncate">
+                {telemetry.topOfferName || "Active pipeline"}
+              </span>
+              <span className="text-slate-400 text-[10px] shrink-0">
+                {mandate.guaranteeDays}d SLA
+              </span>
+            </div>
+            <div className="w-full bg-emerald-500 h-1 rounded-full mt-2" />
+          </div>
+        </div>
+
+        {/* ========================================================================= */}
+        {/* CANDIDATES DESK (HIGH-DENSITY SPREADSHEET & CARDS VIEW)                   */}
         {/* ========================================================================= */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-xs overflow-hidden">
-          {/* Tabs + Delivery Actions Bar */}
-          <div className="px-5 pt-3 pb-2.5 bg-white border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            {/* Left: Sleek Underline Tabs */}
-            <div className="flex items-center space-x-6 overflow-x-auto -mb-2.5">
-              <button
-                onClick={() => setActiveQuickTab("ALL")}
-                className={`pb-3 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5 border-b-2 -mb-px ${
-                  activeQuickTab === "ALL"
-                    ? "border-slate-900 text-slate-900 font-extrabold"
-                    : "border-transparent text-slate-500 hover:text-slate-800 font-semibold"
-                }`}
-              >
-                <span>All Candidates</span>
-                <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded-full ${
-                  activeQuickTab === "ALL" ? "bg-slate-900 text-white" : "bg-slate-100 text-slate-600"
-                }`}>
-                  {candidates.length}
-                </span>
-              </button>
-
-              <button
-                onClick={() => setActiveQuickTab("CALLBACKS_TODAY")}
-                className={`pb-3 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5 border-b-2 -mb-px ${
-                  activeQuickTab === "CALLBACKS_TODAY"
-                    ? "border-amber-600 text-amber-900 font-extrabold"
-                    : "border-transparent text-slate-500 hover:text-slate-800 font-semibold"
-                }`}
-              >
-                <Clock className="h-3.5 w-3.5 text-amber-600" />
-                <span>Callbacks Due Today</span>
-                {callbacksDueCount > 0 && (
-                  <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-amber-500 text-white">
-                    {callbacksDueCount}
-                  </span>
-                )}
-              </button>
-
-              <button
-                onClick={() => setActiveQuickTab("READY_TO_SHARE")}
-                className={`pb-3 text-xs font-bold transition-all cursor-pointer inline-flex items-center space-x-1.5 border-b-2 -mb-px ${
-                  activeQuickTab === "READY_TO_SHARE"
-                    ? "border-blue-600 text-blue-900 font-extrabold"
-                    : "border-transparent text-slate-500 hover:text-slate-800 font-semibold"
-                }`}
-              >
-                <Zap className="h-3.5 w-3.5 text-blue-600" />
-                <span>Ready to Share</span>
-                {readyToShareCount > 0 && (
-                  <span className="text-[10px] font-black px-1.5 py-0.2 rounded-full bg-blue-600 text-white">
-                    {readyToShareCount}
-                  </span>
-                )}
-              </button>
-            </div>
-
-            {/* Right: Client Delivery Actions (Share Shortlist + Chase Client) */}
-            <div className="flex items-center space-x-2 flex-shrink-0">
-              <button
-                onClick={() => {
-                  setIsShareModalOpen(true);
-                  setGeneratedPortalUrl(null);
-                  setCopiedPortalUrl(false);
-                }}
-                className="inline-flex items-center space-x-1.5 px-3.5 py-1.5 bg-slate-900 hover:bg-black text-white font-extrabold text-xs rounded-lg shadow-xs transition-colors cursor-pointer"
-              >
-                <Send className="h-3 w-3" />
-                <span>Share Shortlist</span>
-                {readyToShareCount > 0 && (
-                  <span className="bg-white text-slate-900 text-[10px] font-black px-1.5 py-0.2 rounded-full ml-1">
-                    {readyToShareCount}
-                  </span>
-                )}
-              </button>
-
-              {sharedWithClientCount > 0 && (
+          {/* Top Control Bar: Search + Filter + View Toggle */}
+          <div className="p-3.5 bg-white border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            {/* Search Input */}
+            <div className="relative rounded-lg shadow-2xs flex-1 max-w-md">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-3.5 w-3.5 text-slate-400" />
+              </div>
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search candidate, company, skill... (/)"
+                className="block w-full pl-9 pr-8 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 focus:bg-white focus:outline-hidden focus:ring-1 focus:ring-slate-900 transition-colors"
+              />
+              {searchQuery && (
                 <button
                   type="button"
-                  onClick={handleChaseClient}
-                  disabled={chasingClient}
-                  className="inline-flex items-center space-x-1.5 px-3 py-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 font-extrabold text-xs rounded-lg shadow-xs transition-colors cursor-pointer disabled:opacity-50"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 text-xs font-bold"
                 >
-                  <BellRing className="h-3 w-3 text-amber-600" />
-                  <span>{chasingClient ? "Chasing..." : "Chase"}</span>
-                  <span className="bg-amber-200 text-amber-950 text-[10px] font-black px-1.5 py-0.2 rounded-full ml-1">
-                    {sharedWithClientCount}
-                  </span>
+                  ✕
                 </button>
               )}
             </div>
-          </div>
 
-          {/* Table Filters & Search */}
-          <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-3 bg-slate-50/50">
-            <div className="flex items-center space-x-3 flex-1 max-w-lg">
-              <div className="relative rounded-lg shadow-sm flex-1">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Search className="h-3.5 w-3.5 text-slate-400" />
-                </div>
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search by candidate name, company, title, phone..."
-                  className="block w-full pl-9 pr-3 py-1.5 text-xs border border-slate-300 rounded-lg focus:ring-1 focus:ring-brand-surfaceDark bg-white text-slate-900"
-                />
+            {/* Right: Sort + View Toggle + Count */}
+            <div className="flex items-center gap-2.5 flex-wrap">
+              {/* Sort By Dropdown */}
+              <div className="flex items-center gap-1.5 text-xs text-slate-600 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-lg">
+                <ArrowUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                <span className="font-semibold text-slate-500">Sort:</span>
+                <select
+                  value={sortBy}
+                  onChange={(e) => handleSortChange(e.target.value as CandidateSortOption)}
+                  className="bg-transparent font-bold text-slate-800 hover:text-slate-900 border-none outline-hidden cursor-pointer text-xs pr-1"
+                >
+                  <option value="createdAt_desc">Newest Added</option>
+                  <option value="updatedAt_desc">Recently Updated</option>
+                  <option value="exp_desc">Experience (High to Low)</option>
+                  <option value="name_asc">Alphabetical (A-Z)</option>
+                </select>
               </div>
 
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="px-3 py-1.5 text-xs font-bold border border-slate-300 rounded-lg bg-white text-slate-700"
-              >
-                <option value="ALL">All Stages ({candidates.length})</option>
-                <option value="SCREENED_QUALIFIED">Screened</option>
-                <option value="CLIENT_SHORTLISTED">Client Shortlisted</option>
-                <option value="INTERVIEW_SCHEDULED">Interview Scheduled</option>
-                <option value="OFFER_ISSUED">Offer Stage</option>
-                <option value="NOTICE_PERIOD_ACTIVE">Notice Period</option>
-                <option value="JOINED_DAY_1_ACTIVE">Joined Day 1</option>
-              </select>
-            </div>
+              {/* Dense Table vs Cards View Switcher */}
+              <div className="inline-flex items-center p-0.5 bg-slate-100 rounded-lg border border-slate-200 text-xs font-semibold">
+                <button
+                  type="button"
+                  onClick={() => setViewMode("table")}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                    viewMode === "table"
+                      ? "bg-white text-slate-900 shadow-2xs font-bold"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Table className="h-3.5 w-3.5" />
+                  <span>Dense Table</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode("cards")}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md transition-all cursor-pointer ${
+                    viewMode === "cards"
+                      ? "bg-white text-slate-900 shadow-2xs font-bold"
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                  <span>Cards</span>
+                </button>
+              </div>
 
-            <div className="text-xs text-slate-500 font-medium">
-              Showing <strong>{filteredCandidates.length}</strong> candidates in this job
+              <span className="text-xs text-slate-400 font-medium">
+                {filteredCandidates.length} of {candidates.length} showing
+              </span>
             </div>
           </div>
 
-          {/* Candidates Cards Stack (Matching Talent Bank Architecture) */}
+          {/* Candidates Display: Dense Table OR Cards */}
           {filteredCandidates.length === 0 ? (
             <div className="p-12 text-center text-slate-500 text-xs">
               <Users className="h-8 w-8 text-slate-300 mx-auto mb-2" />
-              <p className="font-bold text-slate-700 text-sm">No candidates in this mandate yet</p>
-              <p className="text-slate-400 text-xs mt-1">
-                Click <strong>"Talent Pool"</strong> or <strong>"+ Ingest Resumes"</strong> above!
-              </p>
+              <p className="font-bold text-slate-700 text-sm">No candidates matching filters</p>
+              {outcomeFilter !== "ALL" && (
+                <button
+                  type="button"
+                  onClick={() => setOutcomeFilter("ALL")}
+                  className="mt-2 text-xs font-bold text-blue-600 hover:underline"
+                >
+                  Clear outcome filter
+                </button>
+              )}
+            </div>
+          ) : viewMode === "table" ? (
+            <div className="overflow-x-auto relative">
+              <table className="w-full text-left border-collapse text-xs min-w-[1050px] border-y border-slate-200">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-wider divide-x divide-slate-200">
+                    <th className="py-2.5 px-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        checked={
+                          selectedCandidateIds.length > 0 &&
+                          filteredCandidates.every((c) => selectedCandidateIds.includes(c.candidateId))
+                        }
+                        onChange={() => {
+                          if (filteredCandidates.every((c) => selectedCandidateIds.includes(c.candidateId))) {
+                            const displayedSet = new Set(filteredCandidates.map((c) => c.candidateId));
+                            setSelectedCandidateIds((prev) => prev.filter((id) => !displayedSet.has(id)));
+                          } else {
+                            setSelectedCandidateIds(
+                              Array.from(
+                                new Set([
+                                  ...selectedCandidateIds,
+                                  ...filteredCandidates.map((c) => c.candidateId),
+                                ])
+                              )
+                            );
+                          }
+                        }}
+                        className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 h-3.5 w-3.5 cursor-pointer accent-blue-600"
+                      />
+                    </th>
+                    <th className="py-2.5 px-3">
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() =>
+                          setSortBy(sortBy === "name_asc" ? "createdAt_desc" : "name_asc")
+                        }
+                      >
+                        <span>Candidate Profile</span>
+                        <ChevronDown className="h-3 w-3 text-slate-400" />
+                      </div>
+                    </th>
+                    <th className="py-2.5 px-3 w-36">
+                      <span>Contact</span>
+                    </th>
+                    <th className="py-2.5 px-3 w-48">
+                      <div
+                        className="flex items-center gap-1 cursor-pointer select-none"
+                        onClick={() =>
+                          setSortBy(sortBy === "exp_desc" ? "createdAt_desc" : "exp_desc")
+                        }
+                      >
+                        <span>Compensation &amp; Notice</span>
+                        <ChevronDown className="h-3 w-3 text-slate-400" />
+                      </div>
+                    </th>
+                    <th className="py-2.5 px-3 w-60">
+                      <div className="flex items-center gap-1 cursor-pointer select-none">
+                        <span>Interview Schedule</span>
+                        <ChevronDown className="h-3 w-3 text-slate-400" />
+                      </div>
+                    </th>
+                    <th className="py-2.5 px-3 w-64 relative whitespace-nowrap">
+                      <div
+                        className="flex items-center justify-between cursor-pointer select-none"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (outcomeFilterState) {
+                            setOutcomeFilterState(null);
+                          } else {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setOutcomeFilterState({
+                              top: rect.bottom + 4,
+                              right: window.innerWidth - rect.right,
+                            });
+                          }
+                        }}
+                      >
+                        <div className="flex items-center gap-1">
+                          <span>Pipeline Outcome</span>
+                          {outcomeFilter !== "ALL" && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-600 ml-0.5" />
+                          )}
+                        </div>
+                        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${outcomeFilterState ? "rotate-180 text-blue-600" : "text-slate-400"}`} />
+                      </div>
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-200">
+                  {filteredCandidates.map((c, idx) => {
+                    const isSelected = selectedCandidateIds.includes(c.candidateId);
+                    const outcome = getPipelineOutcome(c);
+                    const ivSchedule = getInterviewScheduleText(c);
+                    const isNearBottom = idx >= Math.max(0, filteredCandidates.length - 3);
+
+                    // Unified status value matching CandidateCard options
+                    const rawStage = (c.stage || c.status || "").toUpperCase();
+                    let currentStageVal = "SCREENED_QUALIFIED";
+                    if (rawStage === "CLIENT_SHORTLISTED" || rawStage === "SUBMITTED_TO_CLIENT") {
+                      currentStageVal = "CLIENT_SHORTLISTED";
+                    } else if (rawStage === "INTERVIEW_SCHEDULED") {
+                      currentStageVal = "INTERVIEW_SCHEDULED";
+                    } else if (rawStage.includes("OFFER")) {
+                      currentStageVal = "OFFER_ISSUED";
+                    } else if (rawStage.includes("NOTICE")) {
+                      currentStageVal = "NOTICE_PERIOD_ACTIVE";
+                    } else if (rawStage.includes("JOINED")) {
+                      currentStageVal = "JOINED_DAY_1_ACTIVE";
+                    } else if (rawStage.includes("REJECT") || outcome.label.includes("Rejected") || outcome.label.includes("No-Show")) {
+                      currentStageVal = "STAGE_REJECTED";
+                    }
+
+                    const getStageSelectStyle = (val: string) => {
+                      switch (val) {
+                        case "JOINED_DAY_1_ACTIVE":
+                          return "bg-emerald-100 text-emerald-900 border-emerald-300 hover:bg-emerald-200";
+                        case "OFFER_ISSUED":
+                          return "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100";
+                        case "INTERVIEW_SCHEDULED":
+                          return "bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100";
+                        case "CLIENT_SHORTLISTED":
+                          return "bg-sky-50 text-sky-800 border-sky-300 hover:bg-sky-100";
+                        case "NOTICE_PERIOD_ACTIVE":
+                          return "bg-indigo-50 text-indigo-800 border-indigo-200 hover:bg-indigo-100";
+                        case "STAGE_REJECTED":
+                          return "bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100";
+                        default:
+                          return "bg-slate-100 text-slate-800 border-slate-300 hover:bg-slate-200";
+                      }
+                    };
+
+                    const handleStatusChangeFromTable = (newStatus: string) => {
+                      if (!newStatus) return;
+                      if (newStatus === "INTERVIEW_SCHEDULED") {
+                        setSelectedCandidate(null);
+                        setScheduleCandidate(c);
+                        return;
+                      }
+                      if (newStatus === "JOINED_DAY_1_ACTIVE") {
+                        handleOpenJoiningModal(c);
+                        return;
+                      }
+                      handleUpdateStatus(c.submissionId, newStatus);
+                    };
+
+                    // Check for pending debrief
+                    const hasPendingDebrief = (c.interviews || []).some(
+                      (i) => new Date(i.scheduledAt).getTime() <= Date.now() && !i.debriefLoggedAt && i.status !== "CANCELED"
+                    );
+
+                    return (
+                      <tr
+                        key={c.submissionId}
+                        onClick={() => handleOpenCandidateModal(c)}
+                        className={`transition-colors divide-x divide-slate-200 hover:bg-slate-50/80 cursor-pointer ${
+                          isSelected ? "bg-blue-50/30" : ""
+                        }`}
+                      >
+                        <td className="py-2 px-3 text-center" onClick={(e) => e.stopPropagation()}>
+                          <input
+                            type="checkbox"
+                            checked={isSelected}
+                            onChange={() => {
+                              setSelectedCandidateIds((prev) =>
+                                prev.includes(c.candidateId)
+                                  ? prev.filter((id) => id !== c.candidateId)
+                                  : [...prev, c.candidateId]
+                              );
+                            }}
+                            className="rounded border-slate-300 text-slate-900 focus:ring-slate-900 h-3.5 w-3.5 cursor-pointer accent-blue-600"
+                          />
+                        </td>
+                        <td className="py-2 px-3">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-bold text-slate-900 hover:text-blue-700 text-xs">
+                              {c.fullName}
+                            </span>
+
+                            {/* View CV Action (Opens actual CV file if available) */}
+                            {c.resumeUrl ? (
+                              <a
+                                href={c.resumeUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-[10px] font-bold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-200 px-1.5 py-0.2 rounded transition-colors inline-flex items-center gap-0.5 shadow-2xs"
+                                title="Open CV in new tab"
+                              >
+                                <span>CV</span>
+                                <ExternalLink className="h-2.5 w-2.5 text-slate-400" />
+                              </a>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleOpenCandidateModal(c);
+                                }}
+                                className="text-[10px] font-bold text-slate-400 bg-slate-50 hover:bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded transition-colors"
+                                title="No CV file - view candidate details"
+                              >
+                                CV
+                              </button>
+                            )}
+
+                            {/* Clock Icon right next to CV if Debrief is Pending */}
+                            {hasPendingDebrief && (
+                              <span
+                                title="Interview conducted — Debrief pending"
+                                className="inline-flex items-center text-purple-700 bg-purple-50 border border-purple-200 p-0.5 rounded shadow-2xs"
+                              >
+                                <Clock className="h-3 w-3" />
+                              </span>
+                            )}
+
+                            <span className="text-slate-300">·</span>
+                            <span className="text-slate-500 text-[11px] truncate max-w-[280px]">
+                              {c.currentTitle || "Candidate"}{c.currentCompany ? ` (${c.currentCompany})` : ""}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-2 px-3 text-slate-700 font-medium whitespace-nowrap">
+                          {c.phone || c.email || "—"}
+                        </td>
+                        <td className="py-2 px-3 whitespace-nowrap">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-semibold text-slate-800">
+                              {c.currentCtc || c.currentSalary ? `₹${c.currentCtc ? (c.currentCtc / 100000).toFixed(0) : c.currentSalary}L` : "—"}
+                              {" → "}
+                              {c.expectedCtc || c.expectedSalary ? `₹${c.expectedCtc ? (c.expectedCtc / 100000).toFixed(0) : c.expectedSalary}L` : "—"}
+                            </span>
+                            <span className="text-[10px] font-bold text-slate-600 bg-slate-100 border border-slate-200 px-1.5 py-0.2 rounded">
+                              {c.noticePeriod || `${c.noticePeriodDays || 30}d Notice`}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-2 px-3 whitespace-nowrap">
+                          <span
+                            className={`font-medium ${
+                              ivSchedule.isCleared
+                                ? "text-emerald-700 font-bold"
+                                : ivSchedule.isMissed
+                                ? "text-rose-600 font-bold"
+                                : ivSchedule.isPending
+                                ? "text-slate-400"
+                                : "text-slate-800"
+                            }`}
+                          >
+                            {ivSchedule.text}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 min-w-[210px] w-64 whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center justify-between gap-1.5 w-full">
+                            {/* Interactive Status Dropdown (Same Options as Card View) */}
+                            <div className="relative inline-flex items-center flex-1 min-w-0">
+                              <select
+                                value={currentStageVal}
+                                onChange={(e) => handleStatusChangeFromTable(e.target.value)}
+                                className={`appearance-none w-full py-1 pl-2 pr-6 text-[11px] font-bold rounded-md border cursor-pointer focus:outline-hidden focus:ring-1 focus:ring-slate-400 transition-colors shadow-2xs truncate ${getStageSelectStyle(currentStageVal)}`}
+                                title="Change candidate pipeline status"
+                              >
+                                <option value="SCREENED_QUALIFIED">Screened / Ready</option>
+                                <option value="CLIENT_SHORTLISTED">Client Shortlisted</option>
+                                <option value="INTERVIEW_SCHEDULED">Interview Scheduled</option>
+                                <option value="OFFER_ISSUED">Offer Stage</option>
+                                <option value="NOTICE_PERIOD_ACTIVE">Notice Period</option>
+                                <option value="JOINED_DAY_1_ACTIVE">Joined Day 1</option>
+                                <option value="STAGE_REJECTED">Rejected</option>
+                              </select>
+                              <ChevronDown className="h-3 w-3 text-slate-500 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            </div>
+
+                            {/* Kebab Menu Trigger located right inside the Pipeline Outcome cell */}
+                            <div className="relative inline-block text-left shrink-0">
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  if (kebabMenuState?.candidateId === c.candidateId) {
+                                    setKebabMenuState(null);
+                                    return;
+                                  }
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const menuHeight = 220;
+                                  let top: number;
+                                  if (window.innerHeight - rect.bottom >= menuHeight) {
+                                    top = rect.bottom + 4;
+                                  } else if (rect.top >= menuHeight) {
+                                    top = rect.top - menuHeight - 4;
+                                  } else {
+                                    top = Math.max(12, window.innerHeight - menuHeight - 12);
+                                  }
+                                  setKebabMenuState({
+                                    candidateId: c.candidateId,
+                                    candidate: c,
+                                    top,
+                                    right: Math.max(12, window.innerWidth - rect.right),
+                                  });
+                                }}
+                                className="p-1 rounded-md text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors cursor-pointer"
+                                title="Candidate Actions"
+                              >
+                                <MoreVertical className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           ) : (
             <div className="p-4 bg-slate-50/50 space-y-3">
@@ -1420,13 +2275,28 @@ export default function MandateWorkspacePage() {
                     setSelectedCandidateIds((prev) => prev.filter((id) => !displayedSet.has(id)));
                   } else {
                     setSelectedCandidateIds(
-                      Array.from(new Set([...selectedCandidateIds, ...filteredCandidates.map((c) => c.candidateId)]))
+                      Array.from(
+                        new Set([
+                          ...selectedCandidateIds,
+                          ...filteredCandidates.map((c) => c.candidateId),
+                        ])
+                      )
                     );
                   }
                 }}
                 onClearSelection={() => setSelectedCandidateIds([])}
                 sortBy={sortBy}
                 onSortChange={handleSortChange}
+                onBulkRemove={() => {
+                  const toRemove = candidates.filter((c) => selectedCandidateIds.includes(c.candidateId));
+                  setBulkRemoveCandidates(toRemove);
+                }}
+                bulkRemoveLabel="Remove from Mandate"
+                onBulkDelete={() => {
+                  const toDelete = candidates.filter((c) => selectedCandidateIds.includes(c.candidateId));
+                  setBulkDeleteCandidates(toDelete);
+                }}
+                bulkDeleteLabel="Delete Selected"
               />
 
               {/* Candidate Cards Stack */}
@@ -1460,6 +2330,253 @@ export default function MandateWorkspacePage() {
             </div>
           )}
         </div>
+
+        {/* Floating Bulk Action Deck */}
+        {selectedCandidateIds.length > 0 && (
+          <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 bg-slate-900 text-white px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2.5 border border-slate-700 text-xs animate-in slide-in-from-bottom-4 duration-200">
+            <span className="font-bold text-amber-400 bg-slate-800 px-2 py-0.5 rounded-full text-[11px]">
+              {selectedCandidateIds.length} selected
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedForSharing(selectedCandidateIds);
+                setIsShareModalOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white text-slate-900 font-bold rounded-lg hover:bg-slate-100 transition-colors cursor-pointer"
+            >
+              <Send className="w-3.5 h-3.5" />
+              <span>Bulk Share</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleBulkWhatsAppRemind}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg transition-colors cursor-pointer"
+            >
+              <MessageSquare className="w-3.5 h-3.5" />
+              <span>WhatsApp Remind</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleExportFilteredCSV}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium rounded-lg transition-colors cursor-pointer"
+            >
+              <FileDown className="w-3.5 h-3.5" />
+              <span>Export CSV</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const toRemove = candidates.filter((c) => selectedCandidateIds.includes(c.candidateId));
+                setBulkRemoveCandidates(toRemove);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-lg transition-colors cursor-pointer"
+              title="Remove selected candidates from this mandate"
+            >
+              <X className="w-3.5 h-3.5" />
+              <span>Remove</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const toDelete = candidates.filter((c) => selectedCandidateIds.includes(c.candidateId));
+                setBulkDeleteCandidates(toDelete);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg transition-colors cursor-pointer"
+              title="Delete selected candidates to Trash Bin"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              <span>Delete</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSelectedCandidateIds([])}
+              className="text-slate-400 hover:text-white font-bold text-xs ml-1 cursor-pointer"
+            >
+              Clear
+            </button>
+          </div>
+        )}
+
+        {/* Global Fixed Positioned Outcome Filter Dropdown (Immune to Table Overflow) */}
+        {outcomeFilterState && (
+          <>
+            <div
+              className="fixed inset-0 z-40 cursor-default"
+              onClick={() => setOutcomeFilterState(null)}
+            />
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                top: `${outcomeFilterState.top}px`,
+                right: `${outcomeFilterState.right}px`,
+              }}
+              className="fixed w-52 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 p-1 text-xs normal-case font-normal text-slate-700 animate-in fade-in duration-100"
+            >
+              <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 uppercase tracking-wider border-b border-slate-100 mb-1">
+                Filter by Outcome
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setOutcomeFilter("ALL");
+                  setOutcomeFilterState(null);
+                }}
+                className={`w-full text-left px-2.5 py-1.5 rounded-md hover:bg-slate-50 flex items-center justify-between cursor-pointer ${outcomeFilter === "ALL" ? "font-bold text-slate-900 bg-slate-50" : ""}`}
+              >
+                <span>All Outcomes</span>
+                {outcomeFilter === "ALL" && <Check className="h-3 w-3 text-slate-900" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOutcomeFilter("CLIENT_MET");
+                  setOutcomeFilterState(null);
+                }}
+                className={`w-full text-left px-2.5 py-1.5 rounded-md hover:bg-slate-50 flex items-center justify-between cursor-pointer ${outcomeFilter === "CLIENT_MET" ? "font-bold text-slate-900 bg-slate-50" : ""}`}
+              >
+                <span>Client Met / Done</span>
+                {outcomeFilter === "CLIENT_MET" && <Check className="h-3 w-3 text-slate-900" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOutcomeFilter("SCHEDULED");
+                  setOutcomeFilterState(null);
+                }}
+                className={`w-full text-left px-2.5 py-1.5 rounded-md hover:bg-slate-50 flex items-center justify-between cursor-pointer ${outcomeFilter === "SCHEDULED" ? "font-bold text-slate-900 bg-slate-50" : ""}`}
+              >
+                <span>Interview Scheduled</span>
+                {outcomeFilter === "SCHEDULED" && <Check className="h-3 w-3 text-slate-900" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOutcomeFilter("CV_REVIEW");
+                  setOutcomeFilterState(null);
+                }}
+                className={`w-full text-left px-2.5 py-1.5 rounded-md hover:bg-slate-50 flex items-center justify-between cursor-pointer ${outcomeFilter === "CV_REVIEW" ? "font-bold text-slate-900 bg-slate-50" : ""}`}
+              >
+                <span>CV Review Pending</span>
+                {outcomeFilter === "CV_REVIEW" && <Check className="h-3 w-3 text-slate-900" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOutcomeFilter("DEBRIEF_PENDING");
+                  setOutcomeFilterState(null);
+                }}
+                className={`w-full text-left px-2.5 py-1.5 rounded-md hover:bg-slate-50 flex items-center justify-between cursor-pointer ${outcomeFilter === "DEBRIEF_PENDING" ? "font-bold text-slate-900 bg-slate-50" : ""}`}
+              >
+                <span>Debrief Pending</span>
+                {outcomeFilter === "DEBRIEF_PENDING" && <Check className="h-3 w-3 text-slate-900" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOutcomeFilter("REJECTED");
+                  setOutcomeFilterState(null);
+                }}
+                className={`w-full text-left px-2.5 py-1.5 rounded-md hover:bg-slate-50 flex items-center justify-between cursor-pointer ${outcomeFilter === "REJECTED" ? "font-bold text-slate-900 bg-slate-50" : ""}`}
+              >
+                <span>Rejected &amp; No-Show</span>
+                {outcomeFilter === "REJECTED" && <Check className="h-3 w-3 text-slate-900" />}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setOutcomeFilter("OFFERS");
+                  setOutcomeFilterState(null);
+                }}
+                className={`w-full text-left px-2.5 py-1.5 rounded-md hover:bg-slate-50 flex items-center justify-between cursor-pointer ${outcomeFilter === "OFFERS" ? "font-bold text-slate-900 bg-slate-50" : ""}`}
+              >
+                <span>Offers &amp; Joined</span>
+                {outcomeFilter === "OFFERS" && <Check className="h-3 w-3 text-slate-900" />}
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* Global Fixed Positioned Kebab Menu (Immune to Table Overflow & Stacking Contexts) */}
+        {kebabMenuState && (
+          <>
+            <div
+              className="fixed inset-0 z-40 cursor-default"
+              onClick={() => setKebabMenuState(null)}
+            />
+            <div
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                top: `${kebabMenuState.top}px`,
+                right: `${kebabMenuState.right}px`,
+              }}
+              className="fixed w-48 bg-white border border-slate-200 rounded-xl shadow-2xl z-50 p-1 text-xs animate-in fade-in zoom-in-95 duration-100 text-left"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  const cand = kebabMenuState.candidate;
+                  setKebabMenuState(null);
+                  handleOpenCandidateModal(cand);
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-50 text-slate-700 font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <FileText className="h-3.5 w-3.5 text-slate-500" />
+                <span>View Profile &amp; Notes</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const cand = kebabMenuState.candidate;
+                  setKebabMenuState(null);
+                  setSelectedCandidate(null);
+                  setScheduleCandidate(cand);
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-50 text-slate-700 font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <Calendar className="h-3.5 w-3.5 text-amber-600" />
+                <span>Schedule Interview</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const cand = kebabMenuState.candidate;
+                  setKebabMenuState(null);
+                  handleOpenJoiningModal(cand);
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-slate-50 text-slate-700 font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-600" />
+                <span>Confirm Joining</span>
+              </button>
+              <div className="border-t border-slate-100 my-1" />
+              <button
+                type="button"
+                onClick={() => {
+                  const cand = kebabMenuState.candidate;
+                  setKebabMenuState(null);
+                  setCandidateToRemove(cand);
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-amber-50 text-amber-800 font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <X className="h-3.5 w-3.5 text-amber-600" />
+                <span>Remove from Mandate</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const cand = kebabMenuState.candidate;
+                  setKebabMenuState(null);
+                  setCandidateToDelete(cand);
+                }}
+                className="w-full text-left px-2.5 py-1.5 rounded-lg hover:bg-rose-50 text-rose-700 font-medium flex items-center gap-1.5 cursor-pointer"
+              >
+                <Trash2 className="h-3.5 w-3.5 text-rose-600" />
+                <span>Delete to Trash Bin</span>
+              </button>
+            </div>
+          </>
+        )}
       </main>
 
       {/* ========================================================================= */}
@@ -2689,6 +3806,166 @@ export default function MandateWorkspacePage() {
                       <Trash2 className="h-3.5 w-3.5" />
                       <span>Move to Trash Bin</span>
                     </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* BULK REMOVE CANDIDATES FROM MANDATE MODAL                                 */}
+      {/* ========================================================================= */}
+      {bulkRemoveCandidates.length > 0 && mandate && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-amber-50 px-6 py-4 border-b border-amber-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Users className="h-5 w-5 text-amber-700" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">
+                    Remove {bulkRemoveCandidates.length} Candidates from Mandate
+                  </h3>
+                  <p className="text-[10px] text-amber-800">Detaches candidates from this search mandate</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setBulkRemoveCandidates([])}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="font-bold text-slate-900 text-sm">
+                Remove {bulkRemoveCandidates.length} candidate(s) from <strong>{mandate.title}</strong>?
+              </p>
+
+              <div className="max-h-36 overflow-y-auto space-y-1 p-2 bg-slate-50 rounded-xl border border-slate-200 divide-y divide-slate-100">
+                {bulkRemoveCandidates.slice(0, 8).map((c) => (
+                  <div key={c.submissionId} className="pt-1 first:pt-0 text-[11px] flex justify-between items-center text-slate-700">
+                    <span className="font-semibold text-slate-900 truncate max-w-[200px]">{c.fullName}</span>
+                    <span className="text-[10px] text-slate-500">{c.stage}</span>
+                  </div>
+                ))}
+                {bulkRemoveCandidates.length > 8 && (
+                  <div className="pt-1 text-[10px] text-slate-400 italic text-center">
+                    + {bulkRemoveCandidates.length - 8} more candidates
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 bg-blue-50 rounded-xl border border-blue-200 text-blue-900 text-[11px] leading-relaxed">
+                <strong>Safety Notice:</strong>
+                <p className="mt-0.5">
+                  Their full candidate profiles, resume documents, and notes <strong>remain safe in your agency Talent Bank</strong>. Only their application to this mandate is detached.
+                </p>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setBulkRemoveCandidates([])}
+                  disabled={removingFromMandate}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteBulkRemoveFromMandate}
+                  disabled={removingFromMandate}
+                  className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-xs cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                >
+                  {removingFromMandate ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Removing...</span>
+                    </>
+                  ) : (
+                    <span>Remove {bulkRemoveCandidates.length} from Mandate</span>
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* BULK DELETE CANDIDATES TO TRASH BIN MODAL                                  */}
+      {/* ========================================================================= */}
+      {bulkDeleteCandidates.length > 0 && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 text-xs">
+            <div className="bg-rose-50 px-6 py-4 border-b border-rose-200 flex items-center justify-between">
+              <div className="flex items-center space-x-2">
+                <Trash2 className="h-5 w-5 text-rose-600" />
+                <div>
+                  <h3 className="font-extrabold text-slate-900 text-sm">
+                    Move {bulkDeleteCandidates.length} Candidates to Trash Bin
+                  </h3>
+                  <p className="text-[10px] text-rose-700">Safely archives candidate profiles across the agency</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setBulkDeleteCandidates([])}
+                className="text-slate-400 hover:text-slate-700 text-lg leading-none cursor-pointer"
+              >
+                &times;
+              </button>
+            </div>
+
+            <div className="p-6 space-y-4">
+              <p className="font-bold text-slate-900 text-sm">
+                Permanently delete {bulkDeleteCandidates.length} candidate(s) from the agency?
+              </p>
+
+              <div className="max-h-36 overflow-y-auto space-y-1 p-2 bg-slate-50 rounded-xl border border-slate-200 divide-y divide-slate-100">
+                {bulkDeleteCandidates.slice(0, 8).map((c) => (
+                  <div key={c.candidateId} className="pt-1 first:pt-0 text-[11px] flex justify-between items-center text-slate-700">
+                    <span className="font-semibold text-slate-900 truncate max-w-[200px]">{c.fullName}</span>
+                    <span className="text-[10px] text-slate-500">{c.currentCompany || "Candidate"}</span>
+                  </div>
+                ))}
+                {bulkDeleteCandidates.length > 8 && (
+                  <div className="pt-1 text-[10px] text-slate-400 italic text-center">
+                    + {bulkDeleteCandidates.length - 8} more candidates
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 bg-amber-50 rounded-xl border border-amber-200 text-amber-800 text-[11px] leading-relaxed">
+                <strong>Agency-wide warning:</strong>
+                <p className="mt-0.5">
+                  These profiles will be moved to the <strong>Trash Bin</strong> and removed from all other mandate searches as well.
+                </p>
+              </div>
+
+              <div className="flex justify-end space-x-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setBulkDeleteCandidates([])}
+                  disabled={deletingCandidate}
+                  className="px-4 py-2 border border-slate-300 rounded-xl text-slate-700 font-bold hover:bg-slate-100 cursor-pointer disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleExecuteBulkDeleteCandidates}
+                  disabled={deletingCandidate}
+                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl shadow-xs cursor-pointer disabled:opacity-50 flex items-center space-x-1.5"
+                >
+                  {deletingCandidate ? (
+                    <>
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      <span>Moving to Bin...</span>
+                    </>
+                  ) : (
+                    <span>Move {bulkDeleteCandidates.length} to Trash Bin</span>
                   )}
                 </button>
               </div>

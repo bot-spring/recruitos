@@ -18,12 +18,16 @@ export async function GET(req: Request) {
 
     const { searchParams } = new URL(req.url);
     const statusParam = searchParams.get("status"); // "active" (default) | "closed" | "all"
+    const mandateId = searchParams.get("mandateId");
 
     const whereClause: any = { agencyId };
     if (statusParam === "closed") {
       whereClause.status = { in: ["CLOSED_FULFILLED", "CLOSED_CANCELLED", "CLOSED_ON_HOLD"] };
     } else if (statusParam !== "all") {
       whereClause.status = { notIn: ["UNREVIEWED_INBOUND", "CLOSED_FULFILLED", "CLOSED_CANCELLED", "CLOSED_ON_HOLD"] };
+    }
+    if (mandateId && mandateId !== "all") {
+      whereClause.id = mandateId;
     }
 
     // 1. Fetch all mandates in agency with their submissions, candidate details, and interview schedules
@@ -122,6 +126,10 @@ export async function GET(req: Request) {
 
     const isJoined = (s: any) => s.stage === SubmissionStage.JOINED_DAY_1_ACTIVE;
 
+    const isRejected = (s: any) =>
+      s.stage === SubmissionStage.STAGE_REJECTED ||
+      s.clientDecision === ClientDecision.REJECTED_WITH_FEEDBACK;
+
     // Macro Funnel Totals (across all agency mandates)
     let macroIngested = 0;
     let macroShortlisted = 0;
@@ -131,6 +139,7 @@ export async function GET(req: Request) {
     let macroSelected = 0;
     let macroOffered = 0;
     let macroJoined = 0;
+    let macroRejected = 0;
 
     const mandateFunnels = mandates.map((m) => {
       const subs = m.submissions;
@@ -142,6 +151,7 @@ export async function GET(req: Request) {
       const selected = subs.filter(isSelected).length;
       const offered = subs.filter(isOffered).length;
       const joined = subs.filter(isJoined).length;
+      const rejected = subs.filter(isRejected).length;
 
       // Accumulate macro counts
       macroIngested += ingested;
@@ -152,6 +162,7 @@ export async function GET(req: Request) {
       macroSelected += selected;
       macroOffered += offered;
       macroJoined += joined;
+      macroRejected += rejected;
 
       // Calculate mandate overall conversion rate (Joined / Ingested or Offered / Ingested)
       const conversionRate = ingested > 0 ? Math.round((joined / ingested) * 100) : 0;
@@ -211,6 +222,7 @@ export async function GET(req: Request) {
           selected,
           offered,
           joined,
+          rejected,
           conversionRate,
         },
         candidates: subs.map((s) => ({
@@ -237,6 +249,106 @@ export async function GET(req: Request) {
 
     const macroConversionRate = macroIngested > 0 ? Math.round((macroJoined / macroIngested) * 100) : 0;
 
+    // Applications Velocity Aggregations (7 Days, Week on Week, Month on Month)
+    const now = new Date();
+
+    // 1. Last 7 Days (day-by-day)
+    const velocityDays: Array<{
+      label: string;
+      dateStr: string;
+      applied: number;
+      shortlisted: number;
+      rejected: number;
+    }> = [];
+
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(now.getDate() - i);
+      const dateStr = d.toISOString().split("T")[0];
+      const label = d.toLocaleDateString("en-US", { day: "numeric", month: "short" });
+      velocityDays.push({ label, dateStr, applied: 0, shortlisted: 0, rejected: 0 });
+    }
+
+    // 2. Week on Week (past 6 weeks)
+    const velocityWeeks: Array<{
+      label: string;
+      startMs: number;
+      endMs: number;
+      applied: number;
+      shortlisted: number;
+      rejected: number;
+    }> = [];
+
+    for (let w = 5; w >= 0; w--) {
+      const start = new Date(now);
+      start.setDate(now.getDate() - (w * 7 + 6));
+      start.setHours(0, 0, 0, 0);
+
+      const end = new Date(now);
+      end.setDate(now.getDate() - (w * 7));
+      end.setHours(23, 59, 59, 999);
+
+      const startLabel = start.toLocaleDateString("en-US", { day: "numeric", month: "short" });
+      const endLabel = end.toLocaleDateString("en-US", { day: "numeric", month: "short" });
+      const label = w === 0 ? "This Wk" : `${startLabel}-${endLabel}`;
+
+      velocityWeeks.push({
+        label,
+        startMs: start.getTime(),
+        endMs: end.getTime(),
+        applied: 0,
+        shortlisted: 0,
+        rejected: 0,
+      });
+    }
+
+    // 3. Month on Month (past 6 months)
+    const velocityMonths: Array<{
+      label: string;
+      yearMonth: string;
+      applied: number;
+      shortlisted: number;
+      rejected: number;
+    }> = [];
+
+    for (let m = 5; m >= 0; m--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - m, 1);
+      const yearMonth = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+      const label = d.toLocaleDateString("en-US", { month: "short" });
+      velocityMonths.push({ label, yearMonth, applied: 0, shortlisted: 0, rejected: 0 });
+    }
+
+    // Populate counts across all 3 buckets from submissions
+    mandates.forEach((m) => {
+      m.submissions.forEach((s) => {
+        const sDate = new Date(s.createdAt);
+        const subDate = sDate.toISOString().split("T")[0];
+        const subYearMonth = `${sDate.getFullYear()}-${String(sDate.getMonth() + 1).padStart(2, "0")}`;
+        const subTime = sDate.getTime();
+
+        const dayEntry = velocityDays.find((d) => d.dateStr === subDate);
+        if (dayEntry) {
+          dayEntry.applied++;
+          if (isShortlisted(s)) dayEntry.shortlisted++;
+          if (isRejected(s)) dayEntry.rejected++;
+        }
+
+        const weekEntry = velocityWeeks.find((w) => subTime >= w.startMs && subTime <= w.endMs);
+        if (weekEntry) {
+          weekEntry.applied++;
+          if (isShortlisted(s)) weekEntry.shortlisted++;
+          if (isRejected(s)) weekEntry.rejected++;
+        }
+
+        const monthEntry = velocityMonths.find((m) => m.yearMonth === subYearMonth);
+        if (monthEntry) {
+          monthEntry.applied++;
+          if (isShortlisted(s)) monthEntry.shortlisted++;
+          if (isRejected(s)) monthEntry.rejected++;
+        }
+      });
+    });
+
     return NextResponse.json({
       macroFunnel: {
         ingested: macroIngested,
@@ -247,9 +359,15 @@ export async function GET(req: Request) {
         selected: macroSelected,
         offered: macroOffered,
         joined: macroJoined,
+        rejected: macroRejected,
         conversionRate: macroConversionRate,
       },
       mandateFunnels,
+      applicationsVelocity: {
+        days: velocityDays.map(({ label, applied, shortlisted, rejected }) => ({ label, applied, shortlisted, rejected })),
+        weeks: velocityWeeks.map(({ label, applied, shortlisted, rejected }) => ({ label, applied, shortlisted, rejected })),
+        months: velocityMonths.map(({ label, applied, shortlisted, rejected }) => ({ label, applied, shortlisted, rejected })),
+      },
       totalMandates: mandates.length,
     });
   } catch (error: any) {
