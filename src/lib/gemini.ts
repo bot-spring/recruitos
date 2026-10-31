@@ -34,16 +34,17 @@ export function normalizePhoneNumber(rawPhone: string): string {
   return cleaned;
 }
 
-// Flagship Gemini models (Google AI Studio: Gemini 2.5 Flash primary for highest accuracy, Gemini 2.0 Flash secondary)
+// Flagship Gemini models (Google AI Studio: Gemini 3.8 Flash primary, Gemini Flash Latest secondary)
 const GEMINI_MODELS = [
+  "gemini-3.8-flash",
+  "gemini-flash-latest",
   "gemini-2.5-flash",
-  "gemini-2.0-flash",
 ];
 
-// High-speed Groq LPU models (Fallback: Llama 3.3 70B versatile, Llama 3.1 8B instant)
+// High-speed Groq LPU models (Fallback: OpenAI GPT-OSS 120B primary, GPT-OSS 20B secondary)
 const GROQ_MODELS = [
-  "llama-3.3-70b-versatile",
-  "llama-3.1-8b-instant",
+  "openai/gpt-oss-120b",
+  "openai/gpt-oss-20b",
 ];
 
 /**

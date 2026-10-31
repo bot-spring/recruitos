@@ -11,9 +11,9 @@ import fs from "fs";
 export const dynamic = "force-dynamic";
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
-const MAX_BATCH_FILES = 5;
+const MAX_BATCH_FILES = 10;
 
-// POST /api/candidates/parse - Upload & Parse Resumes with Gemini AI (up to 5 files, 10MB limit, persistent storage)
+// POST /api/candidates/parse - Upload & Parse Resumes with Gemini AI (up to 10 files, 10MB limit, persistent storage)
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);

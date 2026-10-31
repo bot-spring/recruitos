@@ -277,6 +277,7 @@ export default function CandidateBankPage() {
   // Unified Batch Ingestion Modal State (RC-02)
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [isDragging, setIsDragging] = useState(false);
   const [parsing, setParsing] = useState(false);
   const [parseError, setParseError] = useState<string | null>(null);
   const [batchResults, setBatchResults] = useState<any[]>([]);
@@ -812,23 +813,91 @@ export default function CandidateBankPage() {
     downloadCSV(`RecruitOS_Candidates_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
   };
 
-  // Handle Resume File Selection & Multi-Resume AI Parsing (Batch up to 10 files, 10MB limit)
-  const handleMultiFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || e.target.files.length === 0) return;
-    const fileList = Array.from(e.target.files);
+  // Helper: Format file sizes for staging UI
+  const formatFileSize = (bytes: number) => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
-    if (fileList.length > 10) {
-      setParseError("Maximum 10 resumes can be uploaded in one go. Please select up to 10 files.");
+  // Add files to staging tray with strict 10-file cap & validation (Options B + C)
+  const addFilesToStage = (newFiles: File[]) => {
+    const remainingSlots = 10 - uploadFiles.length;
+    if (newFiles.length > remainingSlots) {
+      setParseError(
+        `Maximum batch limit is 10 resumes. You already have ${uploadFiles.length} staged and selected ${newFiles.length} more. Please select up to ${remainingSlots} file(s).`
+      );
       return;
     }
 
-    const oversized = fileList.find((f) => f.size > 10 * 1024 * 1024);
+    const oversized = newFiles.find((f) => f.size > 10 * 1024 * 1024);
     if (oversized) {
       setParseError(`File '${oversized.name}' exceeds the 10MB size limit (${(oversized.size / (1024 * 1024)).toFixed(1)}MB).`);
       return;
     }
 
-    setUploadFiles(fileList);
+    const nonDoc = newFiles.find((f) => !/\.(pdf|docx|txt)$/i.test(f.name));
+    if (nonDoc) {
+      setParseError(`File '${nonDoc.name}' is not supported. Please select PDF (.pdf), Word (.docx), or text (.txt) files.`);
+      return;
+    }
+
+    const uniqueNew = newFiles.filter(
+      (nf) => !uploadFiles.some((of) => of.name === nf.name && of.size === nf.size)
+    );
+
+    if (uniqueNew.length === 0) {
+      setParseError("Selected file(s) are already staged in the tray.");
+      return;
+    }
+
+    setUploadFiles((prev) => [...prev, ...uniqueNew]);
+    setParseError(null);
+  };
+
+  const removeStagedFile = (index: number) => {
+    setUploadFiles((prev) => prev.filter((_, i) => i !== index));
+    setParseError(null);
+  };
+
+  const clearStagedFiles = () => {
+    setUploadFiles([]);
+    setParseError(null);
+  };
+
+  const handleMultiFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || e.target.files.length === 0) return;
+    const fileList = Array.from(e.target.files);
+    e.target.value = "";
+    addFilesToStage(fileList);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      addFilesToStage(Array.from(e.dataTransfer.files));
+    }
+  };
+
+  // Start Batch AI Parsing for Staged Files (concurrency: 5)
+  const startBatchParsing = async () => {
+    if (uploadFiles.length === 0) return;
+    const fileList = uploadFiles;
+
     setParsing(true);
     setParseError(null);
     setBatchResults([]);
@@ -3176,34 +3245,161 @@ export default function CandidateBankPage() {
                     </p>
                   </div>
 
-                  <div className="border-2 border-dashed border-slate-300 hover:border-slate-400 rounded-2xl p-10 text-center bg-slate-50/50 hover:bg-slate-50 transition-all">
-                    <input
-                      type="file"
-                      multiple
-                      accept=".pdf,.docx,.txt"
-                      onChange={handleMultiFileSelect}
-                      id="candidate-bank-resume-upload-batch"
-                      className="hidden"
-                    />
-                    <label htmlFor="candidate-bank-resume-upload-batch" className="cursor-pointer block">
-                      <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-700 mx-auto mb-3 shadow-xs">
-                        <UploadCloud className="h-7 w-7 text-slate-700" />
+                  {uploadFiles.length === 0 ? (
+                    /* Initial Empty Dropzone */
+                    <div
+                      onDragOver={handleDragOver}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      className={`border-2 border-dashed rounded-2xl p-10 text-center transition-all ${
+                        isDragging
+                          ? "border-slate-900 bg-slate-100"
+                          : "border-slate-300 hover:border-slate-400 bg-slate-50/50 hover:bg-slate-50"
+                      }`}
+                    >
+                      <input
+                        type="file"
+                        multiple
+                        accept=".pdf,.docx,.txt"
+                        onChange={handleMultiFileSelect}
+                        id="candidate-bank-resume-upload-batch"
+                        className="hidden"
+                      />
+                      <label htmlFor="candidate-bank-resume-upload-batch" className="cursor-pointer block">
+                        <div className="w-14 h-14 rounded-2xl bg-white border border-slate-200 flex items-center justify-center text-slate-700 mx-auto mb-3 shadow-xs">
+                          <UploadCloud className="h-7 w-7 text-slate-700" />
+                        </div>
+                        <span className="font-bold text-slate-900 text-sm hover:underline block">
+                          Click to Select or Drag & Drop Resumes (PDF, DOCX)
+                        </span>
+                        <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
+                          Select <strong>up to 10 resumes</strong> at once. Each file must be under <strong>10MB</strong>.
+                        </p>
+                        <div className="mt-4 inline-flex items-center space-x-2 text-[11px] font-medium text-slate-600 bg-white px-3.5 py-1.5 rounded-full border border-slate-200 shadow-2xs">
+                          <span>✓ Concurrency optimized</span>
+                          <span>•</span>
+                          <span>✓ Deduplication radar</span>
+                          <span>•</span>
+                          <span>✓ Permanent CV vault</span>
+                        </div>
+                      </label>
+                    </div>
+                  ) : (
+                    /* Staging Tray (Options B + C) */
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between pb-1">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-bold text-slate-900 text-xs">
+                            Staged Resumes
+                          </span>
+                          <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-900 text-white font-mono">
+                            {uploadFiles.length} / 10
+                          </span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={clearStagedFiles}
+                          className="text-[11px] font-semibold text-slate-500 hover:text-rose-600 cursor-pointer transition-colors"
+                        >
+                          Clear all
+                        </button>
                       </div>
-                      <span className="font-bold text-slate-900 text-sm hover:underline block">
-                        Click to Select Resumes (PDF, DOCX)
-                      </span>
-                      <p className="text-xs text-slate-500 mt-1 max-w-md mx-auto">
-                        Select <strong>up to 5 resumes</strong> at once. Each file must be under <strong>10MB</strong>.
-                      </p>
-                      <div className="mt-4 inline-flex items-center space-x-2 text-[11px] font-medium text-slate-600 bg-white px-3.5 py-1.5 rounded-full border border-slate-200 shadow-2xs">
-                        <span>✓ Concurrency optimized</span>
-                        <span>•</span>
-                        <span>✓ Deduplication radar</span>
-                        <span>•</span>
-                        <span>✓ Permanent CV vault</span>
+
+                      {/* Staged File Cards */}
+                      <div className="divide-y divide-slate-100 bg-white border border-slate-200 rounded-xl overflow-hidden max-h-60 overflow-y-auto shadow-xs">
+                        {uploadFiles.map((f, idx) => (
+                          <div
+                            key={`${f.name}-${idx}`}
+                            className="px-3.5 py-2.5 flex items-center justify-between hover:bg-slate-50/60 transition-colors"
+                          >
+                            <div className="flex items-center space-x-3 min-w-0 pr-3">
+                              <div className="w-8 h-8 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-700 shrink-0">
+                                <FileText className="w-4 h-4 text-slate-700" />
+                              </div>
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-slate-900 truncate" title={f.name}>
+                                  {f.name}
+                                </p>
+                                <p className="text-[10px] text-slate-500 font-mono">
+                                  {formatFileSize(f.size)}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center space-x-2 shrink-0">
+                              <span className="inline-flex items-center space-x-1 px-2 py-0.5 rounded-md text-[10px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <Check className="w-3 h-3" />
+                                <span>Ready to parse</span>
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => removeStagedFile(idx)}
+                                className="p-1 rounded-md text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition-colors cursor-pointer"
+                                title="Remove file"
+                              >
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </div>
+                        ))}
                       </div>
-                    </label>
-                  </div>
+
+                      {/* Add more files if under 10 */}
+                      {uploadFiles.length < 10 ? (
+                        <div
+                          onDragOver={handleDragOver}
+                          onDragLeave={handleDragLeave}
+                          onDrop={handleDrop}
+                          className={`border border-dashed rounded-xl p-3 text-center transition-all ${
+                            isDragging
+                              ? "border-slate-900 bg-slate-100"
+                              : "border-slate-300 hover:border-slate-400 bg-slate-50/50 hover:bg-slate-50"
+                          }`}
+                        >
+                          <input
+                            type="file"
+                            multiple
+                            accept=".pdf,.docx,.txt"
+                            onChange={handleMultiFileSelect}
+                            id="candidate-bank-resume-upload-more"
+                            className="hidden"
+                          />
+                          <label htmlFor="candidate-bank-resume-upload-more" className="cursor-pointer flex items-center justify-center space-x-2 text-xs font-semibold text-slate-700 hover:text-slate-900">
+                            <UploadCloud className="w-4 h-4 text-slate-600" />
+                            <span>+ Add more resumes ({10 - uploadFiles.length} slot{10 - uploadFiles.length > 1 ? "s" : ""} remaining)</span>
+                          </label>
+                        </div>
+                      ) : (
+                        <div className="p-2.5 bg-slate-100 rounded-xl text-center text-xs text-slate-600 font-medium">
+                          ✓ Maximum batch limit reached (10 / 10 resumes staged)
+                        </div>
+                      )}
+
+                      {/* Explicit Action Bar */}
+                      <div className="flex items-center justify-between pt-2 border-t border-slate-200">
+                        <span className="text-[11px] text-slate-500 font-medium truncate max-w-[200px]">
+                          Target: {selectedMandateId ? (mandates.find(m => m.id === selectedMandateId)?.title || "Selected Mandate") : "General Talent Bank"}
+                        </span>
+                        <div className="flex items-center space-x-2">
+                          <button
+                            type="button"
+                            onClick={clearStagedFiles}
+                            className="px-3 py-1.5 border border-slate-300 rounded-xl text-slate-700 font-semibold hover:bg-slate-100 cursor-pointer text-xs"
+                          >
+                            Reset
+                          </button>
+                          <button
+                            type="button"
+                            onClick={startBatchParsing}
+                            className="px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5 text-xs"
+                          >
+                            <Zap className="w-3.5 h-3.5 text-amber-300" />
+                            <span>Parse {uploadFiles.length} Resume{uploadFiles.length > 1 ? "s" : ""} with AI</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
